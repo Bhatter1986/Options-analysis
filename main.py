@@ -1,53 +1,47 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException
+import os
 
 app = FastAPI()
 
-@app.get("/")
-def root():
-    return {"message": "Hello India Market 🚀"}
-
-@app.get("/health")
-def health():
-    return {"ok": True}
-
-# New Endpoint: Options Analysis (dummy)
-@app.get("/options")
-def options_analysis():
-    data = {
-        "symbol": "NIFTY",
-        "strike": 25000,
-        "trend": "Bullish",
-        "iv": 12.5,
-        "delta": 0.62
-    }
-    return {"options_data": data}
-from pydantic import BaseModel
-from fastapi import HTTPException
-
-class TVAlert(BaseModel):
-    secret: str
-    symbol: str
-    action: str
-    expiry: str | None = None
-    strike: float | None = None
-    option_type: str | None = None
-    qty: int = 50
-    price: str = "MARKET"
-
-import os
+# ✅ Secret ab environment se aayega (Render ke env vars me set karna hoga)
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "change-me")
 
+@app.get("/health")
+async def health():
+    return {"ok": True}
+
 @app.post("/webhook")
-def webhook(alert: TVAlert):
-    if alert.secret != WEBHOOK_SECRET:
-        raise HTTPException(status_code=401, detail="Invalid secret")
-    order = {
-        "side": "BUY" if alert.action.upper() == "BUY" else "SELL",
-        "symbol": alert.symbol,
-        "expiry": alert.expiry,
-        "strike": alert.strike,
-        "type": alert.option_type,
-        "qty": alert.qty,
-        "price": alert.price
+async def webhook(request: Request):
+    data = await request.json()
+
+    # ✅ Secret check
+    secret = data.get("secret")
+    if secret != WEBHOOK_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # ✅ Order fields extract
+    symbol = data.get("symbol")
+    action = data.get("action")
+    expiry = data.get("expiry")
+    strike = data.get("strike")
+    option_type = data.get("option_type")
+    qty = data.get("qty")
+    price = data.get("price")
+
+    if not all([symbol, action, expiry, strike, option_type, qty, price]):
+        raise HTTPException(status_code=422, detail="Missing required fields")
+
+    # ✅ Response back (later yahan Dhan API call add karenge)
+    return {
+        "ok": True,
+        "received": data,
+        "order": {
+            "side": action,
+            "symbol": symbol,
+            "expiry": expiry,
+            "strike": strike,
+            "type": option_type,
+            "qty": qty,
+            "price": price
+        }
     }
-    return {"ok": True, "received": alert.model_dump(), "order": order}
