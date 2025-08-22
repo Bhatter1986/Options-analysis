@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: options-analysis-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DEMO_MODE
+        value: true
+      - key: WEBHOOK_SECRET
+        sync: false
+      - key: DEFAULT_SYMBOL
+        value: NIFTY
