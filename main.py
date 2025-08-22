@@ -1,56 +1,70 @@
-import os, time
-from typing import Optional, Literal
+# main.py
 from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
+import os
+import requests
 
-app = FastAPI(title="Options Analysis Bot")
+app = FastAPI(title="Options-Analysis API", version="1.0")
 
-# --- ENV CONFIG ---
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "change-me")
-MODE = os.getenv("MODE", "DRY").upper()              # DRY or LIVE
-DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID", "")
-DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN", "")
+# Allow browser/tools
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# try to import dhanhq sdk if present
-try:
-    from dhanhq import dhanhq as dhanhq_sdk  # <- some installs expose this name
-    _has_dhan_lib = True
-except Exception:
-    _has_dhan_lib = False
-    dhanhq_sdk = None
+# ───────────────────────────────────────────────────────────────────────────────
+# ENV / SETTINGS
+# ───────────────────────────────────────────────────────────────────────────────
+WEBHOOK_SECRET     = os.getenv("WEBHOOK_SECRET", "change-me")
 
-# lazy init client (only if lib is present)
-_dhan_client = None
-def get_dhan_client():
-    global _dhan_client
-    if _dhan_client is None and _has_dhan_lib and DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN:
-        try:
-            # Some versions use dhanhq_sdk.dhanhq; others expose class directly.
-            # Both patterns are tried below for compatibility.
-            try:
-                _dhan_client = dhanhq_sdk.dhanhq(DHAN_CLIENT_ID, DHAN_ACCESS_TOKEN)
-            except Exception:
-                _dhan_client = dhanhq_sdk.DhanHQ(DHAN_CLIENT_ID, DHAN_ACCESS_TOKEN)
-        except Exception:
-            pass
-    return _dhan_client
+# Dhan creds (sandbox/live same code; URL + MODE decide behaviour)
+DHAN_CLIENT_ID     = os.getenv("DHAN_CLIENT_ID", "")
+DHAN_ACCESS_TOKEN  = os.getenv("DHAN_ACCESS_TOKEN", "")
+DHAN_BASE_URL      = os.getenv("DHAN_BASE_URL", "https://sandbox.dhan.co/v2").rstrip("/")
+MODE               = os.getenv("MODE", "DRY").upper()   # DRY or LIVE
 
-# --- MODELS ---
-class OrderPayload(BaseModel):
-    secret: str
-    # Either security_id do, ya niche wale fields informational:
-    security_id: Optional[int] = None
-    symbol: Optional[str] = None         # e.g., "NIFTY"
-    action: Literal["BUY", "SELL"]
-    expiry: Optional[str] = None         # "YYYY-MM-DD"
-    strike: Optional[int] = None
-    option_type: Optional[Literal["CE", "PE"]] = None
-    qty: int
-    price: Optional[Literal["MARKET", "LIMIT"]] = "MARKET"
-    limit_price: Optional[float] = None  # only if price == "LIMIT"
-    product: Optional[Literal["INTRADAY", "CARRYFORWARD"]] = "INTRADAY"
 
-# --- HEALTH ---
+# ───────────────────────────────────────────────────────────────────────────────
+# Small helper to call Dhan REST
+# ───────────────────────────────────────────────────────────────────────────────
+def _dhan_request(path: str, method: str = "GET", json: dict | None = None):
+    """
+    Minimal wrapper around Dhan v2 REST.
+    Raises HTTPException for error status codes.
+    """
+    if not (DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN):
+        raise HTTPException(status_code=500, detail="Dhan credentials missing")
+
+    url = f"{DHAN_BASE_URL}/{path.lstrip('/')}"
+    headers = {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "client-id": DHAN_CLIENT_ID,
+        "access-token": DHAN_ACCESS_TOKEN,
+    }
+
+    try:
+        resp = requests.request(method.upper(), url, headers=headers, json=json, timeout=20)
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Dhan request failed: {e}")
+
+    try:
+        data = resp.json()
+    except Exception:
+        data = {"text": resp.text}
+
+    if resp.status_code >= 400:
+        # bubble up broker error payload
+        raise HTTPException(status_code=resp.status_code, detail=data)
+
+    return {"status": resp.status_code, "data": data}
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# Health / root / sample endpoints
+# ───────────────────────────────────────────────────────────────────────────────
 @app.get("/")
 def root():
     return {"message": "Hello India Market 🚀"}
@@ -59,113 +73,133 @@ def root():
 def health():
     return {"ok": True}
 
-# Quick status to confirm credentials/mode
+@app.get("/options")
+def options_analysis():
+    # dummy data for now
+    data = {
+        "symbol": "NIFTY",
+        "strike": 25000,
+        "trend": "Bullish",
+        "iv": 12.5,
+        "delta": 0.62,
+    }
+    return {"options_data": data}
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# Broker status & quick proxies (for testing)
+# ───────────────────────────────────────────────────────────────────────────────
 @app.get("/broker_status")
 def broker_status():
-    ready = bool(DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN)
-    client = get_dhan_client()
-    return {
-        "mode": MODE,
-        "has_lib": _has_dhan_lib,
-        "has_creds": ready,
-        "client_ready": bool(client) or (not _has_dhan_lib and ready)  # REST fallback case
-    }
+    ok_creds = bool(DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN)
+    return {"mode": MODE, "has_lib": True, "has_creds": ok_creds, "client_ready": ok_creds}
 
-# --- ORDER HELPERS ---
-def place_order_via_sdk(p: OrderPayload):
+@app.get("/dhan/orders")
+def list_orders():
+    # NOTE: Works only if Dhan exposes list endpoint for your account/keys.
+    return _dhan_request("orders", "GET")
+
+@app.get("/dhan/proxy")
+def dhan_proxy(path: str, method: str = "GET"):
     """
-    Live order via dhanhq sdk (if installed).
-    You MUST provide a valid security_id in LIVE mode.
+    Generic proxy for quick testing:
+    /dhan/proxy?path=portfolio/positions
+    /dhan/proxy?path=funds
     """
-    client = get_dhan_client()
-    if not client:
-        return {"status": "failure", "remarks": {"reason": "dhanhq sdk not available"}}
+    return _dhan_request(path, method.upper())
 
-    if not p.security_id:
-        return {"status": "failure", "remarks": {"reason": "security_id required in LIVE mode"}}
 
-    # Many installs expect keys like these; keep defaults conservative.
-    exchange_segment = "NSE_FNO"
-    order_type = p.price or "MARKET"       # MARKET/LIMIT
-    transaction_type = p.action            # BUY/SELL
-    product_type = p.product or "INTRADAY" # INTRADAY/CARRYFORWARD
-    validity = "DAY"
-    price = float(p.limit_price or 0)
-
-    try:
-        # Most sdk versions expose place_order; arguments vary slightly across releases.
-        # Use kwargs to be resilient.
-        res = client.place_order(
-            security_id=int(p.security_id),
-            exchange_segment=exchange_segment,
-            transaction_type=transaction_type,
-            order_type=order_type,
-            product_type=product_type,
-            quantity=int(p.qty),
-            price=price,
-            validity=validity,
-            after_market_order=False,
-        )
-        return res if isinstance(res, dict) else {"status": "success", "response": str(res)}
-    except Exception as e:
-        return {"status": "failure", "remarks": {"exception": str(e)}}
-
+# ───────────────────────────────────────────────────────────────────────────────
+# Webhook to receive trade signals
+# ───────────────────────────────────────────────────────────────────────────────
 @app.post("/webhook")
-async def webhook(payload: OrderPayload):
+async def webhook(request: Request):
+    """
+    Expected JSON body (example):
+    {
+      "secret": "my$ecret123",
+      "symbol": "NIFTY",
+      "action": "BUY",
+      "expiry": "2025-08-28",
+      "strike": 25100,
+      "option_type": "CE",
+      "qty": 50,
+      "price": "MARKET",
+      "security_id": "12345",               # REQUIRED in LIVE mode
+      "exchange_segment": "NSE_FNO",        # optional (LIVE default)
+      "product_type": "INTRADAY",           # optional (LIVE default)
+      "validity": "DAY"                     # optional (LIVE default)
+    }
+    """
+    data = await request.json()
+
     # 1) Secret check
-    if payload.secret != WEBHOOK_SECRET:
+    secret = str(data.get("secret", ""))
+    if secret != WEBHOOK_SECRET:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    # 2) DRY path: no live hit, just echo what will be sent
-    if MODE == "DRY":
-        order = {
-            "side": payload.action,
-            "symbol": payload.symbol or "N/A",
-            "expiry": payload.expiry,
-            "strike": payload.strike,
-            "type": payload.option_type,
-            "qty": payload.qty,
-            "price": payload.price,
-            "security_id": payload.security_id,
+    # 2) Extract user-friendly fields
+    symbol      = data.get("symbol")
+    action      = data.get("action")          # BUY / SELL
+    expiry      = data.get("expiry")          # yyyy-mm-dd (info only)
+    strike      = data.get("strike")          # info only
+    option_type = data.get("option_type")     # CE/PE (info only)
+    qty         = data.get("qty")
+    price       = data.get("price", "MARKET") # MARKET/LIMIT
+    security_id = data.get("security_id")     # must in LIVE
+
+    # Basic validations
+    if not all([symbol, action, qty]):
+        raise HTTPException(status_code=422, detail="symbol/action/qty required")
+
+    # Build an echo "order" summary (for logs/response)
+    human_order = {
+        "side": action,
+        "symbol": symbol,
+        "expiry": expiry,
+        "strike": strike,
+        "type": option_type,
+        "qty": qty,
+        "price": price,
+        "security_id": security_id,
+    }
+
+    # 3) Default broker response (DRY)
+    broker_resp: dict = {"status": "dry-run", "note": "LIVE trade disabled in DRY mode."}
+
+    # 4) If LIVE, place order to Dhan (minimal payload)
+    if MODE == "LIVE":
+        if not security_id:
+            raise HTTPException(status_code=422, detail="security_id required in LIVE mode")
+
+        # Defaults (can be overridden by sender)
+        exchange_segment = data.get("exchange_segment", "NSE_FNO")
+        product_type     = data.get("product_type", "INTRADAY")
+        validity         = data.get("validity", "DAY")
+        order_type       = price  # MARKET/LIMIT (same as input)
+
+        # Minimal order payload for Dhan v2
+        # (Fields naming follow Dhan docs; adjust if your account needs extras.)
+        payload = {
+            "transactionType": action,          # BUY / SELL
+            "exchangeSegment": exchange_segment,
+            "productType": product_type,        # e.g., INTRADAY / CARRYFORWARD
+            "orderType": order_type,            # MARKET / LIMIT
+            "validity": validity,               # DAY / IOC etc.
+            "securityId": str(security_id),
+            "quantity": int(qty),
         }
-        return {
-            "ok": True,
-            "mode": MODE,
-            "received": payload.model_dump(),
-            "order": order,
-            "note": "DRY mode active. Set MODE=LIVE and send security_id to place order."
-        }
+        # Optional limit price
+        if order_type == "LIMIT" and "limit_price" in data:
+            payload["price"] = float(data["limit_price"])
 
-    # 3) LIVE path: sanity checks
-    if not (DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN):
-        raise HTTPException(status_code=400, detail="Dhan credentials not set")
+        # Fire to Dhan
+        broker_resp = _dhan_request("orders", "POST", payload)
 
-    if not payload.security_id:
-        raise HTTPException(status_code=422, detail="security_id is required in LIVE mode")
-
-    # 4) Place order via SDK if available; else short-circuit with a clear message
-    if _has_dhan_lib:
-        broker_res = place_order_via_sdk(payload)
-    else:
-        broker_res = {
-            "status": "failure",
-            "remarks": {"reason": "dhanhq library not installed; use SDK or add REST call here"}
-        }
-
-    ok = str(broker_res.get("status", "")).lower() in ("success", "ok", "true")
     return {
-        "ok": ok,
+        "ok": True,
         "mode": MODE,
-        "received": payload.model_dump(),
-        "order": {
-            "side": payload.action,
-            "symbol": payload.symbol,
-            "expiry": payload.expiry,
-            "strike": payload.strike,
-            "type": payload.option_type,
-            "qty": payload.qty,
-            "price": payload.price,
-            "security_id": payload.security_id,
-        },
-        "broker_response": broker_res
+        "received": data,
+        "order": human_order,
+        "broker_response": broker_resp,
     }
