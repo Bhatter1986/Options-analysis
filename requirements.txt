@@ -1,2 +1,6 @@
-python3 -m pip install --upgrade pip wheel setuptools
-python3 -m pip install --only-binary :all: -r requirements.txt
+fastapi==0.103.2
+starlette==0.27.0
+pydantic==1.10.13
+typing-extensions==4.12.2
+uvicorn[standard]==0.29.0
+requests==2.32.3
