@@ -34,7 +34,8 @@ class TVAlert(BaseModel):
     qty: int = 50
     price: str = "MARKET"
 
-WEBHOOK_SECRET = "My$ecret123"  # baad me Render ENV me daalenge
+import os
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "change-me")
 
 @app.post("/webhook")
 def webhook(alert: TVAlert):
