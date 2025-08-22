@@ -96,57 +96,97 @@ def _to_yyyy_mm_dd(s: str) -> Optional[str]:
     return None
 
 
-def lookup_security_id(underlying_symbol: str, expiry: str, strike: float, option_type: str) -> Optional[str]:
+# ─────────────────────────────────────────────────────────────────
+# Replace this whole function in main.py
+# ─────────────────────────────────────────────────────────────────
+def _fmt_expiry(date_str: str) -> tuple[str, str]:
+    """
+    Return (YYYY-MM-DD, DD-MMM-YYYY) both, so we can match either.
+    """
+    s = (date_str or "").strip()
+    if not s:
+        return "", ""
+    # try parse YYYY-MM-DD
+    try:
+        dt = datetime.strptime(s, "%Y-%m-%d")
+    except ValueError:
+        # try parse DD-MMM-YYYY (as it comes in CSV sometimes)
+        try:
+            dt = datetime.strptime(s.upper(), "%d-%b-%Y")
+        except ValueError:
+            return s, s  # give up; compare as-is
+    iso = dt.strftime("%Y-%m-%d")
+    dmy = dt.strftime("%d-%b-%Y").upper()  # e.g. 28-AUG-2025
+    return iso, dmy
+
+def _normalize_opt_type(t: str) -> set[str]:
+    """
+    Accept CE/PE or CALL/PUT.
+    """
+    x = (t or "").upper().strip()
+    if x in {"CE", "CALL"}:
+        return {"CE", "CALL"}
+    if x in {"PE", "PUT"}:
+        return {"PE", "PUT"}
+    return {x}
+
+def lookup_security_id(underlying_symbol: str, expiry: str, strike: float, option_type: str):
     """
     Returns first matching Security ID or None.
-    CSV columns can differ; we try common detailed headers:
-      UNDERLYING_SYMBOL, SEM_EXPIRY_DATE (or SM_EXPIRY_DATE), SEM_STRIKE_PRICE, SEM_OPTION_TYPE,
-      and security id column variants.
+    Robust against:
+      - Expiry in YYYY-MM-DD vs DD-MMM-YYYY (CSV often uses DD-MMM-YYYY)
+      - Option type CE/PE vs CALL/PUT
+      - Float formatting of strike
     """
     csv_text = fetch_instruments_csv(detailed=True)
     f = io.StringIO(csv_text)
     reader = csv.DictReader(f)
 
-    header = [h.strip() for h in (reader.fieldnames or [])]
-
-    # pick Security ID column smartly
+    # detect any Security ID column
+    header = reader.fieldnames or []
     sec_id_col = None
-    for c in ("SECURITY_ID", "SEM_SECURITY_ID", "SM_SECURITY_ID", "SECURITYID"):
+    for c in ("SECURITY_ID", "SEM_SECURITY_ID", "SM_SECURITY_ID"):
         if c in header:
             sec_id_col = c
             break
-    if not sec_id_col:
-        for c in header:
-            if "SECURITY" in c.upper() and "ID" in c.upper():
-                sec_id_col = c
-                break
 
-    # expiry column (SEM_EXPIRY_DATE or SM_EXPIRY_DATE)
-    exp_cols = [c for c in ("SEM_EXPIRY_DATE", "SM_EXPIRY_DATE", "EXPIRY_DATE") if c in header]
-    exp_col = exp_cols[0] if exp_cols else None
-
-    # normalize inputs
     sym = (underlying_symbol or "").upper().strip()
-    otype = (option_type or "").upper().strip()
-    exp_in = _to_yyyy_mm_dd(expiry)
+    exp_iso, exp_dmy = _fmt_expiry(expiry)
+    opt_set = _normalize_opt_type(option_type)
+
+    # small float tolerance
+    try:
+        strike_f = float(strike)
+    except Exception:
+        strike_f = None
 
     for row in reader:
         try:
-            row_sym = (row.get("UNDERLYING_SYMBOL", "") or row.get("SM_UNDERLYING_SYMBOL", "")).upper().strip()
-            row_otype = (row.get("SEM_OPTION_TYPE", "") or row.get("SM_OPTION_TYPE", "")).upper().strip()
-            row_strike = float(row.get("SEM_STRIKE_PRICE", "") or row.get("SM_STRIKE_PRICE", "") or 0.0)
+            if row.get("UNDERLYING_SYMBOL", "").upper().strip() != sym:
+                continue
 
-            row_exp_raw = (row.get(exp_col, "") if exp_col else "")
-            row_exp = _to_yyyy_mm_dd(row_exp_raw)
+            csv_exp = (row.get("SEM_EXPIRY_DATE") or row.get("SM_EXPIRY_DATE") or "").upper().strip()
+            if csv_exp not in {exp_iso.upper(), exp_dmy}:
+                continue
 
-            if row_sym == sym and row_otype == otype and row_strike == float(strike) and row_exp and exp_in and row_exp == exp_in:
-                return (str(row.get(sec_id_col)) if sec_id_col else None)
+            csv_type = (row.get("SEM_OPTION_TYPE") or row.get("OPTION_TYPE") or "").upper().strip()
+            if csv_type not in opt_set:
+                continue
+
+            csv_strike_raw = row.get("SEM_STRIKE_PRICE") or row.get("STRIKE_PRICE") or "0"
+            try:
+                csv_strike = float(csv_strike_raw)
+            except Exception:
+                continue
+
+            if (strike_f is None) or (abs(csv_strike - strike_f) > 1e-6):
+                continue
+
+            return row.get(sec_id_col) if sec_id_col else None
         except Exception:
             continue
-    return None
 
-
-def place_dhan_order(
+    return Nonedef place_dhan_order(
     security_id: str,
     side: str,                  # BUY / SELL
     qty: int,
@@ -342,3 +382,35 @@ async def webhook(request: Request):
         "received": data,
         "dhan_response": broker_resp,
     }
+# ─────────────────────────────────────────────────────────────────
+# ADD this route (anywhere below helper defs, above webhook)
+# ─────────────────────────────────────────────────────────────────
+@app.get("/debug_lookup")
+def debug_lookup(symbol: str = "NIFTY", limit: int = 10):
+    """
+    Browser:  /debug_lookup?symbol=NIFTY
+    Dekhne ke liye ki CSV me expiry/type/strike ka format kya aa raha hai.
+    """
+    txt = fetch_instruments_csv(detailed=True)
+    f = io.StringIO(txt)
+    reader = csv.DictReader(f)
+    sec_col = None
+    for c in ("SECURITY_ID", "SEM_SECURITY_ID", "SM_SECURITY_ID"):
+        if c in (reader.fieldnames or []):
+            sec_col = c
+            break
+
+    out = []
+    for row in reader:
+        if row.get("UNDERLYING_SYMBOL", "").upper() == symbol.upper():
+            out.append({
+                "SECURITY_ID": row.get(sec_col),
+                "UNDERLYING_SYMBOL": row.get("UNDERLYING_SYMBOL"),
+                "SEM_EXPIRY_DATE": row.get("SEM_EXPIRY_DATE"),
+                "SEM_OPTION_TYPE": row.get("SEM_OPTION_TYPE"),
+                "SEM_STRIKE_PRICE": row.get("SEM_STRIKE_PRICE"),
+                "SEM_TRADING_SYMBOL": row.get("SEM_TRADING_SYMBOL") or row.get("SEM_CUSTOM_SYMBOL"),
+            })
+            if len(out) >= max(1, min(50, limit)):
+                break
+    return out
