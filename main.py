@@ -1,5 +1,6 @@
-# main.py — Options Analysis API (FastAPI) + Dhan REST
-# Works with: fastapi==0.103.2, pydantic==1.10.13, starlette==0.27.0, uvicorn==0.29.0, requests==2.32.3
+# main.py — Options Analysis API (FastAPI) + Dhan v2 CSV lookup
+# Works best with:
+# fastapi==0.103.2, starlette==0.27.0, pydantic==1.10.13, uvicorn==0.29.0, requests==2.32.3
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,7 +10,7 @@ from datetime import datetime
 
 app = FastAPI(title="Options Analysis API", version="2.2")
 
-# CORS (for quick testing from browser/Postman/Hoppscotch)
+# ── CORS ───────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,25 +18,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ─────────────────────────────────────────────────────────────────
-# ENV & CONSTANTS
-# ─────────────────────────────────────────────────────────────────
+# ── ENV & CONSTANTS ────────────────────────────────────────────────
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "change-me")
-MODE = os.getenv("MODE", "DRY").upper()  # DRY / LIVE
+MODE = os.getenv("MODE", "DRY").upper()                 # DRY / LIVE
 
 DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID", "")
 DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN", "")
-# For sandbox use: https://sandbox.dhan.co/v2
-DHAN_API_BASE = os.getenv("DHAN_API_BASE", "https://api.dhan.co/v2")
+DHAN_API_BASE = os.getenv("DHAN_API_BASE", "https://api.dhan.co/v2")  # sandbox: https://sandbox.dhan.co/v2
 
-# Dhan instruments (CSV)
-INSTR_CSV_COMPACT = "https://images.dhan.co/api-data/api-scrip-master.csv"
+# Dhan instruments CSV (detailed preferred)
+INSTR_CSV_COMPACT  = "https://images.dhan.co/api-data/api-scrip-master.csv"
 INSTR_CSV_DETAILED = "https://images.dhan.co/api-data/api-scrip-master-detailed.csv"
-INSTR_CSV_URL = INSTR_CSV_DETAILED  # we prefer detailed
+INSTR_CSV_URL = INSTR_CSV_DETAILED
 
-# ─────────────────────────────────────────────────────────────────
-# CSV Helpers (flexible across schema variations)
-# ─────────────────────────────────────────────────────────────────
+# ── CSV helpers (schema-flex) ──────────────────────────────────────
 UNDERLYING_CANDS = ("UNDERLYING_SYMBOL", "SEM_UNDERLYING_SYMBOL", "SM_UNDERLYING_SYMBOL", "UNDERLYING")
 EXPIRY_CANDS     = ("SEM_EXPIRY_DATE", "EXPIRY_DATE", "EXPIRY", "SM_EXPIRY_DATE")
 STRIKE_CANDS     = ("SEM_STRIKE_PRICE", "STRIKE", "STRIKE_PRICE", "SM_STRIKE_PRICE")
@@ -44,6 +40,8 @@ SECID_CANDS      = ("SECURITY_ID", "SEM_SECURITY_ID", "SM_SECURITY_ID")
 
 CSV_TTL_SEC = 15 * 60
 _CSV_CACHE = {"ts": 0.0, "rows": [], "header": []}
+
+DATE_PATTS = ("%Y-%m-%d", "%d-%b-%Y", "%d/%m/%Y", "%d-%m-%Y")
 
 def _dhan_headers() -> Dict[str, str]:
     if not DHAN_CLIENT_ID or not DHAN_ACCESS_TOKEN:
@@ -69,13 +67,6 @@ def _detect(cols: List[str], candidates: tuple) -> Optional[str]:
             return c
     return None
 
-DATE_PATTS = (
-    "%Y-%m-%d",  # 2025-08-28
-    "%d-%b-%Y",  # 28-Aug-2025
-    "%d/%m/%Y",
-    "%d-%m-%Y",
-)
-
 def _norm_symbol(s: Optional[str]) -> str:
     return (s or "").upper().strip()
 
@@ -92,7 +83,7 @@ def _norm_date(s: Optional[str]) -> str:
             return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
         except Exception:
             pass
-    return s  # unknown → return as-is
+    return s
 
 def _float_eq(a: Any, b: Any, eps: float = 1e-4) -> bool:
     try:
@@ -149,7 +140,7 @@ def list_strikes_for(symbol: str, expiry: str, option_type: Optional[str] = None
     return sorted(strikes)
 
 def lookup_security_id(underlying_symbol: str, expiry: str, strike: Any, option_type: str) -> Optional[str]:
-    # use fresh download for final lookup
+    # fresh download for final lookup
     text = _download_csv_text()
     f = io.StringIO(text)
     rdr = csv.DictReader(f)
@@ -159,7 +150,6 @@ def lookup_security_id(underlying_symbol: str, expiry: str, strike: Any, option_
     scol = _detect(header, STRIKE_CANDS)
     ocol = _detect(header, OTYPE_CANDS)
     sec  = _detect(header, SECID_CANDS)
-
     if not (ucol and ecol and scol and ocol and sec):
         return None
 
@@ -174,9 +164,7 @@ def lookup_security_id(underlying_symbol: str, expiry: str, strike: Any, option_
             return r.get(sec)
     return None
 
-# ─────────────────────────────────────────────────────────────────
-# Dhan REST helpers
-# ─────────────────────────────────────────────────────────────────
+# ── Dhan REST calls ───────────────────────────────────────────────
 def place_dhan_order(
     security_id: str,
     side: str,                      # BUY / SELL
@@ -190,11 +178,11 @@ def place_dhan_order(
 ):
     url = f"{DHAN_API_BASE}/orders"
     payload: Dict[str, Any] = {
-        "transaction_type": side,              # BUY/SELL
-        "exchange_segment": exchange_segment,  # NSE_EQUITY / NSE_FNO / ...
-        "product_type": product_type,          # INTRADAY / DELIVERY ...
-        "order_type": order_type,              # MARKET / LIMIT
-        "validity": validity,                  # DAY / IOC
+        "transaction_type": side,
+        "exchange_segment": exchange_segment,
+        "product_type": product_type,
+        "order_type": order_type,
+        "validity": validity,
         "security_id": str(security_id),
         "quantity": int(qty),
     }
@@ -216,27 +204,20 @@ def dhan_quote_snapshot(body: dict):
     r.raise_for_status()
     return r.json()
 
-# ─────────────────────────────────────────────────────────────────
-# Routes
-# ─────────────────────────────────────────────────────────────────
+# ── Routes ────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
     return {"ok": True}
 
 @app.get("/broker_status")
 def broker_status():
-    return {
-        "mode": MODE,
-        "has_creds": broker_ready(),
-        "client_ready": broker_ready(),
-    }
+    return {"mode": MODE, "client_ready": broker_ready()}
 
 @app.get("/csv_debug")
 def csv_debug():
     rows, header = _load_rows(force=True)
     return {"columns": header, "sample": rows[:2] if rows else [], "count": len(rows)}
 
-# Discovery helpers
 @app.get("/list_expiries")
 def list_expiries(symbol: str):
     return {"symbol": _norm_symbol(symbol), "expiries": list_expiries_for_symbol(symbol)}
@@ -252,11 +233,7 @@ def list_strikes(symbol: str, expiry: str, option_type: Optional[str] = None):
 
 @app.get("/security_lookup")
 def usage_hint():
-    # plain GET shows usage (handy in browser)
-    return {
-        "use": "POST /security_lookup with JSON body",
-        "example": {"symbol": "NIFTY", "expiry": "2025-08-28", "strike": 25100, "option_type": "CE"},
-    }
+    return {"use": "POST /security_lookup", "example": {"symbol":"NIFTY","expiry":"2025-08-28","strike":25100,"option_type":"CALL"}}
 
 @app.post("/security_lookup")
 def security_lookup(payload: Dict[str, Any]):
@@ -270,10 +247,7 @@ def security_lookup(payload: Dict[str, Any]):
 
 @app.post("/dhan/quote")
 def dhan_quote(body: Dict[str, Any]):
-    """
-    Body example:
-    { "NSE_FNO": [49081, 49082] }
-    """
+    # Body example: { "NSE_FNO": ["49081"] }
     try:
         return dhan_quote_snapshot(body)
     except requests.HTTPError as e:
@@ -282,28 +256,26 @@ def dhan_quote(body: Dict[str, Any]):
 @app.post("/webhook")
 async def webhook(request: Request):
     """
-    TradingView / manual alerts payload:
+    Body:
     {
       "secret": "my$ecret123",
       "symbol": "NIFTY",
       "action": "BUY",
       "expiry": "2025-08-28",
       "strike": 25100,
-      "option_type": "CE",    # CE/PE or CALL/PUT
+      "option_type": "CALL",    # or PUT
       "qty": 50,
-      "price": "MARKET",      # or numeric for LIMIT
-      "security_id": "optional_if_known"
+      "price": "MARKET",        # or numeric for LIMIT
+      "security_id": "optional"
     }
     """
     data = await request.json()
 
-    # 1) Secret check
     if str(data.get("secret", "")) != WEBHOOK_SECRET:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+        raise HTTPException(401, detail="Unauthorized")
 
-    # 2) Parse
     symbol = data.get("symbol")
-    action = (data.get("action") or "").upper()       # BUY / SELL
+    action = (data.get("action") or "").upper()
     expiry = data.get("expiry")
     strike = data.get("strike")
     option_type = data.get("option_type")
@@ -314,32 +286,24 @@ async def webhook(request: Request):
     if not symbol or not action or qty <= 0:
         raise HTTPException(422, detail="symbol/action/qty required")
 
-    # DRY mode → simulate only
     if MODE != "LIVE":
         return {
             "ok": True,
             "mode": MODE,
             "received": data,
             "order": {
-                "side": action,
-                "symbol": symbol,
-                "expiry": expiry,
-                "strike": strike,
-                "type": option_type,
-                "qty": qty,
-                "price": price,
+                "side": action, "symbol": symbol, "expiry": expiry,
+                "strike": strike, "type": option_type, "qty": qty, "price": price,
                 "security_id": security_id,
-                "note": "DRY mode: no live order. Set MODE=LIVE to execute.",
-            },
+                "note": "DRY mode: no live order. Set MODE=LIVE to execute."
+            }
         }
 
-    # LIVE mode → ensure security_id
     if not security_id:
         security_id = lookup_security_id(symbol, expiry, strike, option_type)
         if not security_id:
             raise HTTPException(400, detail="security_id not found")
 
-    # MARKET/LIMIT
     order_type = "MARKET"
     limit_price = None
     try:
@@ -351,7 +315,6 @@ async def webhook(request: Request):
     except Exception:
         order_type = "MARKET"
 
-    # Place order
     tag = "tv-" + datetime.utcnow().isoformat()
     status, broker_resp = place_dhan_order(
         security_id=str(security_id),
@@ -364,5 +327,4 @@ async def webhook(request: Request):
         validity="DAY",
         tag=tag,
     )
-
     return {"ok": status in (200, 201), "mode": "LIVE", "received": data, "dhan_response": broker_resp}
