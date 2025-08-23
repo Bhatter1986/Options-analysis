@@ -1,195 +1,96 @@
-# main.py
-from fastapi import FastAPI, Request, HTTPException, Body
-from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-from typing import Dict, List, Optional, Any
-import httpx
 import os
+from typing import Optional, Dict, Any
+from fastapi import FastAPI, HTTPException, Header
+from pydantic import BaseModel, Field
+import httpx
 
-app = FastAPI(
-    title="DhanHQ API Proxy",
-    version="2.0",
-    description="Proxy service for DhanHQ API with CORS support",
-    docs_url="/docs",
-    redoc_url="/redoc",
-)
+app = FastAPI(title="Dhan Proxy", version="1.0")
 
-# ---------------- CORS ----------------
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+DHAN_BASE_URL = os.getenv("DHAN_BASE_URL", "https://sandbox.dhan.co/v2")
+DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN", "")
+DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID", "")
 
-# ---------------- ENV HELPERS ----------------
-def _pick_env() -> Dict[str, Optional[str]]:
-    env = (os.getenv("DHAN_ENV") or "SANDBOX").strip().upper()
-    if env not in {"SANDBOX", "LIVE"}:
-        env = "SANDBOX"
+# ---- Models ----
+class OptionChainReq(BaseModel):
+    UnderlyingScrip: int = Field(..., description="Security ID of Underlying")
+    UnderlyingSeg: str = Field(..., description="e.g. IDX_I / NSE_FNO / etc.")
+    Expiry: Optional[str] = Field(None, description="YYYY-MM-DD (optional for expirylist)")
 
-    if env == "LIVE":
-        token = os.getenv("DHAN_LIVE_ACCESS_TOKEN") or os.getenv("DHAN_ACCESS_TOKEN")
-        client_id = os.getenv("DHAN_LIVE_CLIENT_ID") or os.getenv("DHAN_CLIENT_ID")
-        base_url = os.getenv("DHAN_LIVE_BASE_URL") or "https://api.dhan.co/v2"
-    else:
-        token = os.getenv("DHAN_SANDBOX_ACCESS_TOKEN") or os.getenv("DHAN_ACCESS_TOKEN")
-        client_id = os.getenv("DHAN_SANDBOX_CLIENT_ID") or os.getenv("DHAN_CLIENT_ID")
-        base_url = os.getenv("DHAN_SANDBOX_BASE_URL") or "https://sandbox.dhan.co/v2"
+class BrokerStatus(BaseModel):
+    mode: str
+    env: str
+    base_url: str
+    token_present: bool
+    client_id_present: bool
+    has_creds: bool
 
-    return {"env": env, "token": token, "client_id": client_id, "base_url": base_url}
-
-def _make_headers(token: str, client_id: str) -> Dict[str, str]:
-    return {
-        "access-token": token,
-        "client-id": client_id,
+# ---- Helpers ----
+def _headers(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    h = {
+        "access-token": DHAN_ACCESS_TOKEN,
+        "client-id": DHAN_CLIENT_ID,
         "Content-Type": "application/json",
-        "Accept": "application/json",
     }
+    if extra:
+        h.update(extra)
+    return h
 
-async def _proxy_request(method: str, path: str, payload: Any = None) -> JSONResponse:
-    """
-    Generic proxy to Dhan API. `payload` is sent as JSON for POST/PUT.
-    """
-    cfg = _pick_env()
-    token, client_id, base_url = cfg["token"], cfg["client_id"], cfg["base_url"]
+def _check_creds():
+    if not DHAN_ACCESS_TOKEN or not DHAN_CLIENT_ID:
+        raise HTTPException(status_code=401, detail="Missing DHAN_ACCESS_TOKEN or DHAN_CLIENT_ID env vars.")
 
-    if not token or not client_id:
-        return JSONResponse(
-            status_code=401,
-            content={
-                "ok": False,
-                "error": "Missing Dhan credentials",
-                "details": {
-                    "env": cfg["env"],
-                    "token_present": bool(token),
-                    "client_id_present": bool(client_id),
-                },
-            },
-        )
+# ---- Health / status ----
+@app.get("/broker_status", response_model=BrokerStatus)
+def broker_status():
+    return BrokerStatus(
+        mode="DRY",
+        env="SANDBOX" if "sandbox" in DHAN_BASE_URL else "LIVE",
+        base_url=DHAN_BASE_URL,
+        token_present=bool(DHAN_ACCESS_TOKEN),
+        client_id_present=bool(DHAN_CLIENT_ID),
+        has_creds=bool(DHAN_ACCESS_TOKEN and DHAN_CLIENT_ID),
+    )
 
-    url = f"{base_url}{path}"
-    headers = _make_headers(token, client_id)
+# ---- Pass-through: Orders (GET) ----
+@app.get("/orders")
+async def get_orders():
+    _check_creds()
+    url = f"{DHAN_BASE_URL}/orders"
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.get(url, headers=_headers())
+    if r.status_code >= 400:
+        raise HTTPException(status_code=r.status_code, detail=r.text)
+    return r.json()
 
-    timeout = httpx.Timeout(20.0, connect=10.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            m = method.upper()
-            if m == "POST":
-                resp = await client.post(url, json=payload, headers=headers)
-            elif m == "GET":
-                # For GET, if payload is dict, send as params
-                params = payload if isinstance(payload, dict) else None
-                resp = await client.get(url, headers=headers, params=params)
-            elif m == "PUT":
-                resp = await client.put(url, json=payload, headers=headers)
-            elif m == "DELETE":
-                resp = await client.delete(url, headers=headers)
-            else:
-                return JSONResponse(
-                    status_code=400,
-                    content={"ok": False, "error": f"Unsupported HTTP method: {method}"},
-                )
-        except httpx.HTTPError as exc:
-            return JSONResponse(
-                status_code=502,
-                content={
-                    "ok": False,
-                    "error": "Upstream HTTP error",
-                    "details": str(exc),
-                    "upstream": {"url": url},
-                },
-            )
-
-    # Relay upstream JSON verbatim; if not JSON, wrap it.
-    try:
-        data = resp.json()
-        return JSONResponse(status_code=resp.status_code, content=data)
-    except ValueError:
-        return JSONResponse(
-            status_code=resp.status_code,
-            content={
-                "ok": False,
-                "error": "Non-JSON response from Dhan",
-                "status_code": resp.status_code,
-                "text": resp.text,
-            },
-        )
-
-# ---------------- MODELS (Marketfeed) ----------------
-class MarketfeedRequest(BaseModel):
-    # Dhan Market Quote accepts multiple segments as keys
-    NSE_EQ: Optional[List[int]] = Field(None, description="NSE Equity security IDs")
-    NSE_FNO: Optional[List[int]] = Field(None, description="NSE F&O security IDs")
-    BSE_EQ: Optional[List[int]] = Field(None, description="BSE Equity security IDs")
-    # add more segments if you need
-    class Config:
-        schema_extra = {
-            "example": {"NSE_EQ": [11536], "NSE_FNO": [49081, 49082]}
-        }
-
-# ---------------- ROOT & STATUS ----------------
-@app.get("/", tags=["Health & Status"])
-async def root():
-    return {"ok": True, "service": "DhanHQ API Proxy", "docs": "/docs"}
-
-@app.get("/health", tags=["Health & Status"])
-async def health():
-    return {"ok": True}
-
-@app.get("/broker_status", tags=["Health & Status"])
-async def broker_status():
-    cfg = _pick_env()
-    return {
-        "mode": os.getenv("MODE", "DRY").upper(),
-        "env": cfg["env"],
-        "base_url": cfg["base_url"],
-        "token_present": bool(cfg["token"]),
-        "client_id_present": bool(cfg["client_id"]),
-        "has_creds": bool(cfg["token"] and cfg["client_id"]),
+# ---- Option Chain ----
+@app.post("/optionchain")
+async def option_chain(body: OptionChainReq):
+    _check_creds()
+    url = f"{DHAN_BASE_URL}/optionchain"
+    payload = {
+        "UnderlyingScrip": body.UnderlyingScrip,
+        "UnderlyingSeg": body.UnderlyingSeg,
     }
+    if body.Expiry:
+        payload["Expiry"] = body.Expiry
 
-# ---------------- MARKETFEED (LTP/OHLC/QUOTE) ----------------
-# LTP
-@app.post("/marketfeed/ltp", tags=["Marketfeed"])
-@app.post("/marketfeed/ltp/", tags=["Marketfeed"])
-async def marketfeed_ltp(request: MarketfeedRequest):
-    return await _proxy_request("POST", "/marketfeed/ltp", request.dict(exclude_none=True))
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post(url, headers=_headers(), json=payload)
+    if r.status_code >= 400:
+        raise HTTPException(status_code=r.status_code, detail=r.text)
+    return r.json()
 
-# OHLC
-@app.post("/marketfeed/ohlc", tags=["Marketfeed"])
-@app.post("/marketfeed/ohlc/", tags=["Marketfeed"])
-async def marketfeed_ohlc(request: MarketfeedRequest):
-    return await _proxy_request("POST", "/marketfeed/ohlc", request.dict(exclude_none=True))
-
-# Quote (depth)
-@app.post("/marketfeed/quote", tags=["Marketfeed"])
-@app.post("/marketfeed/quote/", tags=["Marketfeed"])
-async def marketfeed_quote(request: MarketfeedRequest):
-    return await _proxy_request("POST", "/marketfeed/quote", request.dict(exclude_none=True))
-
-# ---------------- OPTION CHAIN ----------------
-# Dhan docs use: { "UnderlyingScrip": 13, "UnderlyingSeg": "IDX_I", "Expiry": "YYYY-MM-DD" }
-
-@app.post("/optionchain", tags=["Option Chain"])
-@app.post("/optionchain/", tags=["Option Chain"])
-async def option_chain(body: dict = Body(...)):
-    # Body is relayed exactly as given
-    return await _proxy_request("POST", "/optionchain", body)
-
-@app.post("/optionchain/expirylist", tags=["Option Chain"])
-@app.post("/optionchain/expirylist/", tags=["Option Chain"])
-async def option_chain_expirylist(body: dict = Body(...)):
-    return await _proxy_request("POST", "/optionchain/expirylist", body)
-
-# ---------------- ERROR HANDLER ----------------
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException):
-    return JSONResponse(status_code=exc.status_code, content={"ok": False, "error": exc.detail})
-
-# ---------------- LOCAL RUN ----------------
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "8000")), reload=bool(os.getenv("RELOAD", "")))
+# ---- Expiry List ----
+@app.post("/optionchain/expirylist")
+async def expiry_list(body: OptionChainReq):
+    _check_creds()
+    url = f"{DHAN_BASE_URL}/optionchain/expirylist"
+    payload = {
+        "UnderlyingScrip": body.UnderlyingScrip,
+        "UnderlyingSeg": body.UnderlyingSeg,
+    }
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post(url, headers=_headers(), json=payload)
+    if r.status_code >= 400:
+        raise HTTPException(status_code=r.status_code, detail=r.text)
+    return r.json()
