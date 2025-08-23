@@ -399,3 +399,69 @@ async def webhook(request: Request):
         tag=tag,
     )
     return {"ok": status in (200, 201), "mode": "LIVE", "received": data, "dhan_response": broker_resp}
+
+@app.get("/selftest")
+def selftest():
+    """
+    Run a sequence of checks automatically.
+    Returns JSON with pass/fail and details.
+    """
+    report = {}
+
+    # 1. Broker status
+    try:
+        bs = broker_status()
+        report["broker_status"] = {"ok": True, "data": bs}
+    except Exception as e:
+        report["broker_status"] = {"ok": False, "error": str(e)}
+
+    # 2. Expiries check
+    try:
+        exps = list_expiries("NIFTY")
+        report["expiries"] = {"ok": bool(exps.get("expiries")), "data": exps}
+    except Exception as e:
+        report["expiries"] = {"ok": False, "error": str(e)}
+
+    # 3. Strikes check
+    try:
+        if report.get("expiries",{}).get("ok"):
+            expiry = report["expiries"]["data"]["expiries"][0]
+            stks = list_strikes("NIFTY", expiry, "CE")
+            report["strikes"] = {"ok": bool(stks.get("strikes")), "data": stks}
+        else:
+            report["strikes"] = {"ok": False, "error": "no expiry"}
+    except Exception as e:
+        report["strikes"] = {"ok": False, "error": str(e)}
+
+    # 4. Security lookup
+    try:
+        if report.get("strikes",{}).get("ok"):
+            expiry = report["expiries"]["data"]["expiries"][0]
+            strike = report["strikes"]["data"]["strikes"][0]
+            sec = lookup_security_id("NIFTY", expiry, strike, "CE")
+            report["security_lookup"] = {"ok": bool(sec), "data": sec}
+        else:
+            report["security_lookup"] = {"ok": False, "error": "no strike"}
+    except Exception as e:
+        report["security_lookup"] = {"ok": False, "error": str(e)}
+
+    # 5. Webhook DRY simulation
+    try:
+        payload = {
+            "secret": WEBHOOK_SECRET,
+            "symbol": "NIFTY",
+            "action": "BUY",
+            "expiry": report.get("expiries",{}).get("data",{}).get("expiries",[None])[0],
+            "strike": report.get("strikes",{}).get("data",{}).get("strikes",[None])[0],
+            "option_type": "CE",
+            "qty": 50,
+            "price": "MARKET"
+        }
+        dry = {
+            "ok": True, "mode": "DRY", "received": payload
+        } if MODE != "LIVE" else {"note": "LIVE mode skip"}
+        report["webhook_dry"] = {"ok": True, "data": dry}
+    except Exception as e:
+        report["webhook_dry"] = {"ok": False, "error": str(e)}
+
+    return report
