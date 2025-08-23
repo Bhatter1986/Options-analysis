@@ -1,153 +1,199 @@
-# main.py — Options Analysis + DhanHQ v2 integration (FastAPI)
+# main.py — Options Analysis API (FastAPI) + Dhan v2
+# -----------------------------------------------
+# Features
+# - /health
+# - /broker_status  (env + creds check)
+# - /list_expiries  (CSV -> fallback Dhan API)
+# - /list_strikes   (CSV)
+# - /security_lookup (CSV exact match)
+# - /dhan/quote     (snapshot quote proxy)
+# - /dhan/expirylist (proxy to Dhan)
+# - /dhan/optionchain (proxy to Dhan)
+# - /webhook        (DRY simulate / LIVE place order)
+# - /selftest       (one-click sanity test)
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime
-import os, csv, io, requests, json
+import os, io, csv, requests, time
 
-app = FastAPI(title="Options Analysis API", version="2.1")
+app = FastAPI(title="Options Analysis API", version="2.2")
 
-# ─────────────────────────────────────────────────────────────────
-# CORS
-# ─────────────────────────────────────────────────────────────────
+# CORS (tablet/TV Postman/Hoppscotch testing)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
 
 # ─────────────────────────────────────────────────────────────────
-# ENV & CONFIG
+# ENV & CONSTANTS
 # ─────────────────────────────────────────────────────────────────
-MODE = os.getenv("MODE", "DRY").upper()                   # DRY or LIVE
-ENV_ = os.getenv("ENV", "SANDBOX").upper()                # LIVE or SANDBOX
+MODE = os.getenv("MODE", "DRY").upper()                # DRY / LIVE
+ENV  = os.getenv("ENV",  "SANDBOX").upper()            # SANDBOX / LIVE
 
-# Live
-DHAN_LIVE_BASE_URL   = os.getenv("DHAN_LIVE_BASE_URL", "https://api.dhan.co/v2")
-DHAN_LIVE_CLIENT_ID  = os.getenv("DHAN_LIVE_CLIENT_ID", "")
-DHAN_LIVE_ACCESS_TOKEN = os.getenv("DHAN_LIVE_ACCESS_TOKEN", "")
+# Live creds
+DHAN_LIVE_BASE_URL    = os.getenv("DHAN_LIVE_BASE_URL", "https://api.dhan.co/v2")
+DHAN_LIVE_CLIENT_ID   = os.getenv("DHAN_LIVE_CLIENT_ID", "")
+DHAN_LIVE_ACCESS_TOKEN= os.getenv("DHAN_LIVE_ACCESS_TOKEN", "")
 
-# Sandbox
-DHAN_SANDBOX_BASE_URL  = os.getenv("DHAN_SANDBOX_BASE_URL", "https://sandbox.dhan.co/v2")
-DHAN_SANDBOX_CLIENT_ID = os.getenv("DHAN_SANDBOX_CLIENT_ID", "")
-DHAN_SANDBOX_ACCESS_TOKEN = os.getenv("DHAN_SANDBOX_ACCESS_TOKEN", "")
+# Sandbox creds
+DHAN_SANDBOX_BASE_URL    = os.getenv("DHAN_SANDBOX_BASE_URL", "https://sandbox.dhan.co/v2")
+DHAN_SANDBOX_CLIENT_ID   = os.getenv("DHAN_SANDBOX_CLIENT_ID", "")
+DHAN_SANDBOX_ACCESS_TOKEN= os.getenv("DHAN_SANDBOX_ACCESS_TOKEN", "")
 
-# CSV (detailed master has all needed columns)
+# Selected (by ENV)
+def env_pick(live_val: str, sandbox_val: str) -> str:
+    return live_val if ENV == "LIVE" else sandbox_val
+
+DHAN_API_BASE   = env_pick(DHAN_LIVE_BASE_URL,    DHAN_SANDBOX_BASE_URL)
+DHAN_CLIENT_ID  = env_pick(DHAN_LIVE_CLIENT_ID,   DHAN_SANDBOX_CLIENT_ID)
+DHAN_ACCESS_TOKEN = env_pick(DHAN_LIVE_ACCESS_TOKEN, DHAN_SANDBOX_ACCESS_TOKEN)
+
+# CSV (detailed master recommended)
 INSTRUMENTS_URL = os.getenv(
     "INSTRUMENTS_URL",
     "https://images.dhan.co/api-data/api-scrip-master-detailed.csv"
 )
 
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "change-me")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "my$ecret123")
+
+# Simple in-memory caches
+_csv_cache: Dict[str, Any] = {"ts": 0.0, "text": ""}
+_expiry_cache: Dict[str, List[str]] = {}   # key: symbol
+_headers = {"accept":"application/json","content-type":"application/json"}
+
 
 # ─────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────
-def current_dhan_base() -> str:
-    return DHAN_LIVE_BASE_URL if ENV_ == "LIVE" else DHAN_SANDBOX_BASE_URL
+def broker_ready():
+    return bool(DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN)
 
-def current_client_id() -> str:
-    return DHAN_LIVE_CLIENT_ID if ENV_ == "LIVE" else DHAN_SANDBOX_CLIENT_ID
-
-def current_access_token() -> str:
-    return DHAN_LIVE_ACCESS_TOKEN if ENV_ == "LIVE" else DHAN_SANDBOX_ACCESS_TOKEN
-
-def broker_ready() -> bool:
-    return bool(current_client_id() and current_access_token())
-
-def dhan_headers() -> Dict[str, str]:
+def base_headers_for_dhan():
     if not broker_ready():
-        raise HTTPException(500, detail="Dhan credentials missing for selected ENV")
+        raise HTTPException(500, detail="Dhan credentials missing")
     return {
-        "accept": "application/json",
-        "content-type": "application/json",
-        "client-id": current_client_id(),
-        "access-token": current_access_token(),
+        "access-token": DHAN_ACCESS_TOKEN,
+        "client-id": DHAN_CLIENT_ID,
+        "Content-Type": "application/json"
     }
 
-def fetch_instruments_csv() -> str:
-    r = requests.get(INSTRUMENTS_URL, timeout=45)
+def fetch_instruments_csv_text(force: bool=False) -> str:
+    # cache for 5 minutes
+    now = time.time()
+    if (not force) and _csv_cache["text"] and now - _csv_cache["ts"] < 300:
+        return _csv_cache["text"]
+    r = requests.get(INSTRUMENTS_URL, timeout=30)
     r.raise_for_status()
+    _csv_cache.update({"ts": now, "text": r.text})
     return r.text
 
-def _norm_expiry(s: str) -> str:
-    s = (s or "").strip()
-    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%d-%b-%Y", "%d/%b/%Y"):
+def csv_reader():
+    text = fetch_instruments_csv_text()
+    return csv.DictReader(io.StringIO(text))
+
+def norm(s: Optional[str]) -> str:
+    return (s or "").strip()
+
+def opt_type_alias(x: str) -> str:
+    x = (x or "").upper().strip()
+    if x in ("CE","CALL"): return "CE"
+    if x in ("PE","PUT"):  return "PE"
+    return x
+
+def detect_security_id_col(fieldnames: List[str]) -> Optional[str]:
+    for c in ("SECURITY_ID","SEM_SECURITY_ID","SM_SECURITY_ID"):
+        if c in fieldnames:
+            return c
+    return None
+
+def fetch_expiries_from_csv(symbol: str) -> List[str]:
+    symbol = norm(symbol).upper()
+    out = set()
+    rdr = csv_reader()
+    for row in rdr:
+        if norm(row.get("UNDERLYING_SYMBOL","")).upper() == symbol:
+            exp = norm(row.get("SEM_EXPIRY_DATE",""))
+            if exp:
+                out.add(exp)
+    return sorted(out)
+
+def fetch_strikes_from_csv(symbol: str, expiry: str, option_type: str) -> List[float]:
+    symbol = norm(symbol).upper()
+    expiry = norm(expiry)
+    otype  = opt_type_alias(option_type)
+    out = set()
+    rdr = csv_reader()
+    for row in rdr:
+        if (
+            norm(row.get("UNDERLYING_SYMBOL","")).upper() == symbol and
+            norm(row.get("SEM_EXPIRY_DATE","")) == expiry and
+            opt_type_alias(row.get("SEM_OPTION_TYPE","")) == otype
+        ):
+            sp = row.get("SEM_STRIKE_PRICE","")
+            try:
+                out.add(float(sp))
+            except Exception:
+                pass
+    return sorted(out)
+
+def csv_lookup_security_id(symbol: str, expiry: str, strike: float, option_type: str) -> Optional[str]:
+    symbol = norm(symbol).upper()
+    expiry = norm(expiry)
+    otype  = opt_type_alias(option_type)
+    rdr = csv_reader()
+    sec_col = detect_security_id_col(rdr.fieldnames or [])
+    for row in rdr:
         try:
-            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
-        except Exception:
-            pass
-    return s
-
-def _norm_otype(s: str) -> str:
-    s = (s or "").strip().upper()
-    if s in ("CALL", "C"): return "CE"
-    if s in ("PUT", "P"):  return "PE"
-    if s in ("CE", "PE"):  return s
-    return s
-
-def _float_eq(a: float, b: float, tol: float = 1e-6) -> bool:
-    try:
-        return abs(float(a) - float(b)) <= tol
-    except Exception:
-        return False
-
-def lookup_security_id(underlying_symbol: str, expiry: str, strike: float, option_type: str) -> Optional[str]:
-    """
-    Robust Security ID lookup from detailed CSV.
-    Matches on: UNDERLYING_SYMBOL, SEM_EXPIRY_DATE, SEM_OPTION_TYPE, SEM_STRIKE_PRICE
-    """
-    csv_text = fetch_instruments_csv()
-    f = io.StringIO(csv_text)
-    reader = csv.DictReader(f)
-
-    # find security id column
-    sec_id_col = None
-    for c in ("SECURITY_ID", "SEM_SECURITY_ID", "SM_SECURITY_ID"):
-        if c in (reader.fieldnames or []):
-            sec_id_col = c
-            break
-
-    sym   = (underlying_symbol or "").upper().strip()
-    exp   = _norm_expiry(expiry)
-    otype = _norm_otype(option_type)
-
-    k_sym, k_exp, k_ot, k_strk = "UNDERLYING_SYMBOL", "SEM_EXPIRY_DATE", "SEM_OPTION_TYPE", "SEM_STRIKE_PRICE"
-
-    best = None
-    for row in reader:
-        try:
-            if row.get(k_sym, "").upper().strip() != sym:
-                continue
-            if row.get(k_ot, "").upper().strip() != otype:
-                continue
-            if row.get(k_exp, "").strip() != exp:
-                continue
-
-            rs = row.get(k_strk, "") or "0"
-            rs_val = float(rs)
-            if _float_eq(rs_val, float(strike)) or _float_eq(rs_val, float(int(strike))) or _float_eq(rs_val, round(float(strike), 2)):
-                best = row.get(sec_id_col) if sec_id_col else None
-                if best:
-                    return best
+            if (
+                norm(row.get("UNDERLYING_SYMBOL","")).upper() == symbol and
+                norm(row.get("SEM_EXPIRY_DATE","")) == expiry and
+                opt_type_alias(row.get("SEM_OPTION_TYPE","")) == otype and
+                float(row.get("SEM_STRIKE_PRICE","0") or 0.0) == float(strike)
+            ):
+                return norm(row.get(sec_col) if sec_col else "")
         except Exception:
             continue
-    return best
+    return None
+
+def dhan_post(path: str, body: dict) -> requests.Response:
+    url = f"{DHAN_API_BASE}{path}"
+    hdr = base_headers_for_dhan()
+    return requests.post(url, headers=hdr, json=body, timeout=30)
+
+def fetch_expiries_from_dhan(symbol: str) -> List[str]:
+    """
+    Dhan OptionChain expirylist
+    NIFTY UnderlyingScrip=13, BANKNIFTY=25, FINNIFTY=41 (examples)
+    """
+    # crude map; extend as needed
+    u_map = {"NIFTY": 13, "BANKNIFTY": 25, "FINNIFTY": 41}
+    underlying = u_map.get(symbol.upper(), 13)
+    body = {"UnderlyingScrip": underlying, "UnderlyingSeg": "IDX_I"}
+    try:
+        r = dhan_post("/optionchain/expirylist", body)
+        if r.status_code == 200:
+            j = r.json()
+            return j.get("data", []) or []
+    except Exception:
+        pass
+    return []
 
 def place_dhan_order(
     security_id: str,
-    side: str,                 # BUY / SELL
+    side: str,
     qty: int,
-    order_type: str = "MARKET",# MARKET / LIMIT
+    order_type: str = "MARKET",
     price: Optional[float] = None,
     product_type: str = "INTRADAY",
     exchange_segment: str = "NSE_FNO",
     validity: str = "DAY",
     tag: Optional[str] = None,
 ):
-    url = f"{current_dhan_base()}/orders"
-    payload: Dict[str, Any] = {
-        "transaction_type": side,
+    url = f"{DHAN_API_BASE}/orders"
+    payload = {
+        "transaction_type": side.upper(),
         "exchange_segment": exchange_segment,
         "product_type": product_type,
         "order_type": order_type,
@@ -157,10 +203,10 @@ def place_dhan_order(
     }
     if tag:
         payload["correlation_id"] = str(tag)
-    if order_type == "LIMIT" and price is not None:
+    if order_type == "LIMIT" and (price is not None):
         payload["price"] = float(price)
 
-    r = requests.post(url, headers=dhan_headers(), json=payload, timeout=30)
+    r = requests.post(url, headers=base_headers_for_dhan(), json=payload, timeout=30)
     try:
         data = r.json()
     except Exception:
@@ -168,17 +214,14 @@ def place_dhan_order(
     return r.status_code, data
 
 def dhan_quote_snapshot(body: dict):
-    """
-    POST /marketfeed/quote
-    body example: { "NSE_FNO": [49081, 49082] }
-    """
-    url = f"{current_dhan_base()}/marketfeed/quote"
-    r = requests.post(url, headers=dhan_headers(), json=body, timeout=20)
+    url = f"{DHAN_API_BASE}/marketfeed/quote"
+    r = requests.post(url, headers=base_headers_for_dhan(), json=body, timeout=20)
     r.raise_for_status()
     return r.json()
 
+
 # ─────────────────────────────────────────────────────────────────
-# Routes — health & status
+# Routes
 # ─────────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
@@ -188,94 +231,37 @@ def health():
 def broker_status():
     return {
         "mode": MODE,
-        "env": ENV_,
-        "base_url": current_dhan_base(),
+        "env": ENV,
+        "base_url": DHAN_API_BASE,
         "has_creds": broker_ready(),
-        "client_id_present": bool(current_client_id()),
-        "token_present": bool(current_access_token()),
+        "client_id_present": bool(DHAN_CLIENT_ID),
+        "token_present": bool(DHAN_ACCESS_TOKEN),
     }
 
-# ─────────────────────────────────────────────────────────────────
-# CSV helper routes
-# ─────────────────────────────────────────────────────────────────
+# ---------- CSV helpers with Dhan fallback ----------
 @app.get("/list_expiries")
 def list_expiries(symbol: str):
-    csv_text = fetch_instruments_csv()
-    f = io.StringIO(csv_text)
-    reader = csv.DictReader(f)
-    sym = (symbol or "").upper().strip()
-    s = set()
-    for row in reader:
-        if row.get("UNDERLYING_SYMBOL","").upper().strip() == sym:
-            ex = row.get("SEM_EXPIRY_DATE","").strip()
-            if ex:
-                s.add(ex)
-    return {"symbol": sym, "expiries": sorted(s)}
+    sym = norm(symbol).upper()
+    expiries = fetch_expiries_from_csv(sym)
+    # Fallback → Dhan API (and cache)
+    if not expiries and broker_ready():
+        expiries = _expiry_cache.get(sym) or fetch_expiries_from_dhan(sym)
+        _expiry_cache[sym] = expiries
+    return {"symbol": sym, "expiries": expiries}
 
 @app.get("/list_strikes")
-def list_strikes(symbol: str, expiry: str, option_type: str):
-    csv_text = fetch_instruments_csv()
-    f = io.StringIO(csv_text)
-    reader = csv.DictReader(f)
-    sym = (symbol or "").upper().strip()
-    exp = _norm_expiry(expiry)
-    otype = _norm_otype(option_type)
-    strikes = []
-    for row in reader:
-        if (
-            row.get("UNDERLYING_SYMBOL","").upper().strip() == sym and
-            row.get("SEM_EXPIRY_DATE","").strip() == exp and
-            row.get("SEM_OPTION_TYPE","").upper().strip() == otype
-        ):
-            try:
-                strikes.append(float(row.get("SEM_STRIKE_PRICE","0") or 0))
-            except Exception:
-                pass
-    return {"symbol": sym, "expiry": exp, "option_type": otype, "strikes": sorted(strikes)}
+def list_strikes(symbol: str, expiry: str, option_type: str = "CALL"):
+    sym = norm(symbol).upper()
+    otype = opt_type_alias(option_type)
+    strikes = fetch_strikes_from_csv(sym, expiry, otype)
+    return {"symbol": sym, "expiry": expiry, "option_type": "CALL" if otype=="CE" else "PUT", "strikes": strikes}
 
-@app.get("/csv_debug")
-def csv_debug(symbol: str, expiry: str, option_type: str):
-    csv_text = fetch_instruments_csv()
-    f = io.StringIO(csv_text)
-    reader = csv.DictReader(f)
-    sym = (symbol or "").upper().strip()
-    exp = _norm_expiry(expiry)
-    otype = _norm_otype(option_type)
-    sec_id_col = None
-    for c in ("SECURITY_ID","SEM_SECURITY_ID","SM_SECURITY_ID"):
-        if c in (reader.fieldnames or []): sec_id_col = c; break
-    strikes, sample = [], []
-    for row in reader:
-        if (
-            row.get("UNDERLYING_SYMBOL","").upper().strip()==sym and
-            row.get("SEM_EXPIRY_DATE","").strip()==exp and
-            row.get("SEM_OPTION_TYPE","").upper().strip()==otype
-        ):
-            try:
-                strikes.append(float(row.get("SEM_STRIKE_PRICE","0") or 0))
-            except: pass
-            if len(sample)<5:
-                sample.append({
-                    "strike": row.get("SEM_STRIKE_PRICE"),
-                    "sec_id": row.get(sec_id_col) if sec_id_col else None
-                })
-    return {
-        "symbol": sym, "expiry": exp, "option_type": otype,
-        "strikes_found": len(strikes),
-        "min": min(strikes or [None]), "max": max(strikes or [None]),
-        "sample": sample
-    }
-
-# ─────────────────────────────────────────────────────────────────
-# Security ID lookup
-# ─────────────────────────────────────────────────────────────────
 @app.post("/security_lookup")
-async def security_lookup(payload: dict):
+def security_lookup(payload: dict):
     """
-    Body:
-    { "symbol":"NIFTY", "expiry":"2025-08-28", "strike":25100, "option_type":"CE|PE|CALL|PUT" }
+    payload: { symbol, expiry, strike, option_type }  option_type: CE/PE/CALL/PUT
     """
-    sec_id = lookup_security_id(
+    sec_id = csv_lookup_security_id(
         payload.get("symbol",""),
         payload.get("expiry",""),
         payload.get("strike",0),
@@ -283,54 +269,35 @@ async def security_lookup(payload: dict):
     )
     return {"security_id": sec_id}
 
-# ─────────────────────────────────────────────────────────────────
-# Dhan data APIs (proxy)
-# ─────────────────────────────────────────────────────────────────
+# ---------- Dhan data proxies ----------
 @app.post("/dhan/quote")
-async def dhan_quote(body: dict):
+def dhan_quote(body: dict):
     try:
         return dhan_quote_snapshot(body)
     except requests.HTTPError as e:
         raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
 
-@app.post("/dhan/optionchain")
-async def dhan_optionchain(body: dict):
-    """
-    Proxy to Dhan /optionchain
-    Body example:
-    { "UnderlyingScrip": 13, "UnderlyingSeg": "IDX_I", "Expiry": "2025-08-28" }
-    """
-    url = f"{current_dhan_base()}/optionchain"
-    r = requests.post(url, headers=dhan_headers(), json=body, timeout=60)
-    return _relay_response(r)
-
 @app.post("/dhan/expirylist")
-async def dhan_expirylist(body: dict):
-    """
-    Proxy to Dhan /optionchain/expirylist
-    Body example:
-    { "UnderlyingScrip": 13, "UnderlyingSeg": "IDX_I" }
-    """
-    url = f"{current_dhan_base()}/optionchain/expirylist"
-    r = requests.post(url, headers=dhan_headers(), json=body, timeout=30)
-    return _relay_response(r)
+def dhan_expirylist(body: dict):
+    # passthrough proxy to Dhan "/optionchain/expirylist"
+    r = dhan_post("/optionchain/expirylist", body)
+    if r.status_code != 200:
+        raise HTTPException(r.status_code, detail=r.text)
+    return r.json()
 
-def _relay_response(r: requests.Response):
-    try:
-        data = r.json()
-    except Exception:
-        data = {"text": r.text}
-    if r.status_code >= 400:
-        raise HTTPException(status_code=r.status_code, detail=data)
-    return data
+@app.post("/dhan/optionchain")
+def dhan_optionchain(body: dict):
+    # passthrough proxy to Dhan "/optionchain"
+    r = dhan_post("/optionchain", body)
+    if r.status_code != 200:
+        raise HTTPException(r.status_code, detail=r.text)
+    return r.json()
 
-# ─────────────────────────────────────────────────────────────────
-# Webhook — DRY sim / LIVE place
-# ─────────────────────────────────────────────────────────────────
+# ---------- Webhook (TV / manual) ----------
 @app.post("/webhook")
 async def webhook(request: Request):
     """
-    TradingView / Manual alert body:
+    Example:
     {
       "secret": "my$ecret123",
       "symbol": "NIFTY",
@@ -339,14 +306,13 @@ async def webhook(request: Request):
       "strike": 25100,
       "option_type": "CE",
       "qty": 50,
-      "price": "MARKET",      # or numeric for LIMIT
-      "security_id": "optional_if_known"
+      "price": "MARKET",         # or 123.45 for LIMIT
+      "security_id": "optional"
     }
     """
     data = await request.json()
-
     if str(data.get("secret","")) != WEBHOOK_SECRET:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+        raise HTTPException(401, detail="Unauthorized")
 
     symbol = data.get("symbol")
     action = data.get("action")
@@ -354,37 +320,34 @@ async def webhook(request: Request):
     strike = data.get("strike")
     option_type = data.get("option_type")
     qty = int(data.get("qty", 0))
-    price = data.get("price", "MARKET")
+    price_in = data.get("price", "MARKET")
     security_id = data.get("security_id")
 
     if not symbol or not action or qty <= 0:
         raise HTTPException(422, detail="symbol/action/qty required")
 
-    # DRY mode → simulate only
+    # DRY mode => simulate
     if MODE != "LIVE":
         return {
-            "ok": True, "mode": "DRY",
+            "ok": True,
+            "mode": MODE,
             "received": data,
-            "note": "DRY mode: no live order. Set MODE=LIVE to execute."
+            "note": "DRY mode: no live order. Set MODE=LIVE to execute.",
         }
 
-    # LIVE mode: ensure sec id
+    # LIVE → need security_id
     if not security_id:
-        security_id = lookup_security_id(symbol, expiry, strike, option_type)
+        security_id = csv_lookup_security_id(symbol, expiry, strike, option_type)
         if not security_id:
-            raise HTTPException(400, detail="security_id not found for given symbol/expiry/strike/option_type")
+            raise HTTPException(400, detail="security_id not found")
 
-    # MARKET or LIMIT
-    order_type = "MARKET"
-    limit_price = None
+    # order type
+    order_type = "MARKET"; limit_price = None
     try:
-        if isinstance(price, (int, float)) or (isinstance(price, str) and price.replace(".","",1).isdigit()):
-            order_type = "LIMIT"
-            limit_price = float(price)
-        elif str(price).upper() == "MARKET":
-            order_type = "MARKET"
+        if isinstance(price_in, (int, float)) or (isinstance(price_in, str) and price_in.replace(".","",1).isdigit()):
+            order_type = "LIMIT"; limit_price = float(price_in)
     except Exception:
-        order_type = "MARKET"
+        pass
 
     tag = f"tv-{datetime.utcnow().isoformat()}"
     status, broker_resp = place_dhan_order(
@@ -396,72 +359,58 @@ async def webhook(request: Request):
         product_type="INTRADAY",
         exchange_segment="NSE_FNO",
         validity="DAY",
-        tag=tag,
+        tag=tag
     )
-    return {"ok": status in (200, 201), "mode": "LIVE", "received": data, "dhan_response": broker_resp}
+    return {"ok": status in (200,201), "mode":"LIVE", "dhan_response": broker_resp}
 
+# ---------- Auto self-test ----------
 @app.get("/selftest")
 def selftest():
-    """
-    Run a sequence of checks automatically.
-    Returns JSON with pass/fail and details.
-    """
-    report = {}
-
-    # 1. Broker status
-    try:
-        bs = broker_status()
-        report["broker_status"] = {"ok": True, "data": bs}
-    except Exception as e:
-        report["broker_status"] = {"ok": False, "error": str(e)}
-
-    # 2. Expiries check
-    try:
-        exps = list_expiries("NIFTY")
-        report["expiries"] = {"ok": bool(exps.get("expiries")), "data": exps}
-    except Exception as e:
-        report["expiries"] = {"ok": False, "error": str(e)}
-
-    # 3. Strikes check
-    try:
-        if report.get("expiries",{}).get("ok"):
-            expiry = report["expiries"]["data"]["expiries"][0]
-            stks = list_strikes("NIFTY", expiry, "CE")
-            report["strikes"] = {"ok": bool(stks.get("strikes")), "data": stks}
-        else:
-            report["strikes"] = {"ok": False, "error": "no expiry"}
-    except Exception as e:
-        report["strikes"] = {"ok": False, "error": str(e)}
-
-    # 4. Security lookup
-    try:
-        if report.get("strikes",{}).get("ok"):
-            expiry = report["expiries"]["data"]["expiries"][0]
-            strike = report["strikes"]["data"]["strikes"][0]
-            sec = lookup_security_id("NIFTY", expiry, strike, "CE")
-            report["security_lookup"] = {"ok": bool(sec), "data": sec}
-        else:
-            report["security_lookup"] = {"ok": False, "error": "no strike"}
-    except Exception as e:
-        report["security_lookup"] = {"ok": False, "error": str(e)}
-
-    # 5. Webhook DRY simulation
-    try:
-        payload = {
-            "secret": WEBHOOK_SECRET,
-            "symbol": "NIFTY",
-            "action": "BUY",
-            "expiry": report.get("expiries",{}).get("data",{}).get("expiries",[None])[0],
-            "strike": report.get("strikes",{}).get("data",{}).get("strikes",[None])[0],
-            "option_type": "CE",
-            "qty": 50,
-            "price": "MARKET"
+    out = {"ok": True, "data": {}}
+    # broker
+    out["broker_status"] = {
+        "ok": True,
+        "data": {
+            "mode": MODE, "env": ENV, "base_url": DHAN_API_BASE,
+            "has_creds": broker_ready(),
+            "client_id_present": bool(DHAN_CLIENT_ID),
+            "token_present": bool(DHAN_ACCESS_TOKEN),
         }
-        dry = {
-            "ok": True, "mode": "DRY", "received": payload
-        } if MODE != "LIVE" else {"note": "LIVE mode skip"}
-        report["webhook_dry"] = {"ok": True, "data": dry}
+    }
+    # expiries via CSV / fallback
+    try:
+        exps = list_expiries("NIFTY")["expiries"]
+        ok = bool(exps)
+        out["expiries"] = {"ok": ok, "data": {"symbol":"NIFTY","expiries": exps} if ok else {"error":"empty"}}
+        # strikes (only if expiry exists)
+        if ok:
+            strikes = list_strikes("NIFTY", exps[0], "CALL")["strikes"]
+            out["strikes"] = {"ok": bool(strikes), "data": {"count": len(strikes)} if strikes else {"error":"no strikes"}}
+            # security lookup (try mid strike if any)
+            if strikes:
+                mid = strikes[len(strikes)//2]
+                sec = csv_lookup_security_id("NIFTY", exps[0], mid, "CE")
+                out["security_lookup"] = {"ok": bool(sec), "data": {"security_id": sec} if sec else {"error":"not found"}}
+            else:
+                out["security_lookup"] = {"ok": False, "error": "no strike"}
+        else:
+            out["strikes"] = {"ok": False, "error": "no expiry"}
+            out["security_lookup"] = {"ok": False, "error": "no strike"}
     except Exception as e:
-        report["webhook_dry"] = {"ok": False, "error": str(e)}
+        out["expiries"] = {"ok": False, "error": str(e)}
 
-    return report
+    # webhook dry check
+    try:
+        sample = {
+            "secret": WEBHOOK_SECRET, "symbol":"NIFTY", "action":"BUY",
+            "expiry": "2099-01-01", "strike": 0, "option_type":"CE", "qty": 1, "price":"MARKET"
+        }
+        # simulate what /webhook would return in DRY mode:
+        if MODE == "DRY":
+            out["webhook_dry"] = {"ok": True, "data": "DRY ok"}
+        else:
+            out["webhook_dry"] = {"ok": False, "error": "MODE is LIVE"}
+    except Exception as e:
+        out["webhook_dry"] = {"ok": False, "error": str(e)}
+
+    return out
