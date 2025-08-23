@@ -75,3 +75,6 @@ if __name__ == "__main__":
     )
 from marketfeed import router as marketfeed_router
 app.include_router(marketfeed_router)
+from option_chain import app as option_chain_app
+
+app.mount("/optionchain", option_chain_app)
