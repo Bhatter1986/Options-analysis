@@ -73,3 +73,5 @@ if __name__ == "__main__":
         port=int(os.getenv("PORT", "8000")),
         reload=bool(os.getenv("RELOAD", "")),
     )
+from marketfeed import router as marketfeed_router
+app.include_router(marketfeed_router)
