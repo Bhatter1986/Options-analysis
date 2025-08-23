@@ -1,67 +1,90 @@
-# main.py
+# main.py — Options Analysis API (FastAPI) + Dhan v2 + CSV helpers
 from fastapi import FastAPI, Body, HTTPException
-from pydantic import BaseModel, Field, validator
-import os, requests
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from typing import Optional, List, Dict, Any
+import os, requests, time, io, csv
 
-app = FastAPI(title="Options Analysis API", version="2.0")
+app = FastAPI(title="Options Analysis API", version="2.3")
 
-# =========================
+# ─────────────────────────────────────────────────────────────────
+# CORS
+# ─────────────────────────────────────────────────────────────────
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ─────────────────────────────────────────────────────────────────
 # ENV / CONFIG
-# =========================
-MODE = os.getenv("MODE", "DRY").upper()  # DRY | LIVE
+# ─────────────────────────────────────────────────────────────────
+MODE = os.getenv("MODE", "DRY").upper()        # DRY | LIVE (order simulate vs live)
+ENV  = os.getenv("ENV", "SANDBOX").upper()     # SANDBOX | LIVE (which creds/base)
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "my$ecret123")
 
 # SANDBOX
-SB_BASE   = os.getenv("DHAN_SANDBOX_BASE_URL", "https://sandbox.dhan.co/v2")
-SB_TOKEN  = os.getenv("DHAN_SANDBOX_ACCESS_TOKEN", "")
-SB_CID    = os.getenv("DHAN_SANDBOX_CLIENT_ID", "")
+SB_BASE = os.getenv("DHAN_SANDBOX_BASE_URL", "https://sandbox.dhan.co/v2")
+SB_CID  = os.getenv("DHAN_SANDBOX_CLIENT_ID", "")
+SB_TOK  = os.getenv("DHAN_SANDBOX_ACCESS_TOKEN", "")
 
 # LIVE
-LV_BASE   = os.getenv("DHAN_LIVE_BASE_URL", "https://api.dhan.co/v2")
-LV_TOKEN  = os.getenv("DHAN_LIVE_ACCESS_TOKEN", "")
-LV_CID    = os.getenv("DHAN_LIVE_CLIENT_ID", "")
+LV_BASE = os.getenv("DHAN_LIVE_BASE_URL", "https://api.dhan.co/v2")
+LV_CID  = os.getenv("DHAN_LIVE_CLIENT_ID", "")
+LV_TOK  = os.getenv("DHAN_LIVE_ACCESS_TOKEN", "")
 
-# Optional CSV (kept for future)
-INSTR_CSV = os.getenv("INSTRUMENTS_URL", "")
-
-def use_live() -> bool:
-    return MODE == "LIVE"
+def use_live_env() -> bool:
+    return ENV == "LIVE"
 
 def dhan_base() -> str:
-    return LV_BASE if use_live() else SB_BASE
+    return LV_BASE if use_live_env() else SB_BASE
 
-def dhan_headers() -> dict:
-    token = LV_TOKEN if use_live() else SB_TOKEN
-    cid   = LV_CID   if use_live() else SB_CID
+def dhan_headers() -> Dict[str, str]:
+    token = LV_TOK if use_live_env() else SB_TOK
+    cid   = LV_CID if use_live_env() else SB_CID
+    if not token or not cid:
+        raise HTTPException(500, detail="Dhan credentials missing for selected ENV")
     return {
         "Content-Type": "application/json",
         "access-token": token,
         "client-id": cid,
     }
 
-# =========================
-# BASIC
-# =========================
+# Instruments CSV (Detailed)
+INSTRUMENTS_URL = os.getenv(
+    "INSTRUMENTS_URL",
+    "https://images.dhan.co/api-data/api-scrip-master-detailed.csv"
+)
+
+# ─────────────────────────────────────────────────────────────────
+# HEALTH / STATUS
+# ─────────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
     return {"ok": True}
 
 @app.get("/broker_status")
 def broker_status():
-    base = dhan_base()
-    h = dhan_headers()
+    try:
+        h = dhan_headers()
+        has_creds = True
+    except HTTPException:
+        h = {}
+        has_creds = False
     return {
         "mode": MODE,
-        "env": "LIVE" if use_live() else "SANDBOX",
-        "base_url": base,
-        "has_creds": bool(h.get("access-token")) and bool(h.get("client-id")),
+        "env": ENV,
+        "base_url": dhan_base(),
+        "has_creds": has_creds,
         "client_id_present": bool(h.get("client-id")),
         "token_present": bool(h.get("access-token")),
+        "instruments_url": INSTRUMENTS_URL,
     }
 
-# =========================
-# DHAN v2: OPTION-CHAIN
-# =========================
+# ─────────────────────────────────────────────────────────────────
+# DHAN v2 PROXIES (Option-Chain & Market Quote)
+# ─────────────────────────────────────────────────────────────────
 class ExpiryListReq(BaseModel):
     UnderlyingScrip: int = Field(13, description="NIFTY index security_id")
     UnderlyingSeg: str = Field("IDX_I", description="Exchange segment enum")
@@ -69,41 +92,35 @@ class ExpiryListReq(BaseModel):
 @app.post("/dhan/expirylist")
 def dhan_expirylist(body: ExpiryListReq = Body(...)):
     url = f"{dhan_base()}/optionchain/expirylist"
-    r = requests.post(url, headers=dhan_headers(), json=body.dict())
+    r = requests.post(url, headers=dhan_headers(), json=body.dict(), timeout=30)
     try:
         return r.json()
     except Exception:
         raise HTTPException(status_code=r.status_code, detail=r.text)
 
 class OptionChainReq(BaseModel):
-    UnderlyingScrip: int = Field(..., description="Underlying security id")
-    UnderlyingSeg: str = Field("IDX_I", description="Exchange segment enum")
-    Expiry: str = Field(..., description="YYYY-MM-DD")
+    UnderlyingScrip: int
+    UnderlyingSeg: str = "IDX_I"
+    Expiry: str
 
 @app.post("/dhan/optionchain")
 def dhan_optionchain(body: OptionChainReq = Body(...)):
     url = f"{dhan_base()}/optionchain"
-    r = requests.post(url, headers=dhan_headers(), json=body.dict())
+    r = requests.post(url, headers=dhan_headers(), json=body.dict(), timeout=30)
     try:
         return r.json()
     except Exception:
         raise HTTPException(status_code=r.status_code, detail=r.text)
 
-# =========================
-# DHAN v2: MARKET QUOTE
-# =========================
 class QuoteReq(BaseModel):
-    NSE_FNO: list[int] | None = None
-    NSE_EQ: list[int] | None = None
-    BSE_EQ: list[int] | None = None
-
-    @validator("*", pre=True)
-    def _empty_to_none(cls, v):
-        return v if v not in ([], None, "") else None
+    NSE_FNO: Optional[List[int]] = None
+    NSE_EQ: Optional[List[int]] = None
+    BSE_EQ: Optional[List[int]] = None
 
 def _proxy_quote(path: str, body: QuoteReq):
     url = f"{dhan_base()}{path}"
-    r = requests.post(url, headers=dhan_headers(), json=body.dict(exclude_none=True))
+    payload = {k: v for k, v in body.dict().items() if v}
+    r = requests.post(url, headers=dhan_headers(), json=payload, timeout=30)
     try:
         return r.json()
     except Exception:
@@ -121,109 +138,197 @@ def dhan_ohlc(body: QuoteReq = Body(...)):
 def dhan_quote(body: QuoteReq = Body(...)):
     return _proxy_quote("/marketfeed/quote", body)
 
-# =========================
-# SECURITY LOOKUP (placeholder)
-# =========================
+# ─────────────────────────────────────────────────────────────────
+# INSTRUMENTS CSV HELPERS (expiry/strike/security_id)
+# ─────────────────────────────────────────────────────────────────
+_csv_cache: Dict[str, Any] = {"ts": 0.0, "text": ""}
+
+def _csv_text(force: bool=False) -> str:
+    now = time.time()
+    if not force and _csv_cache["text"] and now - _csv_cache["ts"] < 600:
+        return _csv_cache["text"]
+    r = requests.get(INSTRUMENTS_URL, timeout=45)
+    r.raise_for_status()
+    _csv_cache["ts"] = now
+    _csv_cache["text"] = r.text
+    return _csv_cache["text"]
+
+def _reader(force: bool=False) -> csv.DictReader:
+    return csv.DictReader(io.StringIO(_csv_text(force)))
+
+def _norm(x: Optional[str]) -> str:
+    return (x or "").strip()
+
+def _otype(x: str) -> str:
+    x = (x or "").strip().upper()
+    if x in ("CALL","CE"): return "CE"
+    if x in ("PUT","PE"):  return "PE"
+    return x
+
+def _secid_col(fields: Optional[List[str]]) -> Optional[str]:
+    fields = fields or []
+    for k in ("SECURITY_ID","SEM_SECURITY_ID","SM_SECURITY_ID"):
+        if k in fields:
+            return k
+    return None
+
+@app.post("/instruments/refresh")
+def refresh_instruments():
+    _ = _csv_text(force=True)
+    return {"ok": True, "source": INSTRUMENTS_URL, "cached": True}
+
+@app.get("/list_expiries")
+def list_expiries(symbol: str):
+    sym = _norm(symbol).upper()
+    expiries = set()
+    rdr = _reader()
+    for row in rdr:
+        if _norm(row.get("UNDERLYING_SYMBOL","")).upper() == sym:
+            exp = _norm(row.get("SEM_EXPIRY_DATE",""))
+            if exp:
+                expiries.add(exp)
+    return {"symbol": sym, "expiries": sorted(expiries)}
+
+@app.get("/list_strikes")
+def list_strikes(symbol: str, expiry: str, option_type: str = "CALL"):
+    sym = _norm(symbol).upper()
+    exp = _norm(expiry)
+    ot  = _otype(option_type)
+    strikes = set()
+    rdr = _reader()
+    for row in rdr:
+        if (
+            _norm(row.get("UNDERLYING_SYMBOL","")).upper() == sym and
+            _norm(row.get("SEM_EXPIRY_DATE","")) == exp and
+            _otype(row.get("SEM_OPTION_TYPE","")) == ot
+        ):
+            sp = _norm(row.get("SEM_STRIKE_PRICE",""))
+            try:
+                strikes.add(float(sp))
+            except Exception:
+                pass
+    return {
+        "symbol": sym, "expiry": exp,
+        "option_type": "CALL" if ot == "CE" else "PUT",
+        "strikes": sorted(strikes)
+    }
+
 class SecLookupReq(BaseModel):
     symbol: str
     expiry: str
-    strike: float | int
-    option_type: str   # "CALL"/"PUT" or "CE"/"PE"
+    strike: float
+    option_type: str  # CALL/PUT or CE/PE
 
 @app.post("/security_lookup")
 def security_lookup(body: SecLookupReq):
-    # CSV resolver intentionally disabled for now.
-    return {
-        "security_id": None,
-        "note": "CSV resolver disabled. Use Dhan instruments list to pick the correct security IDs."
-    }
+    sym = _norm(body.symbol).upper()
+    exp = _norm(body.expiry)
+    ot  = _otype(body.option_type)
+    rdr = _reader()
+    sec_col = _secid_col(rdr.fieldnames)
+    for row in rdr:
+        try:
+            if (
+                _norm(row.get("UNDERLYING_SYMBOL","")).upper() == sym and
+                _norm(row.get("SEM_EXPIRY_DATE","")) == exp and
+                _otype(row.get("SEM_OPTION_TYPE","")) == ot and
+                float(_norm(row.get("SEM_STRIKE_PRICE","0")) or 0.0) == float(body.strike)
+            ):
+                sid = _norm(row.get(sec_col) if sec_col else "")
+                return {"security_id": sid or None}
+        except Exception:
+            continue
+    return {"security_id": None}
 
-# =========================
-# WEBHOOK
-# =========================
+# ─────────────────────────────────────────────────────────────────
+# WEBHOOK (TradingView / Manual)
+# ─────────────────────────────────────────────────────────────────
 class WebhookReq(BaseModel):
     secret: str
-    symbol: str | None = None
     action: str = Field(..., description="BUY or SELL")
-    expiry: str | None = None
-    strike: float | int | None = None
-    option_type: str | None = None  # CALL/PUT or CE/PE
+    security_id: Optional[int] = None
+    symbol: Optional[str] = None
+    expiry: Optional[str] = None
+    strike: Optional[float] = None
+    option_type: Optional[str] = None  # CALL/PUT or CE/PE
     qty: int = 1
-    price: str | float = "MARKET"
-    security_id: int | None = None  # Prefer passing this (NSE_FNO id)
-
-    @validator("action")
-    def _action_ok(cls, v):
-        v = v.upper()
-        if v not in ("BUY", "SELL"):
-            raise ValueError("action must be BUY or SELL")
-        return v
+    price: Optional[str] = "MARKET"    # or numeric string
 
 @app.post("/webhook")
 def webhook(body: WebhookReq):
-    # auth
     if body.secret != WEBHOOK_SECRET:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    # DRY mode: just simulate + sanity output
-    if MODE == "DRY":
+    action = (body.action or "").upper()
+    if action not in ("BUY","SELL"):
+        raise HTTPException(422, detail="action must be BUY or SELL")
+
+    # DRY -> simulate
+    if MODE != "LIVE":
         return {
             "ok": True,
             "mode": "DRY",
-            "message": "Simulation only. No live order was placed.",
+            "message": "Simulation only. No live order placed.",
             "echo": body.dict(),
         }
 
-    # LIVE: require security_id for now (CSV lookup disabled)
+    # LIVE -> require security_id (we are not placing real orders here)
     if body.security_id is None:
-        raise HTTPException(
-            status_code=400,
-            detail="security_id required in LIVE mode (CSV resolver disabled).",
-        )
+        raise HTTPException(400, detail="security_id required in LIVE mode")
 
-    # Example LIVE order call (pseudo, adjust to your Orders API when you enable)
-    # url = f"{dhan_base()}/orders"   # put the correct orders endpoint when you enable live
-    # payload = { ... map fields ... }
-    # r = requests.post(url, headers=dhan_headers(), json=payload)
-    # return r.json()
-
+    # Live order API wiring intentionally disabled for safety
     return {
         "ok": False,
         "mode": "LIVE",
-        "message": "Order placement wiring is disabled in this build. security_id received.",
+        "message": "Order placement disabled in this build. security_id received.",
         "security_id": body.security_id,
     }
 
-# =========================
+# ─────────────────────────────────────────────────────────────────
 # SELFTEST (safe)
-# =========================
+# ─────────────────────────────────────────────────────────────────
 @app.get("/selftest")
 def selftest():
-    results: dict[str, dict] = {}
+    out: Dict[str, Any] = {}
 
-    # 1) broker
-    results["broker_status"] = {"ok": True, "data": broker_status()}
+    # broker
+    out["broker_status"] = {"ok": True, "data": broker_status()}
 
-    # 2) expiries (Dhan v2)
+    # expiries (CSV)
     try:
-        exp = dhan_expirylist(ExpiryListReq())
-        ok = isinstance(exp, dict) and "data" in exp and isinstance(exp["data"], list)
-        results["expiries"] = {
-            "ok": ok,
-            "data": {"count": len(exp.get("data", [])) if ok else 0},
-        }
+        exps = list_expiries("NIFTY")["expiries"]
+        out["expiries"] = {"ok": bool(exps), "data": {"count": len(exps)}}
     except Exception as e:
-        results["expiries"] = {"ok": False, "error": str(e)}
+        out["expiries"] = {"ok": False, "error": str(e)}
 
-    # 3) strikes — CSV helper off
-    results["strikes"] = {"ok": False, "error": "strikes helper disabled"}
+    # strikes (CSV) — only if expiry exists
+    try:
+        if out.get("expiries", {}).get("data", {}).get("count", 0) > 0:
+            any_exp = list_expiries("NIFTY")["expiries"][0]
+            stks = list_strikes("NIFTY", any_exp, "CALL")["strikes"]
+            out["strikes"] = {"ok": bool(stks), "data": {"count": len(stks)}}
+        else:
+            out["strikes"] = {"ok": False, "error": "no expiry"}
+    except Exception as e:
+        out["strikes"] = {"ok": False, "error": str(e)}
 
-    # 4) security_lookup — CSV off
-    results["security_lookup"] = {"ok": False, "error": "CSV lookup disabled"}
+    # security_lookup (CSV) — best effort (uses mid strike if available)
+    try:
+        if out.get("strikes", {}).get("data", {}).get("count", 0) > 0:
+            exps2 = list_expiries("NIFTY")["expiries"]
+            exp0 = exps2[0]
+            stks2 = list_strikes("NIFTY", exp0, "CALL")["strikes"]
+            mid = stks2[len(stks2)//2]
+            sec = security_lookup(SecLookupReq(symbol="NIFTY", expiry=exp0, strike=float(mid), option_type="CALL"))
+            out["security_lookup"] = {"ok": bool(sec.get("security_id")), "data": sec}
+        else:
+            out["security_lookup"] = {"ok": False, "error": "no strike"}
+    except Exception as e:
+        out["security_lookup"] = {"ok": False, "error": str(e)}
 
-    # 5) webhook DRY — not executed automatically (needs secret)
-    results["webhook_dry"] = {"ok": False, "error": "not executed in selftest"}
+    # webhook dry — not run automatically (needs secret)
+    out["webhook_dry"] = {"ok": False, "error": "not executed in selftest"}
 
-    return results
+    return out
 
-# Run: uvicorn main:app --host 0.0.0.0 --port 8000
+# Run with: uvicorn main:app --host 0.0.0.0 --port 8000
