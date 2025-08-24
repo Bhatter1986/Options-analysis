@@ -291,3 +291,19 @@ def __selftest(request: Request):
         "samples": {k: f"{base}{v}" for k, v in samples.items()},
         "now": datetime.now(timezone.utc).isoformat()
     }
+
+# --- ADD THESE IMPORTS AT THE TOP WITH YOUR OTHER FASTAPI IMPORTS ---
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+# ... your existing main.py code (FastAPI app, routes, etc.) ...
+
+# --- STATIC MOUNT (place near the top after app = FastAPI(...)) ---
+# Serve everything inside /public at /public URL path
+app.mount("/public", StaticFiles(directory="public"), name="public")
+
+# --- DASHBOARD ROUTE (place anywhere after app is defined) ---
+@app.get("/dashboard")
+def serve_dashboard():
+    # This loads the separate HTML file. No inline HTML inside Python.
+    return FileResponse("public/dashboard.html")
