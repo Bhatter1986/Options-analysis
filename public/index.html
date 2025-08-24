@@ -7,6 +7,7 @@
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script>
+  <script src="https://s3.tradingview.com/tv.js"></script>
   <style>
     :root{ --bg:#0f172a;--card:#111827;--muted:#94a3b8;--accent:#3b82f6;--ok:#10b981;--bad:#ef4444;}
     body{background:#0b1220;color:#e5e7eb}
@@ -24,7 +25,8 @@
     a.btn-icon{border:1px solid #1f2937}
     .nav-tabs .nav-link{color:#9fb0c7}
     .nav-tabs .nav-link.active{color:#fff;background:transparent;border-bottom:2px solid var(--accent)}
-    .hl{color:#93c5fd}
+    .tv-wrap{height:420px}
+    #tv_chart_container{width:100%; height:100%}
   </style>
 </head>
 <body>
@@ -121,6 +123,21 @@
           <div class="col-md-3"><div class="card stat"><div class="card-body"><div class="label">Avg. IV</div><div id="ivValue" class="value">—</div></div></div></div>
         </div>
 
+        <!-- TradingView Live Chart -->
+        <div class="row g-4 mt-1">
+          <div class="col-12">
+            <div class="card">
+              <div class="card-header d-flex justify-content-between align-items-center">
+                <span>TradingView Live Chart</span>
+                <span class="text-secondary small">Symbol: <span id="tv_sym_label">NSE:BANKNIFTY</span></span>
+              </div>
+              <div class="card-body tv-wrap">
+                <div id="tv_chart_container"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Charts -->
         <div class="row g-4 mt-1">
           <div class="col-lg-6"><div class="card"><div class="card-header">Open Interest (Top Strikes)</div><div class="card-body"><canvas id="oiChart" height="220"></canvas></div></div></div>
@@ -167,7 +184,9 @@
       <!-- EXPIRY -->
       <div class="tab-pane fade" id="expiry">
         <div class="card"><div class="card-header">Expiry Analysis</div>
-          <div class="card-body"><p class="text-secondary m-0">Coming soon: max-pain, OI walls, time-decay modules.</p></div></div>
+          <div class="card-body">
+            <p class="text-secondary m-0">Max-pain, OI walls & time-decay modules — WIP.</p>
+          </div></div>
       </div>
 
       <!-- AI RECO -->
@@ -184,9 +203,8 @@
     </div>
   </div>
 
-  <!-- === CONFIG + API helpers (with secret header) === -->
+  <!-- === CONFIG + API helpers === -->
   <script>
-    // ----- base URL select -----
     const RAW_BASE_URL = "https://options-analysis.onrender.com";
     const DEFAULT_BASE_URL = RAW_BASE_URL.replace(/\/+$/, "");
     const API_PRESETS = { prod:"https://options-analysis.onrender.com", dev:"http://127.0.0.1:10000" };
@@ -198,36 +216,15 @@
       window.BASE_URL = (chosen || DEFAULT_BASE_URL).replace(/\/+$/, "");
       console.log("[CFG] BASE_URL:", window.BASE_URL);
     })();
-
-    // ----- webhook secret (keep in sync with Render) -----
-    const WEBHOOK_SECRET = "my$ecret123"; // <— if you change on Render, update here too.
-
     const withTimeout=(p,ms=15000)=>new Promise((res,rej)=>{const t=setTimeout(()=>rej(new Error("Timeout "+ms+"ms")),ms);p.then(v=>{clearTimeout(t);res(v)}).catch(e=>{clearTimeout(t);rej(e)})});
-
     async function api(path,{method="GET",params=null,body=null,headers={}}={}) {
       const url=new URL(window.BASE_URL+path);
       if(params) for(const [k,v] of Object.entries(params)) url.searchParams.set(k,v);
-
-      const opt={
-        method,
-        headers:{
-          "Accept":"application/json",
-          // ✅ send secret on every request (backend ignores it where not required)
-          "X-Webhook-Secret": WEBHOOK_SECRET,
-          ...headers
-        }
-      };
-      if(body){ opt.headers["Content-Type"]="application/json"; opt.body=JSON.stringify(body); }
-
-      const r=await withTimeout(fetch(url,opt));
-      if(!r.ok) {
-        const t = await r.text().catch(()=>r.statusText);
-        throw new Error("HTTP "+r.status+" "+t);
-      }
-      return r.json();
+      const opt={method,headers:{Accept:"application/json",...headers}};
+      if(body){opt.headers["Content-Type"]="application/json";opt.body=JSON.stringify(body);}
+      const r=await withTimeout(fetch(url,opt)); if(!r.ok) throw new Error("HTTP "+r.status+" "+r.statusText); return r.json();
     }
-    const apiGet=(p,params)=>api(p,{method:"GET",params});
-    const apiPost=(p,body)=>api(p,{method:"POST",body});
+    const apiGet=(p,params)=>api(p,{method:"GET",params}); const apiPost=(p,body)=>api(p,{method:"POST",body});
     window.__checkBackend=async ()=>{try{const j=await apiGet("/__selftest");return{ok:true,info:j}}catch(e){return{ok:false,error:e?.message||String(e)}}};
   </script>
 
@@ -235,7 +232,23 @@
   <script>
     const fmt = n => (n===null||n===undefined||isNaN(+n)) ? "—" : (+n).toLocaleString("en-IN");
     const byId = id => document.getElementById(id);
-    let oiChart, volChart;
+    let oiChart, volChart, tvWidget;
+
+    function attachTV(symbol="NSE:BANKNIFTY"){
+      byId("tv_sym_label").textContent = symbol;
+      // If already created, just recreate (simple path)
+      new TradingView.widget({
+        symbol,
+        interval: "15",
+        container_id: "tv_chart_container",
+        autosize: true,
+        theme: "dark",
+        locale: "in",
+        hide_top_toolbar: false,
+        hide_legend: false
+      });
+    }
+
     function makeBar(el, label, labels, data){
       const ctx = byId(el).getContext("2d");
       if (el==="oiChart" && oiChart) oiChart.destroy();
@@ -252,6 +265,9 @@
       const list = (res?.data?.data) || [];
       const sel = byId("expirySelect"); sel.innerHTML = "";
       list.forEach(x => { const o=document.createElement("option"); o.value=x; o.textContent=x; sel.appendChild(o); });
+      // also switch TV symbol
+      const tvSym = label === "BANKNIFTY" ? "NSE:BANKNIFTY" : (label === "NIFTY" ? "NSE:NIFTY" : "NSE:BANKNIFTY");
+      attachTV(tvSym);
     }
 
     async function fetchChain(){
@@ -263,7 +279,7 @@
       const win = +byId("strikeWin").value;
 
       const tbody = byId("oc_body"); tbody.innerHTML="";
-      const ceOiTop=[], peOiTop=[], ceVol=[], peVol=[];
+      const ceOiTop=[], peOiTop=[], ceVol=[], peVol[];
       const mid = strikes[Math.floor(strikes.length/2)] || 0;
       const minS = mid - win*50, maxS = mid + win*50;
 
@@ -308,9 +324,7 @@
 
     async function initStatus(){
       const st = await __checkBackend();
-      if (!st.ok){
-        byId("br_conn").className="badge text-bg-danger"; byId("br_conn").textContent="Backend error"; return;
-      }
+      if (!st.ok){ byId("br_conn").className="badge text-bg-danger"; byId("br_conn").textContent="Backend error"; return; }
       const info = st.info?.status || {};
       byId("chip_env").textContent = info.env || "—";
       byId("chip_mode").textContent = "MODE: " + (info.mode || "—");
@@ -358,6 +372,7 @@
 
     (async function boot(){
       await initStatus();
+      attachTV("NSE:BANKNIFTY");
       await loadExpiries();
       await fetchChain();
       await loadSpot();
