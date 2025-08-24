@@ -1,363 +1,209 @@
-# main.py
 import os
+import json
+import math
+import random
 import logging
-from typing import Optional, Dict, Any
+from datetime import datetime, timedelta, timezone
 
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Request, HTTPException, Depends, Query
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 
-import requests
 from dotenv import load_dotenv
 
-# -----------------
-# Load environment
-# -----------------
+# ---------- env ----------
 load_dotenv()
-
-MODE = os.getenv("MODE", "SANDBOX").upper()  # "LIVE" | "SANDBOX"
-
-# Dhan base URLs
-DHAN_LIVE_BASE_URL = os.getenv("DHAN_LIVE_BASE_URL", "https://api.dhan.co/v2")
-DHAN_SANDBOX_BASE_URL = os.getenv("DHAN_SANDBOX_BASE_URL", "https://sandbox.dhan.co/v2")
-DHAN_BASE = DHAN_LIVE_BASE_URL if MODE == "LIVE" else DHAN_SANDBOX_BASE_URL
-
-# Dhan credentials
-DHAN_ACCESS_TOKEN = (
-    os.getenv("DHAN_LIVE_ACCESS_TOKEN")
-    if MODE == "LIVE"
-    else os.getenv("DHAN_SANDBOX_ACCESS_TOKEN")
-)
-DHAN_CLIENT_ID = (
-    os.getenv("DHAN_LIVE_CLIENT_ID")
-    if MODE == "LIVE"
-    else os.getenv("DHAN_SANDBOX_CLIENT_ID")
-)
-
+MODE = os.getenv("MODE", "SANDBOX").upper()
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
-
-# OpenAI (optional)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-try:
-    from openai import OpenAI
-    _openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
-except Exception:
-    _openai_client = None  # package missing or init failed; endpoints will handle gracefully
 
-# -----------------
-# App + static
-# -----------------
+# ---------- app ----------
 app = FastAPI(title="Options-analysis (Dhan v2 + AI)")
-
-# Serve /static/* from public/
-app.mount("/static", StaticFiles(directory="public"), name="static")
-
-@app.get("/", include_in_schema=False)
-def serve_index():
-    """
-    Root serves public/index.html
-    """
-    path = "public/index.html"
-    if not os.path.exists(path):
-        return JSONResponse({"detail": "index.html not found"}, status_code=404)
-    return FileResponse(path)
-
-@app.get("/dashboard", include_in_schema=False)
-def serve_dashboard():
-    """
-    Convenience route for /dashboard -> public/index.html (single page)
-    """
-    path = "public/index.html"
-    if not os.path.exists(path):
-        return JSONResponse({"detail": "index.html not found"}, status_code=404)
-    return FileResponse(path)
-
-# --------------
-# Middleware
-# --------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # frontend anywhere
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --------------
-# Logging
-# --------------
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("options-analysis")
+# serve static
+if os.path.isdir("public"):
+    app.mount("/static", StaticFiles(directory="public"), name="static")
 
-# --------------
-# Utils
-# --------------
-def _dhan_headers() -> Dict[str, str]:
-    return {
-        "Authorization": f"Bearer {DHAN_ACCESS_TOKEN}" if DHAN_ACCESS_TOKEN else "",
-        "X-Client-Id": str(DHAN_CLIENT_ID or ""),
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-    }
+@app.get("/", include_in_schema=False)
+def serve_root():
+    # if public/index.html exists, serve it; else simple hello
+    f = "public/index.html"
+    if os.path.exists(f):
+        return FileResponse(f)
+    return JSONResponse({"ok": True, "hint": "put your index.html in /public"})
+
+@app.get("/dashboard", include_in_schema=False)
+def serve_dashboard():
+    f = "public/dashboard.html"
+    if os.path.exists(f):
+        return FileResponse(f)
+    # fallback to index if only one file is used
+    return serve_root()
+
+# ---------- utils ----------
+logger = logging.getLogger("options-analysis")
+logging.basicConfig(level=logging.INFO)
 
 def verify_secret(req: Request):
+    # only used by /ai/* endpoints; others open
     token = req.headers.get("X-Webhook-Secret")
     if WEBHOOK_SECRET and token != WEBHOOK_SECRET:
         raise HTTPException(status_code=401, detail="Invalid Webhook Secret")
     return True
 
-# --------------
-# Basic endpoints
-# --------------
+IST = timezone(timedelta(hours=5, minutes=30))
+
+def next_n_thursdays(n=6):
+    """Return next n Thursday dates (YYYY-MM-DD) in IST."""
+    now = datetime.now(IST).date()
+    # weekday(): Mon=0 ... Sun=6 ; Thursday=3
+    days_ahead = (3 - now.weekday()) % 7
+    first = now + timedelta(days=days_ahead or 7)  # always future
+    return [(first + timedelta(weeks=i)).isoformat() for i in range(n)]
+
+# ---------- basic endpoints ----------
 @app.get("/health")
 def health():
     return {"status": "ok", "mode": MODE}
 
 @app.get("/broker_status")
 def broker_status():
-    return {
-        "mode": MODE,
-        "token_present": bool(DHAN_ACCESS_TOKEN),
-        "client_id_present": bool(DHAN_CLIENT_ID),
-    }
+    # we just check env presence; UI only needs booleans
+    live = MODE == "LIVE"
+    token_present = bool(os.getenv("DHAN_LIVE_ACCESS_TOKEN" if live else "DHAN_SANDBOX_ACCESS_TOKEN"))
+    client_present = bool(os.getenv("DHAN_LIVE_CLIENT_ID" if live else "DHAN_SANDBOX_CLIENT_ID"))
+    return {"mode": MODE, "token_present": token_present, "client_id_present": client_present}
 
 @app.get("/__selftest")
 def selftest():
-    """
-    Quick snapshot of app + visible endpoints for debugging.
-    """
-    endpoints = [
-        "/health",
-        "/broker_status",
-        "/marketfeed/ltp",
-        "/optionchain/expirylist",
-        "/optionchain",
-        "/option_analysis",
-        "/ai/marketview",
-        "/ai/strategy",
-        "/ai/payoff",
-        "/ai/test",
-        "/__selftest",
-    ]
+    routes = [r.path for r in app.routes]
     return {
         "app": "Options-analysis (Dhan v2 + AI)",
         "mode": MODE,
-        "env": "LIVE" if MODE == "LIVE" else "SANDBOX",
-        "endpoints": endpoints,
+        "env": MODE,
+        "now": datetime.now(IST).isoformat(),
+        "endpoints": sorted(routes),
     }
 
-# --------------
-# Marketfeed (demo LTP)
-# --------------
+# ---------- demo marketfeed ----------
 @app.get("/marketfeed/ltp")
-def marketfeed_ltp(exchange_segment: str, security_id: int):
-    """
-    Thin passthrough to Dhan LTP (adjust path if different on your account).
-    If Dhan fails, returns a minimal skeleton so UI doesn't crash.
-    """
-    try:
-        url = f"{DHAN_BASE}/marketfeed/ltp"
-        r = requests.get(
-            url,
-            params={"exchange_segment": exchange_segment, "security_id": security_id},
-            headers=_dhan_headers(),
-            timeout=10,
-        )
-        if r.ok:
-            return {"data": r.json()}
-        logger.warning(f"LTP non-200: {r.status_code} {r.text[:200]}")
-    except Exception as e:
-        logger.warning(f"LTP error: {e}")
+def marketfeed_ltp(exchange_segment: str = "NSE", security_id: int = 1333):
+    # lightweight demo LTP for HDFCBANK etc.
+    base = 1600.0 if security_id == 1333 else 100.0
+    jitter = (random.random() - 0.5) * 2.0
+    return {
+        "data": {
+            "data": {
+                "NSE_EQ": [{"security_id": security_id, "ltp": round(base + jitter, 2)}]
+            }
+        }
+    }
 
-    # fallback skeleton (UI will show '—')
-    return {"data": {"data": {}}}
-
-# --------------
-# Option Chain
-# --------------
+# ---------- OPTION CHAIN (mock that unblocks UI) ----------
 @app.get("/optionchain/expirylist")
-def optionchain_expirylist(under_security_id: int, under_exchange_segment: str):
+def optionchain_expirylist(
+    under_security_id: int = Query(..., description="13=NIFTY, 25=BANKNIFTY etc."),
+    under_exchange_segment: str = Query(..., description="IDX_I etc."),
+):
     """
-    Returns expiries for given underlying.
-    Tries Dhan first; if it fails, returns a small sample so UI keeps working.
+    Return a simple list of next weekly expiries.
+    Frontend expects: { data: { data: [ 'YYYY-MM-DD', ... ] } }
     """
-    # Try Dhan (adjust path if your Dhan endpoint differs)
-    try:
-        url = f"{DHAN_BASE}/optionchain/expirylist"
-        r = requests.get(
-            url,
-            params={
-                "under_security_id": under_security_id,
-                "under_exchange_segment": under_exchange_segment,
+    # we ignore params in this mock, just generate Thursdays
+    expiries = next_n_thursdays(8)
+    return {"data": {"data": expiries}}
+
+def _make_chain(under_security_id: int, expiry: str):
+    """
+    Build a synthetic option chain around a spot & strikes so charts/table render.
+    Structure per row:
+      raw[strike] = { CE:{...}, PE:{...} }
+    """
+    # choose a spot anchor
+    if under_security_id == 25:   # BANKNIFTY
+        spot = 48500
+        step = 100
+    elif under_security_id == 13: # NIFTY
+        spot = 24000
+        step = 50
+    else:
+        spot = 20000
+        step = 50
+
+    # strikes +/- 30 steps
+    strikes = [spot + i*step for i in range(-30, 31)]
+    chain = {}
+    for sp in strikes:
+        dist = abs(sp - spot) / step
+        # higher dist -> lower OI/volume, lower price for OTM, etc.
+        base_oi = max(0, int(150000 - dist*4000 + random.randint(-1500, 1500)))
+        base_vol = max(0, int(5000 - dist*120 + random.randint(-100, 100)))
+        iv = round(16 + dist*0.15 + random.random()*2, 2)
+        ce_price = max(1.0, round(max(0, spot - sp) * 0.6 + random.random()*30, 2))
+        pe_price = max(1.0, round(max(0, sp - spot) * 0.6 + random.random()*30, 2))
+        ce_chg = round((random.random() - 0.5) * 10, 2)
+        pe_chg = round((random.random() - 0.5) * 10, 2)
+        prev_oi_jitter = random.randint( -800, 800)
+
+        chain[sp] = {
+            "CE": {
+                "oi": base_oi + random.randint(-2000, 2000),
+                "previous_oi": base_oi - prev_oi_jitter,
+                "volume": base_vol + random.randint(-50, 50),
+                "implied_volatility": iv,
+                "last_price": ce_price,
+                "change": ce_chg,
             },
-            headers=_dhan_headers(),
-            timeout=15,
-        )
-        if r.ok:
-            return {"data": r.json()}
-        logger.warning(f"expirylist non-200: {r.status_code} {r.text[:200]}")
-    except Exception as e:
-        logger.warning(f"expirylist error: {e}")
-
-    # Fallback sample dates
-    return {"data": {"data": ["2025-08-28", "2025-09-04", "2025-09-11"]}}
-
-class OCBody(BaseModel):
-    under_security_id: int
-    under_exchange_segment: str
-    expiry: str
+            "PE": {
+                "oi": base_oi + random.randint(-2000, 2000),
+                "previous_oi": base_oi + prev_oi_jitter,
+                "volume": base_vol + random.randint(-50, 50),
+                "implied_volatility": iv + 0.4,
+                "last_price": pe_price,
+                "change": pe_chg,
+            }
+        }
+    return chain
 
 @app.post("/optionchain")
-def optionchain(body: OCBody):
+def optionchain(payload: dict):
     """
-    Returns option chain for a given expiry.
-    Tries Dhan first; else returns a minimal mock so charts/table render.
+    Frontend sends:
+      { under_security_id:int, under_exchange_segment:str, expiry:str }
+    We return:
+      { data: { data: { "<strike>": { CE:{...}, PE:{...} } } } }
     """
-    # Try Dhan (adjust path if different)
     try:
-        url = f"{DHAN_BASE}/optionchain"
-        r = requests.post(url, json=body.dict(), headers=_dhan_headers(), timeout=20)
-        if r.ok:
-            return {"data": r.json()}
-        logger.warning(f"optionchain non-200: {r.status_code} {r.text[:200]}")
-    except Exception as e:
-        logger.warning(f"optionchain error: {e}")
+        under_security_id = int(payload.get("under_security_id"))
+        expiry = str(payload.get("expiry") or "")
+    except Exception:
+        raise HTTPException(400, "Invalid payload")
 
-    # Fallback minimal sample (two strikes) for UI testing
-    sample = {
-        "43500": {
-            "CE": {
-                "oi": 12345,
-                "previous_oi": 11111,
-                "volume": 4567,
-                "implied_volatility": 16.8,
-                "last_price": 125.5,
-                "change": 5.25,
-            },
-            "PE": {
-                "oi": 9876,
-                "previous_oi": 10443,
-                "volume": 3456,
-                "implied_volatility": 18.2,
-                "last_price": 84.25,
-                "change": -3.75,
-            },
-        },
-        "43700": {
-            "CE": {
-                "oi": 9876,
-                "previous_oi": 7889,
-                "volume": 6789,
-                "implied_volatility": 17.8,
-                "last_price": 76.25,
-                "change": 3.75,
-            },
-            "PE": {
-                "oi": 7654,
-                "previous_oi": 7999,
-                "volume": 5432,
-                "implied_volatility": 17.5,
-                "last_price": 105.75,
-                "change": -1.50,
-            },
-        },
-    }
-    return {"data": {"data": sample}}
+    data = _make_chain(under_security_id, expiry)
+    return {"data": {"data": data}}
 
-# --------------
-# (Optional) Option analysis placeholder
-# --------------
-@app.get("/option_analysis")
-def option_analysis():
-    return {"ok": True, "note": "Add your custom analytics here."}
-
-# --------------
-# AI endpoints (OpenAI optional)
-# --------------
-def _need_openai():
-    if not _openai_client:
-        raise HTTPException(
-            status_code=503,
-            detail="OpenAI not configured. Set OPENAI_API_KEY to enable AI endpoints.",
-        )
-
+# ---------- AI placeholders (headers must include X-Webhook-Secret) ----------
 @app.post("/ai/marketview")
-def ai_marketview(req: Dict[str, Any], auth: bool = Depends(verify_secret)):
-    """
-    Market overview using AI. Requires OPENAI_API_KEY.
-    """
-    _need_openai()
-    try:
-        prompt = f"Analyze Indian index options market snapshot and give 5 bullet insights. Input: {req}"
-        res = _openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-        )
-        return {"ai_reply": res.choices[0].message.content}
-    except Exception as e:
-        logger.error(f"AI marketview error: {e}")
-        raise HTTPException(status_code=500, detail="AI marketview failed")
+def ai_marketview(req: dict, _auth: bool = Depends(verify_secret)):
+    # lightweight mock reply so button works
+    return {"ai_reply": f"Market view (mock): bias={req.get('bias','neutral')}, under={req.get('under_security_id')}"}
 
 @app.post("/ai/strategy")
-def ai_strategy(req: Dict[str, Any], auth: bool = Depends(verify_secret)):
-    """
-    Suggest options strategy using AI. Requires OPENAI_API_KEY.
-    """
-    _need_openai()
-    try:
-        prompt = (
-            "Suggest a risk-defined options strategy (instrument, strikes, qty, rationale) "
-            "for NIFTY/BANKNIFTY given this user intent and constraints: "
-            f"{req}. Return concise bullet points."
-        )
-        res = _openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-        )
-        return {"ai_strategy": res.choices[0].message.content}
-    except Exception as e:
-        logger.error(f"AI strategy error: {e}")
-        raise HTTPException(status_code=500, detail="AI strategy failed")
+def ai_strategy(req: dict, _auth: bool = Depends(verify_secret)):
+    return {"ai_strategy": "Sample: Short Straddle near ATM, hedge with wings, risk-managed (mock)."}
 
 @app.post("/ai/payoff")
-def ai_payoff(req: Dict[str, Any], auth: bool = Depends(verify_secret)):
-    """
-    High-level payoff explanation using AI. Requires OPENAI_API_KEY.
-    """
-    _need_openai()
-    try:
-        prompt = f"Explain the payoff, breakevens, max profit/loss for this strategy: {req}"
-        res = _openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-        )
-        return {"ai_payoff": res.choices[0].message.content}
-    except Exception as e:
-        logger.error(f"AI payoff error: {e}")
-        raise HTTPException(status_code=500, detail="AI payoff failed")
+def ai_payoff(req: dict, _auth: bool = Depends(verify_secret)):
+    return {"ai_payoff": "Payoff summary (mock): Max profit limited to credit, max loss capped by wings."}
 
 @app.post("/ai/test")
-def ai_test():
-    """
-    Quick AI ping. Returns a canned response if OPENAI not configured.
-    """
-    if not _openai_client:
-        return {"ai_test_reply": "AI is not configured (no OPENAI_API_KEY)."}
-    res = _openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": "Hello, test response"}],
-    )
-    return {"ai_test_reply": res.choices[0].message.content}
-
-# --------------
-# Global error handler
-# --------------
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Unhandled error: {exc}")
-    return JSONResponse(status_code=500, content={"error": str(exc)})
+def ai_test(_req: dict):
+    return {"ai_test_reply": "pong"}
