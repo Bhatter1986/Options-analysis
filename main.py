@@ -7,7 +7,7 @@ from starlette.middleware.cors import CORSMiddleware
 from openai import OpenAI
 from dotenv import load_dotenv
 
-# Load .env
+# Load .env variables
 load_dotenv()
 
 # ====== CONFIG ======
@@ -22,7 +22,7 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 # ====== APP ======
 app = FastAPI(title="Options-analysis (Dhan v2 + AI)")
 
-# Serve static files from /public
+# Static files
 app.mount("/static", StaticFiles(directory="public"), name="static")
 
 @app.get("/", include_in_schema=False)
@@ -46,7 +46,7 @@ app.add_middleware(
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("options-analysis")
 
-# ====== SECURITY CHECK ======
+# ====== SECURITY ======
 def verify_secret(req: Request):
     token = req.headers.get("X-Webhook-Secret")
     if WEBHOOK_SECRET and token != WEBHOOK_SECRET:
@@ -113,6 +113,22 @@ async def ai_test(req: dict):
         messages=[{"role": "user", "content": "Hello, test response"}]
     )
     return {"ai_test_reply": res.choices[0].message.content}
+
+# ====== SELFTEST ======
+@app.get("/__selftest")
+def selftest():
+    return {
+        "app": "Options-analysis (Dhan v2 + AI)",
+        "mode": MODE,
+        "env": MODE,
+        "endpoints": [
+            "/health","/broker_status","/marketfeed/ltp","/marketfeed/ohlc",
+            "/marketfeed/quote","/optionchain","/optionchain/expirylist",
+            "/orders","/positions","/holdings","/funds",
+            "/charts/intraday","/charts/historical","/option_analysis",
+            "/ai/marketview","/ai/strategy","/ai/payoff","/ai/test","/__selftest"
+        ]
+    }
 
 # ====== ERROR HANDLER ======
 @app.exception_handler(Exception)
