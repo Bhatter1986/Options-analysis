@@ -1,13 +1,13 @@
 services:
   - type: web
-    name: options-analysis-bot
-    runtime: python
+    name: options-analysis
+    env: python
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    autoDeploy: true
     envVars:
-      - key: DEMO_MODE
-        value: true
-      - key: WEBHOOK_SECRET
+      - key: DHAN_CLIENT_ID
         sync: false
-      - key: DEFAULT_SYMBOL
-        value: NIFTY
+      - key: DHAN_ACCESS_TOKEN
+        sync: false
