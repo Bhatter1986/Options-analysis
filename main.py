@@ -1,325 +1,242 @@
 import os
-import json
-import logging
-from typing import Optional, Any, Dict
+import time
+from typing import Dict, Any, List, Optional
 
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-from starlette.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+import requests
+from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-# Third-party
-import requests
-from openai import OpenAI
-
-# -------------------------------------------------
-# Load environment
-# -------------------------------------------------
+# --------------------------- Boot ---------------------------
 load_dotenv()
 
-MODE = os.getenv("MODE", "SANDBOX").upper()          # "LIVE" | "SANDBOX"
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")     # (optional) for your own front-end calls
-TV_WEBHOOK_SECRET = os.getenv("TV_WEBHOOK_SECRET", "")  # TradingView alerts secret
+APP_NAME = "Options-analysis (Dhan v2 + AI)"
+APP_VERSION = "2.1.0"
 
-# Dhan access tokens (optional if you only want demo data)
-DHAN_ACCESS_TOKEN = (
-    os.getenv("DHAN_LIVE_ACCESS_TOKEN")
-    if MODE == "LIVE"
-    else os.getenv("DHAN_SANDBOX_ACCESS_TOKEN")
-)
-DHAN_CLIENT_ID = (
-    os.getenv("DHAN_LIVE_CLIENT_ID")
-    if MODE == "LIVE"
-    else os.getenv("DHAN_SANDBOX_CLIENT_ID")
-)
+MODE = os.getenv("MODE", "LIVE").upper().strip()  # LIVE | SANDBOX
 
-# OpenAI
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-client: Optional[OpenAI] = None
-if OPENAI_API_KEY:
-    # Important: OpenAI==1.x style
-    client = OpenAI(api_key=OPENAI_API_KEY)
+DHAN_BASE_URL = "https://api.dhan.co/v2" if MODE == "LIVE" else "https://sandbox.dhan.co/v2"
+DHAN_TOKEN = os.getenv("DHAN_LIVE_ACCESS_TOKEN") if MODE == "LIVE" else os.getenv("DHAN_SANDBOX_ACCESS_TOKEN")
+DHAN_CLIENT_ID = os.getenv("DHAN_LIVE_CLIENT_ID") if MODE == "LIVE" else os.getenv("DHAN_SANDBOX_CLIENT_ID")
 
-# -------------------------------------------------
-# App
-# -------------------------------------------------
-app = FastAPI(title="Options-analysis (Dhan + AI + TV Webhook)")
+OPENAI_PRESENT = bool(os.getenv("OPENAI_API_KEY"))
 
-# Static: serve / -> public/index.html
-if not os.path.isdir("public"):
-    os.makedirs("public", exist_ok=True)
-app.mount("/static", StaticFiles(directory="public"), name="static")
+HTTP_TIMEOUT = float(os.getenv("HTTP_TIMEOUT", "15"))
 
-@app.get("/", include_in_schema=False)
-def serve_index():
-    index_path = os.path.join("public", "index.html")
-    if not os.path.isfile(index_path):
-        return JSONResponse({"error": "public/index.html not found"}, status_code=404)
-    return FileResponse(index_path)
+# Common index/security mapping (Dhan)
+INDEX_MAP = {
+    "NIFTY": {"under_security_id": "13", "under_exchange_segment": "IDX_I"},
+    "BANKNIFTY": {"under_security_id": "25", "under_exchange_segment": "IDX_I"},
+    "FINNIFTY": {"under_security_id": "27", "under_exchange_segment": "IDX_I"},
+}
 
-# CORS
+# --------------------------- App ---------------------------
+app = FastAPI(title=APP_NAME, version=APP_VERSION)
+
+# CORS (frontend direct calls allowed)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # loosen for FE experiments
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Logger
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("options-analysis")
-
-# -------------------------------------------------
-# Helpers
-# -------------------------------------------------
-def ok_status():
+# --------------------------- Helpers ---------------------------
+def _headers() -> Dict[str, str]:
     return {
-        "env": os.getenv("RENDER", "local"),
-        "mode": MODE,
-        "token_present": bool(DHAN_ACCESS_TOKEN),
-        "client_id_present": bool(DHAN_CLIENT_ID),
-        "openai_present": bool(OPENAI_API_KEY),
+        "accept": "application/json",
+        "content-type": "application/json",
+        "access-token": DHAN_TOKEN or "",
     }
 
-def require_openai():
-    if client is None:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY missing or OpenAI not initialized.")
+def _post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """POST to DHAN, handle errors uniformly."""
+    url = f"{DHAN_BASE_URL.rstrip('/')}/{path.lstrip('/')}"
+    try:
+        r = requests.post(url, headers=_headers(), json=payload, timeout=HTTP_TIMEOUT)
+        if r.status_code >= 400:
+            return {
+                "status": "error",
+                "code": r.status_code,
+                "url": url,
+                "payload": payload,
+                "body": _safe_json(r),
+            }
+        return _safe_json(r)
+    except requests.RequestException as e:
+        return {"status": "error", "msg": str(e), "url": url, "payload": payload}
 
-def verify_webhook_secret(req: Request):
-    """
-    Optional header check: X-Webhook-Secret must match, if WEBHOOK_SECRET is set.
-    Frontend me aap is header ko bhejna chaho to bhej sakte ho.
-    """
-    if not WEBHOOK_SECRET:
-        return True
-    token = req.headers.get("X-Webhook-Secret")
-    if token != WEBHOOK_SECRET:
-        raise HTTPException(status_code=401, detail="Invalid Webhook Secret")
-    return True
+def _get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    """GET to DHAN, handle errors uniformly."""
+    url = f"{DHAN_BASE_URL.rstrip('/')}/{path.lstrip('/')}"
+    try:
+        r = requests.get(url, headers=_headers(), params=params, timeout=HTTP_TIMEOUT)
+        if r.status_code >= 400:
+            return {
+                "status": "error",
+                "code": r.status_code,
+                "url": url,
+                "params": params,
+                "body": _safe_json(r),
+            }
+        return _safe_json(r)
+    except requests.RequestException as e:
+        return {"status": "error", "msg": str(e), "url": url, "params": params}
 
-# -------------------------------------------------
-# BASIC / DIAGNOSTIC
-# -------------------------------------------------
+def _safe_json(r: requests.Response) -> Dict[str, Any]:
+    try:
+        return r.json()
+    except Exception:
+        return {"raw": r.text}
+
+def _map_symbol(symbol: str) -> Dict[str, str]:
+    return INDEX_MAP.get(symbol.upper().strip(), INDEX_MAP["NIFTY"]).copy()
+
+# --------------------------- Routes ---------------------------
+@app.get("/")
+def root():
+    return {
+        "app": f"{APP_NAME}",
+        "version": APP_VERSION,
+        "mode": MODE,
+        "env": MODE,
+        "endpoints": [
+            "/health",
+            "/broker_status",
+            "/optionchain/expirylist",
+            "/optionchain_raw",
+            "/optionchain",
+            "/marketfeed/ltp",
+            "/ai/strategy",
+            "/ai/recommendations",
+            "/ai/payoff",
+            "/__selftest",
+        ],
+    }
+
 @app.get("/__selftest")
 def selftest():
-    return {
-        "ok": True,
-        "status": ok_status(),
+    """Lightweight environment & network check (no order placement)."""
+    status = {
+        "env": MODE == MODE,  # always True; just placeholder flag
+        "mode": MODE,
+        "token_present": bool(DHAN_TOKEN),
+        "client_id_present": bool(DHAN_CLIENT_ID),
+        "openai_present": OPENAI_PRESENT,
     }
+    # Try a tiny real call (expiry-list for NIFTY)
+    ping = _post("optionchain/expiry-list", {
+        "under_security_id": INDEX_MAP["NIFTY"]["under_security_id"],
+        "under_exchange_segment": INDEX_MAP["NIFTY"]["under_exchange_segment"],
+    })
+    return {"ok": True, "status": status, "sample_expirylist": ping}
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "mode": MODE}
+    return {"status": "ok", "ts": int(time.time()), "mode": MODE}
 
 @app.get("/broker_status")
 def broker_status():
-    return ok_status()
-
-# -------------------------------------------------
-# AI ENDPOINTS
-# (no secret required to avoid FE 401 confusion)
-# -------------------------------------------------
-@app.post("/ai/marketview")
-async def ai_marketview(req: Dict[str, Any]):
-    """
-    High-level market view + context from your payload
-    """
-    require_openai()
-    try:
-        prompt = (
-            "You are an options market assistant for Indian markets. "
-            "Analyze this context and return concise insights with bullet points, "
-            "risk notes, and key strike levels if relevant.\n\n"
-            f"Context JSON:\n{json.dumps(req, indent=2)}"
-        )
-        res = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return {"ok": True, "ai_reply": res.choices[0].message.content}
-    except Exception as e:
-        logger.exception("AI marketview failed")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/ai/strategy")
-async def ai_strategy(req: Dict[str, Any]):
-    """
-    Recommend an options strategy: include entries, SL, targets, payoff table idea.
-    """
-    require_openai()
-    try:
-        prompt = (
-            "Given the inputs (bias, risk, capital, symbol/expiry if any), "
-            "recommend 1-2 options strategies with lots, strikes, net credit/debit, "
-            "max profit/loss, breakevens and monitoring plan. Return in bullet points.\n\n"
-            f"Inputs:\n{json.dumps(req, indent=2)}"
-        )
-        res = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return {"ok": True, "ai_strategy": res.choices[0].message.content}
-    except Exception as e:
-        logger.exception("AI strategy failed")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/ai/payoff")
-async def ai_payoff(req: Dict[str, Any]):
-    """
-    Explain payoff behaviour (qualitative) based on legs user passes.
-    """
-    require_openai()
-    try:
-        prompt = (
-            "Explain the payoff of the given option legs (CALL/PUT; buy/sell; strike; premium), "
-            "summarize P/L at different underlying prices and list breakevens.\n\n"
-            f"Legs JSON:\n{json.dumps(req, indent=2)}"
-        )
-        res = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return {"ok": True, "ai_payoff": res.choices[0].message.content}
-    except Exception as e:
-        logger.exception("AI payoff failed")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/ai/test")
-async def ai_test():
-    require_openai()
-    res = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": "Say 'Sudarshan Chakra online'"}],
-    )
-    return {"ok": True, "ai_test_reply": res.choices[0].message.content}
-
-# -------------------------------------------------
-# TRADINGVIEW WEBHOOK
-# -------------------------------------------------
-class TVAlert(BaseModel):
-    secret: Optional[str] = None
-    symbol: Optional[str] = None
-    side: Optional[str] = None    # BUY/SELL or custom
-    price: Optional[float] = None
-    payload: Optional[Dict[str, Any]] = None
-
-@app.post("/tv/webhook")
-async def tv_webhook(alert: TVAlert):
-    """
-    TradingView alert receiver.
-    Configure TV → Alert → Webhook URL = https://<your-app>/tv/webhook
-    Message JSON (example):
-      {"secret":"YOUR_TV_WEBHOOK_SECRET","symbol":"NSE:BANKNIFTY","side":"BUY","price":{{close}}}
-    """
-    if TV_WEBHOOK_SECRET and (alert.secret != TV_WEBHOOK_SECRET):
-        raise HTTPException(status_code=401, detail="Invalid TV secret")
-
-    logger.info(f"[TV] alert: {alert.model_dump()}")
-
-    if client is None:
-        # Just echo if AI not configured
-        return {"ok": True, "ai_reply": "AI disabled. TV alert received.", "echo": alert.model_dump()}
-
-    # Pipe alert to AI for instant trading note
-    try:
-        prompt = (
-            "TradingView alert has arrived. Provide a 3-5 line actionable note. "
-            "Include bias, immediate risk, and a simple stop/target idea if possible.\n"
-            f"Alert:\n{json.dumps(alert.model_dump(), indent=2)}"
-        )
-        res = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return {"ok": True, "ai_reply": res.choices[0].message.content}
-    except Exception as e:
-        logger.exception("TV AI error")
-        return {"ok": False, "error": str(e)}
-
-# -------------------------------------------------
-# DATA ENDPOINTS (demo fallback)
-# NOTE: Replace with real DHAN API if you want live data. These demo endpoints
-# return structure compatible with your FE so UI works immediately.
-# -------------------------------------------------
-@app.get("/marketfeed/ltp")
-def marketfeed_ltp(exchange_segment: str = "NSE", security_id: int = 1333):
-    """
-    Demo: returns mock LTP if token missing. Replace with real DHAN call if needed.
-    """
-    if DHAN_ACCESS_TOKEN and DHAN_CLIENT_ID and MODE == "LIVE":
-        try:
-            # Example (update to real Dhan endpoint you use)
-            # url = "https://api.dhan.co/some/ltp"
-            # headers = {"access-token": DHAN_ACCESS_TOKEN, "client-id": DHAN_CLIENT_ID}
-            # r = requests.get(url, headers=headers, timeout=10)
-            # return r.json()
-            pass
-        except Exception as e:
-            logger.warning(f"Dhan LTP error: {e}")
-
-    # Demo fallback
     return {
-        "status": "success",
-        "data": {
-            "data": {
-                "NSE_EQ": [{"security_id": security_id, "ltp": 1642.55}]
-            }
-        }
+        "mode": MODE,
+        "token_present": bool(DHAN_TOKEN),
+        "client_id_present": bool(DHAN_CLIENT_ID),
+        "openai_present": OPENAI_PRESENT,
+        "base_url": DHAN_BASE_URL,
     }
 
+# ---------- Option Chain: Expiry List ----------
 @app.get("/optionchain/expirylist")
-def optionchain_expirylist(under_security_id: str, under_exchange_segment: str):
-    """
-    Demo: returns a rolling list of future expiries in YYYY-MM-DD (like earlier)
-    """
-    demo = [
-        "2025-08-28","2025-09-02","2025-09-09","2025-09-16","2025-09-23","2025-09-30",
-        "2025-10-28","2025-12-30","2026-03-31","2026-06-30","2026-12-29","2027-06-29",
-        "2027-12-28","2028-06-27","2028-12-26","2029-06-26","2029-12-24","2030-06-25"
-    ]
-    return {"status": "success", "data": {"status": "success", "data": demo}}
+def expiry_list(
+    under_security_id: str = Query("13", description="default NIFTY"),
+    under_exchange: str = Query("IDX_I", description="IDX_I for indices"),
+):
+    payload = {"under_security_id": under_security_id, "under_exchange_segment": under_exchange}
+    return _post("optionchain/expiry-list", payload)
 
-class OCReq(BaseModel):
-    under_security_id: int
-    under_exchange_segment: str
-    expiry: str
+# ---------- Option Chain: Raw ----------
+@app.get("/optionchain_raw")
+def optionchain_raw(
+    symbol: str = Query("NIFTY", enum=list(INDEX_MAP.keys())),
+    expiry: Optional[str] = Query(None, description="YYYY-MM-DD; if missing, near expiry may be used by DHAN"),
+):
+    payload = _map_symbol(symbol)
+    if expiry:
+        payload["expiry"] = expiry
+    return _post("optionchain", payload)
 
-@app.post("/optionchain")
-def optionchain(req: OCReq):
-    """
-    Demo: returns a small synthetic chain around 5 strikes. UI uses same shape as earlier.
-    Replace with DHAN option-chain call if available.
-    """
-    # Build symmetric strikes around a mid
-    spot = 43800
-    step = 100
-    strikes = [spot-200, spot-100, spot, spot+100, spot+200]
+# ---------- Option Chain: Normalized ----------
+@app.get("/optionchain")
+def optionchain(
+    symbol: str = Query("NIFTY", enum=list(INDEX_MAP.keys())),
+    expiry: str = Query(..., description="YYYY-MM-DD"),
+):
+    raw = optionchain_raw(symbol, expiry)
+    # If upstream error, bubble it up
+    if isinstance(raw, dict) and raw.get("status") == "error":
+        return {"status": "error", "upstream": raw}
 
-    def mk_leg(ltp, iv, vol, oi, prev_oi):
-        return {
-            "last_price": float(ltp),
-            "implied_volatility": float(iv),
-            "volume": int(vol),
-            "oi": int(oi),
-            "previous_oi": int(prev_oi),
-            "change": round((ltp - (ltp * 0.95)), 2)  # simple change
-        }
+    # Dhan data wrapper usually like {"status":"success","data":{"status":"success","data":[...]}}
+    rows: List[Dict[str, Any]] = []
+    data = (
+        raw.get("data", {})
+        if isinstance(raw, dict) else {}
+    )
+    # handle both shapes: {"status":...,"data":{"data":[...]}} or {"data":[...]}
+    if isinstance(data, dict) and "data" in data:
+        oc_list = data.get("data", [])
+    else:
+        oc_list = raw.get("data", []) if isinstance(raw, dict) else []
 
-    data = {}
-    for i, sp in enumerate(strikes):
-        ce = mk_leg(ltp=50 + i*8, iv=17.0+i*0.3, vol=3500+i*500, oi=9000+i*1100, prev_oi=8500+i*900)
-        pe = mk_leg(ltp=60 + (len(strikes)-i-1)*7, iv=18.0+i*0.2, vol=3200+i*450, oi=8700+i*900, prev_oi=8100+i*800)
-        data[str(sp)] = {"CE": ce, "PE": pe}
+    for row in oc_list or []:
+        ce = row.get("ce", {}) or {}
+        pe = row.get("pe", {}) or {}
+        rows.append({
+            "strike": row.get("strikePrice"),
+            "ce": {
+                "oi": ce.get("openInterest", 0),
+                "chngOi": ce.get("changeInOI", 0),
+                "iv": ce.get("iv", 0.0),
+                "ltp": ce.get("ltp", 0.0),
+                "volume": ce.get("totalTradedVolume", 0),
+            },
+            "pe": {
+                "oi": pe.get("openInterest", 0),
+                "chngOi": pe.get("changeInOI", 0),
+                "iv": pe.get("iv", 0.0),
+                "ltp": pe.get("ltp", 0.0),
+                "volume": pe.get("totalTradedVolume", 0),
+            },
+        })
 
-    return {"status": "success", "data": {"status": "success", "data": data}}
+    return {
+        "status": "success",
+        "symbol": symbol.upper(),
+        "expiry": expiry,
+        "records": rows,
+        "raw_status": raw.get("status"),
+    }
 
-# -------------------------------------------------
-# Global error handler
-# -------------------------------------------------
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Unhandled error: {exc}")
-    return JSONResponse(status_code=500, content={"error": str(exc)})
+# ---------- Marketfeed: LTP (simple passthrough) ----------
+@app.get("/marketfeed/ltp")
+def marketfeed_ltp(
+    security_id: str = Query("11536", description="Dhan security_id (example value)"),
+    exchange_segment: str = Query("NSE_EQ", description="e.g., NSE_EQ / BSE_EQ / IDX_I"),
+):
+    # Shape per Dhan doc (marketfeed LTP) may vary; we keep simple wrapper
+    payload = {"instruments": [{"securityId": security_id, "exchangeSegment": exchange_segment}]}
+    return _post("marketfeed/ltp", payload)
+
+# ---------- AI Placeholders ----------
+@app.get("/ai/strategy")
+def ai_strategy():
+    return {"msg": "AI strategy endpoint placeholder — plug your LLM here."}
+
+@app.get("/ai/recommendations")
+def ai_recommend():
+    return {"msg": "AI recommendations placeholder — plug your LLM here."}
+
+@app.get("/ai/payoff")
+def ai_payoff():
+    return {"msg": "AI payoff endpoint placeholder — returns payoff array later."}
