@@ -307,3 +307,10 @@ app.mount("/public", StaticFiles(directory="public"), name="public")
 def serve_dashboard():
     # This loads the separate HTML file. No inline HTML inside Python.
     return FileResponse("public/dashboard.html")
+    # === AI (OpenAI) ===
+import os, math
+from pydantic import BaseModel
+from openai import OpenAI
+
+OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+_ai = OpenAI(api_key=OPENAI_KEY) if OPENAI_KEY else None
