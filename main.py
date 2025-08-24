@@ -1,154 +1,472 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 import os
 from datetime import datetime, timezone
+from typing import Optional, Dict, Any, List
 
-app = FastAPI(title="Options-analysis (Dhan v2 + AI)")
+from fastapi import FastAPI, Query, Body, Request
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
-# ---------- CORS ----------
-FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "")
-ALLOWED_ORIGINS = [FRONTEND_ORIGIN] if FRONTEND_ORIGIN else ["*"]
+# --- Dhan SDK ---
+from dhanhq import dhanhq as DhanHQ
+
+# --- Optional AI (OpenAI) ---
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_APIKEY")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+try:
+    if OPENAI_API_KEY:
+        from openai import OpenAI
+        _openai_client: Optional["OpenAI"] = OpenAI(api_key=OPENAI_API_KEY)
+    else:
+        _openai_client = None
+except Exception:
+    _openai_client = None  # fail open to non-AI mode
+
+# -----------------------------------------------------------------------------
+# FastAPI app
+# -----------------------------------------------------------------------------
+app = FastAPI(title="Options-analysis (Dhan v2) + AI")
+
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["*"], allow_credentials=True,
+    allow_methods=["*"], allow_headers=["*"],
 )
 
-def now_iso():
-    return datetime.now(timezone.utc).isoformat()
+# -----------------------------------------------------------------------------
+# ENV / MODE & Dhan client
+# -----------------------------------------------------------------------------
+def _pick(*keys: str) -> Optional[str]:
+    for k in keys:
+        v = os.getenv(k)
+        if v:
+            return v
+    return None
 
+MODE = os.getenv("MODE", "TEST").upper()  # LIVE or TEST (SANDBOX)
+ENV_NOTE = "LIVE" if MODE == "LIVE" else "SANDBOX"
+
+if MODE == "LIVE":
+    CLIENT_ID = _pick("DHAN_LIVE_CLIENT_ID", "DHAN_CLIENT_ID")
+    ACCESS_TOKEN = _pick("DHAN_LIVE_ACCESS_TOKEN", "DHAN_ACCESS_TOKEN")
+else:
+    CLIENT_ID = _pick("DHAN_SANDBOX_CLIENT_ID", "DHAN_CLIENT_ID")
+    ACCESS_TOKEN = _pick("DHAN_SANDBOX_ACCESS_TOKEN", "DHAN_ACCESS_TOKEN")
+
+# One Dhan client
+dhan = DhanHQ(CLIENT_ID or "", ACCESS_TOKEN or "")
+
+# -----------------------------------------------------------------------------
+# Helpers
+# -----------------------------------------------------------------------------
+def ok(data: Any, remarks: str = "") -> Dict[str, Any]:
+    return {"status": "success", "remarks": remarks, "data": data}
+
+def fail(msg: str, code: Optional[str] = None, etype: Optional[str] = None, data: Any = None) -> Dict[str, Any]:
+    return {"status": "failure", "remarks": {"error_code": code, "error_type": etype, "error_message": msg}, "data": data}
+
+def _quote_key(seg: str) -> str:
+    s = seg.upper().strip()
+    if s in ("NSE", "NSE_EQ"): return "NSE_EQ"
+    if s in ("BSE", "BSE_EQ"): return "BSE_EQ"
+    if s in ("NSE_FNO",):      return "NSE_FNO"
+    if s in ("MCX", "MCX_COMM"): return "MCX_COMM"
+    return s
+
+# -----------------------------------------------------------------------------
+# Root / Index
+# -----------------------------------------------------------------------------
 @app.get("/")
 def root():
     return {
-        "app": "Options-analysis (Dhan v2 + AI)",
-        "mode": os.getenv("MODE", "LIVE"),
-        "env": "LIVE",
-        "now": now_iso(),
+        "app": app.title,
+        "mode": MODE,
+        "env": ENV_NOTE,
+        "now": datetime.now(timezone.utc).isoformat(),
         "endpoints": [
-            "/health","/broker_status",
-            "/marketfeed/ltp","/marketfeed/ohlc","/marketfeed/quote",
-            "/optionchain","/optionchain/expirylist",
-            "/orders","/positions","/holdings","/funds",
-            "/charts/intraday","/charts/historical",
+            "/health", "/broker_status",
+            "/marketfeed/ltp", "/marketfeed/ohlc", "/marketfeed/quote",
+            "/optionchain", "/optionchain/expirylist",
+            "/orders", "/positions", "/holdings", "/funds",
+            "/charts/intraday", "/charts/historical",
             "/option_analysis",
-            "/ai/marketview","/ai/strategy","/ai/payoff","/ai/test",
+            # AI
+            "/ai/marketview", "/ai/strategy", "/ai/payoff",
             "/__selftest"
         ],
     }
 
+# -----------------------------------------------------------------------------
+# Health / Status
+# -----------------------------------------------------------------------------
 @app.get("/health")
 def health():
-    return {"ok": True, "now": now_iso()}
+    return ok({"ok": True, "time": datetime.now(timezone.utc).isoformat()})
 
 @app.get("/broker_status")
 def broker_status():
-    token_present = bool(os.getenv("DHAN_ACCESS_TOKEN"))
-    client_id_present = bool(os.getenv("DHAN_CLIENT_ID"))
-    return {"ok": token_present and client_id_present,
-            "token_present": token_present,
-            "client_id_present": client_id_present}
+    return {
+        "mode": MODE,
+        "env": ENV_NOTE,
+        "token_present": bool(ACCESS_TOKEN),
+        "client_id_present": bool(CLIENT_ID),
+        "ai_enabled": bool(_openai_client),
+        "ai_model": OPENAI_MODEL if _openai_client else None,
+    }
 
-# -------- Option chain (stub) --------
-from typing import Optional
+# -----------------------------------------------------------------------------
+# Portfolio
+# -----------------------------------------------------------------------------
+@app.get("/orders")
+def orders():
+    try:
+        return ok(dhan.get_order_list())
+    except Exception as e:
+        return fail("orders fetch failed", data=str(e))
 
-class OCReq(BaseModel):
+@app.get("/positions")
+def positions():
+    try:
+        return ok(dhan.get_positions())
+    except Exception as e:
+        return fail("positions fetch failed", data=str(e))
+
+@app.get("/holdings")
+def holdings():
+    try:
+        return ok(dhan.get_holdings())
+    except Exception as e:
+        return fail("holdings fetch failed", data=str(e))
+
+@app.get("/funds")
+def funds():
+    try:
+        return ok(dhan.get_fund_limits())
+    except Exception as e:
+        return fail("funds fetch failed", data=str(e))
+
+# -----------------------------------------------------------------------------
+# Market Quote (snapshot REST)
+# -----------------------------------------------------------------------------
+@app.get("/marketfeed/ltp")
+def market_ltp(exchange_segment: str = Query(...), security_id: int = Query(...)):
+    try:
+        payload = { _quote_key(exchange_segment): [int(security_id)] }
+        return ok(dhan.ticker_data(securities=payload))
+    except Exception as e:
+        return fail("ltp fetch failed", data=str(e))
+
+@app.get("/marketfeed/ohlc")
+def market_ohlc(exchange_segment: str = Query(...), security_id: int = Query(...)):
+    try:
+        payload = { _quote_key(exchange_segment): [int(security_id)] }
+        return ok(dhan.ohlc_data(securities=payload))
+    except Exception as e:
+        return fail("ohlc fetch failed", data=str(e))
+
+@app.get("/marketfeed/quote")
+def market_quote(exchange_segment: str = Query(...), security_id: int = Query(...)):
+    try:
+        payload = { _quote_key(exchange_segment): [int(security_id)] }
+        return ok(dhan.quote_data(securities=payload))
+    except Exception as e:
+        return fail("quote fetch failed", data=str(e))
+
+# -----------------------------------------------------------------------------
+# Option Chain
+# -----------------------------------------------------------------------------
+class OptionChainBody(BaseModel):
     under_security_id: int
     under_exchange_segment: str
     expiry: str
 
-@app.post("/optionchain")
-def optionchain(req: OCReq):
-    sample = {
-        "43500": {"CE": {"oi": 12345, "previous_oi": 11111, "volume": 4567,
-                         "implied_volatility": 16.8, "last_price": 125.5, "change": 5.25},
-                  "PE": {"oi": 9876,  "previous_oi": 10443, "volume": 3456,
-                         "implied_volatility": 18.2, "last_price": 84.25, "change": -3.75}},
-        "43700": {"CE": {"oi": 9876,  "previous_oi": 7889,  "volume": 6789,
-                         "implied_volatility": 17.8, "last_price": 76.25, "change": 3.75},
-                  "PE": {"oi": 7654,  "previous_oi": 7999,  "volume": 5432,
-                         "implied_volatility": 17.5, "last_price": 105.75, "change": -1.50}},
-        "43900": {"CE": {"oi": 7654,  "previous_oi": 6420,  "volume": 5432,
-                         "implied_volatility": 18.5, "last_price": 51.75, "change": 2.50},
-                  "PE": {"oi": 5432,  "previous_oi": 4976,  "volume": 4321,
-                         "implied_volatility": 16.9, "last_price": 145.50,"change": 1.25}},
-    }
-    return {"ok": True, "data": {"data": sample}, "req": req}
-
 @app.get("/optionchain/expirylist")
-def expirylist(under_security_id: int, under_exchange_segment: str):
-    return {"ok": True, "data": {"data": ["2025-08-28", "2025-09-04", "2025-09-11"]}}
+def optionchain_expirylist(
+    under_security_id: int = Query(...),
+    under_exchange_segment: str = Query(...)
+):
+    try:
+        return ok(dhan.expiry_list(under_security_id=under_security_id,
+                                   under_exchange_segment=under_exchange_segment))
+    except Exception as e:
+        return fail("expiry list failed", data=str(e))
 
-# -------- Marketfeed (spot stub) --------
-@app.get("/marketfeed/ltp")
-def marketfeed_ltp(exchange_segment: str, security_id: int):
-    return {"ok": True, "data": {"data": {"NSE_EQ": [{"ltp": 1642.55}]}}}
+@app.post("/optionchain")
+def optionchain(body: OptionChainBody = Body(...)):
+    try:
+        return ok(dhan.option_chain(
+            under_security_id=body.under_security_id,
+            under_exchange_segment=body.under_exchange_segment,
+            expiry=body.expiry
+        ))
+    except Exception as e:
+        return fail("option chain failed", data=str(e))
 
-# -------- AI endpoints (stubs) --------
-class MarketReq(BaseModel):
-    under_security_id: int
-    under_exchange_segment: str
+# -----------------------------------------------------------------------------
+# Charts
+# -----------------------------------------------------------------------------
+@app.get("/charts/intraday")
+def charts_intraday(
+    security_id: int = Query(...),
+    exchange_segment: str = Query(...),
+    instrument_type: str = Query(...),
+):
+    try:
+        return ok(dhan.intraday_minute_data(
+            security_id=security_id,
+            exchange_segment=exchange_segment,
+            instrument_type=instrument_type
+        ))
+    except Exception as e:
+        return fail("intraday data failed", data=str(e))
 
-class StratReq(MarketReq):
-    risk: str = "moderate"
-    capital: float = 50000
-    bias: str = "neutral"
+@app.get("/charts/historical")
+def charts_historical(
+    security_id: int = Query(...),
+    exchange_segment: str = Query(...),
+    instrument_type: str = Query(...),
+    expiry_code: int = Query(0),
+    from_date: str = Query(..., description="YYYY-MM-DD"),
+    to_date: str = Query(..., description="YYYY-MM-DD"),
+):
+    try:
+        return ok(dhan.historical_daily_data(
+            security_id=security_id,
+            exchange_segment=exchange_segment,
+            instrument_type=instrument_type,
+            expiry_code=expiry_code,
+            from_date=from_date,
+            to_date=to_date
+        ))
+    except Exception as e:
+        return fail("historical data failed", data=str(e))
+
+# -----------------------------------------------------------------------------
+# Aggregate: Option Analysis (data only)
+# -----------------------------------------------------------------------------
+@app.get("/option_analysis")
+def option_analysis(
+    under_security_id: int = Query(13, description="NIFTY"),
+    under_exchange_segment: str = Query("IDX_I"),
+    equity_security_id: int = Query(1333, description="HDFC Bank eq for demo"),
+    equity_exchange_segment: str = Query("NSE")
+):
+    try:
+        # 1) Expiries
+        expiries = dhan.expiry_list(under_security_id=under_security_id,
+                                    under_exchange_segment=under_exchange_segment)
+
+        # pick first expiry if list available
+        expiry_pick = None
+        try:
+            expiry_pick = (expiries or {}).get("data", {}).get("data", [None])[0]
+        except Exception:
+            expiry_pick = None
+
+        # 2) Option chain
+        chain = {}
+        if expiry_pick:
+            chain = dhan.option_chain(
+                under_security_id=under_security_id,
+                under_exchange_segment=under_exchange_segment,
+                expiry=expiry_pick
+            )
+
+        # 3) Market snapshots for an example equity
+        key = _quote_key(equity_exchange_segment)
+        payload = { key: [int(equity_security_id)] }
+        market = {
+            "ltp": dhan.ticker_data(securities=payload),
+            "ohlc": dhan.ohlc_data(securities=payload),
+            "quote": dhan.quote_data(securities=payload)
+        }
+
+        # 4) Portfolio snapshot
+        portfolio = {
+            "orders": dhan.get_order_list(),
+            "positions": dhan.get_positions(),
+            "holdings": dhan.get_holdings(),
+            "funds": dhan.get_fund_limits()
+        }
+
+        return ok({
+            "params": {
+                "under_security_id": under_security_id,
+                "under_exchange_segment": under_exchange_segment,
+                "used_expiry": expiry_pick
+            },
+            "expiry_list": expiries,
+            "option_chain": chain,
+            "market": market,
+            "portfolio": portfolio
+        })
+    except Exception as e:
+        return fail("option_analysis failed", data=str(e))
+
+# -----------------------------------------------------------------------------
+# AI endpoints
+# -----------------------------------------------------------------------------
+class AIMarketViewBody(BaseModel):
+    underlier: str = Field("BANKNIFTY", description="Display name only")
+    context: Dict[str, Any] = Field(default_factory=dict, description="optional signals like pcr, iv, oi_buildup")
+
+class AIStrategyBody(BaseModel):
+    outlook: str = Field("neutral", description="bullish|slightly_bullish|neutral|slightly_bearish|bearish")
+    risk: str = Field("moderate", description="low|moderate|high")
+    capital: int = 50000
+    expiry: Optional[str] = None
+    notes: Optional[str] = None
+
+class AIPayoffLeg(BaseModel):
+    side: str            # BUY or SELL
+    opt_type: str        # CE or PE
+    strike: float
+    premium: float
+    qty: int = 1
+
+class AIPayoffBody(BaseModel):
+    legs: List[AIPayoffLeg]
+    price_grid: List[float] = Field(default_factory=lambda: [])
+
+def _ai_call(prompt: str) -> str:
+    """
+    Calls OpenAI if configured, else returns a simple rule-based response.
+    """
+    if _openai_client:
+        try:
+            resp = _openai_client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": "You are an options strategist for Indian markets. Keep outputs concise, structured, and actionable."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.2,
+            )
+            return resp.choices[0].message.content.strip()
+        except Exception as e:
+            return f"(AI error fallback) {str(e)}"
+
+    # fallback (no OpenAI)
+    return "AI is not enabled; set OPENAI_API_KEY to get model-based insights. Meanwhile: focus on liquid strikes near ATM, prefer credit strategies when IV is high, define exits via max loss or IV crush."
 
 @app.post("/ai/marketview")
-def ai_marketview(req: MarketReq):
-    return {
-        "ok": True,
-        "insight": "Neutral to slightly bullish bias; support 43,500 / resistance 44,200.",
-        "confidence": 0.67,
-        "req": req,
-    }
+def ai_marketview(body: AIMarketViewBody):
+    try:
+        ctx = body.context or {}
+        quick = {
+            "pcr": ctx.get("pcr"),
+            "avg_iv": ctx.get("avg_iv"),
+            "max_pain": ctx.get("max_pain"),
+            "oi_trend": ctx.get("oi_trend")
+        }
+        prompt = (f"Underlier: {body.underlier}\n"
+                  f"Signals: {quick}\n"
+                  f"Task: Give a short directional view (bullish/neutral/bearish), "
+                  f"key levels, and 1-2 risks to watch for the next session.")
+        return ok({"summary": _ai_call(prompt)})
+    except Exception as e:
+        return fail("ai marketview failed", data=str(e))
 
 @app.post("/ai/strategy")
-def ai_strategy(req: StratReq):
-    if req.bias == "neutral":
-        legs = [
-            {"side":"SELL","type":"CALL","strike":44200,"price":120.5},
-            {"side":"BUY","type":"CALL","strike":44400,"price": 85.25},
-            {"side":"SELL","type":"PUT","strike":43400,"price": 95.75},
-            {"side":"BUY","type":"PUT","strike":43200,"price": 70.50},
-        ]
-    elif req.bias == "bullish":
-        legs = [
-            {"side":"BUY","type":"CALL","strike":43800,"price":220.5},
-            {"side":"SELL","type":"CALL","strike":44200,"price":125.75},
-        ]
-    else:
-        legs = [
-            {"side":"BUY","type":"PUT","strike":43800,"price":180.25},
-            {"side":"SELL","type":"PUT","strike":43400,"price":125.50},
-        ]
-    return {"ok": True, "strategy": {"bias": req.bias, "risk": req.risk, "legs": legs}, "req": req}
+def ai_strategy(body: AIStrategyBody):
+    try:
+        prompt = (f"Design an options strategy for Indian F&O with:\n"
+                  f"- Outlook: {body.outlook}\n- Risk: {body.risk}\n- Capital: ₹{body.capital}\n"
+                  f"- Expiry preference: {body.expiry or 'nearest weekly'}\n"
+                  f"- Notes: {body.notes or '-'}\n"
+                  f"Return: name, legs (sell/buy CE/PE with strikes/premiums placeholders), "
+                  f"max profit/loss, break-evens, PoP%, and key management rules.")
+        text = _ai_call(prompt)
+        return ok({"recommendation": text})
+    except Exception as e:
+        return fail("ai strategy failed", data=str(e))
 
 @app.post("/ai/payoff")
-def ai_payoff(req: MarketReq):
-    pts = [{"px": 42800, "pnl": -3800},
-           {"px": 43600, "pnl":  6200},
-           {"px": 44400, "pnl": -3800}]
-    return {"ok": True, "payoff": pts, "req": req}
+def ai_payoff(body: AIPayoffBody):
+    try:
+        # Simple deterministic payoff calc at expiry (ignore greeks; premium as given)
+        grid = body.price_grid or []
+        if not grid:
+            # auto grid from legs
+            strikes = [l.strike for l in body.legs]
+            if strikes:
+                lo = max(0, min(strikes) - 500)
+                hi = max(strikes) + 500
+                grid = list(range(int(lo), int(hi)+1, 100))
+            else:
+                grid = list(range(30000, 50001, 100))
 
+        def leg_payoff(spot: float, leg: AIPayoffLeg) -> float:
+            # payoff at expiry per 1 qty
+            if leg.opt_type.upper() == "CE":
+                intrinsic = max(0.0, spot - leg.strike)
+            else:
+                intrinsic = max(0.0, leg.strike - spot)
+            # buy = pay premium; sell = receive premium
+            sign = 1 if leg.side.upper() == "BUY" else -1
+            # Profit = sign*(intrinsic - premium)
+            per_unit = sign * (intrinsic - leg.premium)
+            return per_unit * leg.qty
+
+        series = []
+        for s in grid:
+            total = sum(leg_payoff(s, lg) for lg in body.legs)
+            series.append({"spot": s, "pnl": round(total, 2)})
+
+        # rough metrics
+        pnl_vals = [p["pnl"] for p in series]
+        max_profit = max(pnl_vals)
+        max_loss = min(pnl_vals)
+        # breakevens: spot where pnl crosses 0 (linear scan)
+        bes = []
+        for i in range(1, len(series)):
+            p0, p1 = series[i-1]["pnl"], series[i]["pnl"]
+            if (p0 == 0) or (p1 == 0) or (p0 < 0 and p1 > 0) or (p0 > 0 and p1 < 0):
+                bes.append(series[i]["spot"])
+        result = {
+            "grid": series,
+            "summary": {
+                "max_profit": max_profit,
+                "max_loss": max_loss,
+                "breakevens_estimated": sorted(list(set(bes)))
+            }
+        }
+        return ok(result)
+    except Exception as e:
+        return fail("ai payoff failed", data=str(e))
+
+# -----------------------------------------------------------------------------
+# Self-test
+# -----------------------------------------------------------------------------
 @app.get("/__selftest")
-def selftest():
-    st = broker_status()
+def __selftest(request: Request):
+    base = str(request.base_url).rstrip("/")
+    samples = {
+        "root": "/",
+        "health": "/health",
+        "broker_status": "/broker_status",
+        "orders": "/orders",
+        "positions": "/positions",
+        "holdings": "/holdings",
+        "funds": "/funds",
+        "expiryllist_sample": "/optionchain/expirylist?under_security_id=13&under_exchange_segment=IDX_I",
+        "intraday_sample": "/charts/intraday?security_id=1333&exchange_segment=NSE&instrument_type=EQUITY",
+        "historical_sample": "/charts/historical?security_id=1333&exchange_segment=NSE&instrument_type=EQUITY&expiry_code=0&from_date=2024-01-01&to_date=2024-02-01",
+        "option_analysis": "/option_analysis",
+        "ai_marketview": "/ai/marketview",
+        "ai_strategy": "/ai/strategy",
+        "ai_payoff": "/ai/payoff"
+    }
     return {
         "status": {
-            "mode": os.getenv("MODE", "LIVE"),
-            "env": "LIVE",
-            "token_present": st["token_present"],
-            "client_id_present": st["client_id_present"],
+            "mode": MODE, "env": ENV_NOTE,
+            "token_present": bool(ACCESS_TOKEN),
+            "client_id_present": bool(CLIENT_ID),
+            "ai_enabled": bool(_openai_client),
+            "ai_model": OPENAI_MODEL if _openai_client else None,
+            "base_url_note": "MODE=LIVE uses LIVE_* keys; otherwise SANDBOX",
         },
-        "samples": {
-            "root": "https://options-analysis.onrender.com/",
-            "health": "https://options-analysis.onrender.com/health",
-            "broker_status": "https://options-analysis.onrender.com/broker_status",
-            "expiryllist_sample": "https://options-analysis.onrender.com/optionchain/expirylist?under_security_id=13&under_exchange_segment=IDX_I",
-            "ai_test": "https://options-analysis.onrender.com/ai/marketview",
-        },
-        "now": now_iso(),
+        "samples": {k: f"{base}{v}" for k, v in samples.items()},
+        "now": datetime.now(timezone.utc).isoformat()
     }
