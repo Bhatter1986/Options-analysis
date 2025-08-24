@@ -1,395 +1,202 @@
-# main.py
-from fastapi import FastAPI, Request, HTTPException, Path
-from fastapi.responses import JSONResponse, PlainTextResponse
-from fastapi.middleware.cors import CORSMiddleware
-from typing import Dict, Optional, Any
+# main.py  — FastAPI + DhanHQ v2, single-file
 import os
-import json
-import asyncio
+from typing import Optional, Any, Dict, List
 
-# --- Try httpx; fallback to requests (auto) ---
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field, ConfigDict
+
 try:
-    import httpx  # type: ignore
-    _HAS_HTTPX = True
-except Exception:
-    import requests  # type: ignore
-    _HAS_HTTPX = False
+    from dhanhq import dhanhq as DhanSDK
+except Exception as e:  # safety on first boot
+    DhanSDK = None
 
-app = FastAPI(
-    title="DhanHQ API Proxy",
-    version="2.0.0",
-    description="Pass-through proxy for DhanHQ v2 with CORS and env-based config",
-    docs_url="/docs",
-    redoc_url="/redoc",
-)
 
-# --- CORS ---
+app = FastAPI(title="Options-analysis", version="v2")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["*"], allow_credentials=True,
+    allow_methods=["*"], allow_headers=["*"],
 )
 
-# ------------ Helpers ------------
-def _pick_env() -> Dict[str, Optional[str]]:
-    """
-    Decide LIVE/SANDBOX and pick token/client/base_url from env.
-    Defaults to LIVE base if sandbox URL not provided.
-    """
-    env = (os.getenv("DHAN_ENV") or "LIVE").strip().upper()
-    if env not in {"SANDBOX", "LIVE"}:
-        env = "LIVE"
+# ---------- Helpers ----------
 
-    if env == "LIVE":
-        token = os.getenv("DHAN_LIVE_ACCESS_TOKEN") or os.getenv("DHAN_ACCESS_TOKEN")
-        client_id = os.getenv("DHAN_LIVE_CLIENT_ID") or os.getenv("DHAN_CLIENT_ID")
-        base_url = os.getenv("DHAN_LIVE_BASE_URL") or "https://api.dhan.co/v2"
-    else:
-        token = os.getenv("DHAN_SANDBOX_ACCESS_TOKEN") or os.getenv("DHAN_ACCESS_TOKEN")
-        client_id = os.getenv("DHAN_SANDBOX_CLIENT_ID") or os.getenv("DHAN_CLIENT_ID")
-        # Dhan का official sandbox public नहीं होता – अगर दिया है तो use करें, वरना LIVE URL पर ही proxy करें
-        base_url = os.getenv("DHAN_SANDBOX_BASE_URL") or "https://api.dhan.co/v2"
+def _mode_env() -> Dict[str, Any]:
+    """Pick LIVE / SANDBOX creds by MODE (LIVE|SANDBOX|DRY)."""
+    mode = os.getenv("MODE", "LIVE").upper()
+    if mode == "SANDBOX":
+        return dict(
+            mode=mode, env="SANDBOX",
+            client_id=os.getenv("DHAN_SANDBOX_CLIENT_ID", ""),
+            token=os.getenv("DHAN_SANDBOX_ACCESS_TOKEN", "")
+        )
+    else:  # default LIVE (also used for DRY)
+        return dict(
+            mode=mode if mode in ("LIVE", "DRY") else "LIVE",
+            env="LIVE",
+            client_id=os.getenv("DHAN_LIVE_CLIENT_ID", ""),
+            token=os.getenv("DHAN_LIVE_ACCESS_TOKEN", "")
+        )
 
-    return {"env": env, "token": token, "client_id": client_id, "base_url": base_url}
 
-def _make_headers(token: str, client_id: str) -> Dict[str, str]:
+def _get_dhan():
+    """Return (meta, dhan_instance or None)."""
+    meta = _mode_env()
+    if meta["mode"] == "DRY":
+        return meta, None
+    if not DhanSDK:
+        raise HTTPException(500, "dhanhq package not available.")
+    if not meta["client_id"] or not meta["token"]:
+        raise HTTPException(400, "Missing DHAN client_id or access_token.")
+    return meta, DhanSDK(meta["client_id"], meta["token"])
+
+
+def _ok(data: Any) -> Dict[str, Any]:
+    return {"status": "success", "remarks": "", "data": data}
+
+
+def _fail(e: Exception | str, data: Any = None) -> Dict[str, Any]:
+    msg = str(e)
+    return {"status": "failure", "remarks": msg, "data": data or {}}
+
+
+def _collect_dates(obj: Any) -> List[str]:
+    """Extract YYYY-MM-DD strings from any nested response shape."""
+    out: List[str] = []
+    def walk(x: Any):
+        if isinstance(x, dict):
+            for v in x.values(): walk(v)
+        elif isinstance(x, list):
+            for v in x: walk(v)
+        elif isinstance(x, str) and len(x) == 10 and x[4] == "-" and x[7] == "-":
+            out.append(x)
+    walk(obj)
+    # unique, keep order
+    seen = set()
+    uniq = []
+    for d in out:
+        if d not in seen:
+            seen.add(d)
+            uniq.append(d)
+    return uniq
+
+# ---------- Models ----------
+
+class ExpiryListReq(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    under_security_id: int = Field(alias="UnderlyingScrip")
+    under_exchange_segment: str = Field(alias="UnderlyingSeg")
+
+
+class OptionChainReq(ExpiryListReq):
+    expiry: Optional[str] = Field(default=None, alias="Expiry")
+
+
+# ---------- Routes ----------
+
+@app.get("/")
+def root():
+    return {"ok": True, "service": app.title, "version": app.version}
+
+@app.get("/broker_status")
+def broker_status():
+    meta = _mode_env()
     return {
-        "access-token": token,
-        "client-id": client_id,
-        "Content-Type": "application/json",
-        "Accept": "application/json",
+        "mode": meta["mode"],
+        "env": meta["env"],
+        "token_present": bool(meta["token"]),
+        "client_id_present": bool(meta["client_id"]),
     }
 
-async def _request_upstream(
-    method: str,
-    path: str,
-    json_body: Optional[Dict[str, Any]] = None,
-    query_params: Optional[Dict[str, Any]] = None,
-) -> JSONResponse:
-    """
-    Core proxy: sends request to DhanHQ and relays response.
-    Uses httpx (async) if available; else requests in a thread.
-    """
-    cfg = _pick_env()
-    token, client_id, base_url = cfg["token"], cfg["client_id"], cfg["base_url"]
+@app.get("/orders")
+def orders():
+    meta, dhan = _get_dhan()
+    if not dhan:
+        # DRY response
+        return _ok({"data": [], "status": "dry"})
+    try:
+        res = dhan.get_order_list()
+        return _ok(res)
+    except Exception as e:
+        return _fail(e)
 
-    if not token or not client_id:
-        return JSONResponse(
-            status_code=401,
-            content={
-                "ok": False,
-                "error": "Missing Dhan credentials",
-                "details": {
-                    "env": cfg["env"],
-                    "token_present": bool(token),
-                    "client_id_present": bool(client_id),
-                },
-            },
+@app.get("/positions")
+def positions():
+    meta, dhan = _get_dhan()
+    if not dhan:
+        return _ok({"data": [], "status": "dry"})
+    try:
+        res = dhan.get_positions()
+        return _ok(res)
+    except Exception as e:
+        return _fail(e)
+
+# --- Expiry list (GET with query OR POST with body) ---
+
+@app.get("/optionchain/expirylist")
+def expiry_list_get(
+    under_security_id: int = Query(..., alias="under_security_id"),
+    under_exchange_segment: str = Query(..., alias="under_exchange_segment"),
+):
+    meta, dhan = _get_dhan()
+    if not dhan:
+        # few mock dates in DRY
+        return _ok({"data": ["2025-08-28", "2025-09-23"]})
+    try:
+        res = dhan.expiry_list(
+            under_security_id=under_security_id,
+            under_exchange_segment=under_exchange_segment
         )
+        return _ok(res)
+    except Exception as e:
+        return _fail(e)
 
-    url = f"{base_url}{path}"
-    headers = _make_headers(token, client_id)
+@app.post("/optionchain/expirylist")
+def expiry_list_post(req: ExpiryListReq):
+    meta, dhan = _get_dhan()
+    if not dhan:
+        return _ok({"data": ["2025-08-28", "2025-09-23"]})
+    try:
+        res = dhan.expiry_list(
+            under_security_id=req.under_security_id,
+            under_exchange_segment=req.under_exchange_segment
+        )
+        return _ok(res)
+    except Exception as e:
+        return _fail(e)
 
-    # httpx path (async)
-    if _HAS_HTTPX:
-        timeout = httpx.Timeout(30.0, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            try:
-                resp = await client.request(
-                    method.upper(), url, headers=headers,
-                    json=json_body, params=query_params
-                )
-            except httpx.HTTPError as exc:
-                return JSONResponse(
-                    status_code=502,
-                    content={
-                        "ok": False,
-                        "error": "Upstream HTTP error",
-                        "details": str(exc),
-                        "upstream": {"url": url},
-                    },
-                )
+# --- Option Chain ---
 
-            try:
-                data = resp.json()
-                return JSONResponse(status_code=resp.status_code, content=data)
-            except ValueError:
-                return JSONResponse(
-                    status_code=resp.status_code,
-                    content={
-                        "ok": False,
-                        "error": "Non-JSON response from Dhan",
-                        "status_code": resp.status_code,
-                        "text": resp.text,
-                    },
-                )
+@app.post("/optionchain")
+def option_chain(req: OptionChainReq):
+    meta, dhan = _get_dhan()
+    if not dhan:
+        # DRY sample
+        return _ok({"symbol": "NIFTY", "contracts": [], "status": "dry"})
 
-    # requests fallback in a thread (non-blocking for asyncio loop)
-    def _do():
+    # Resolve expiry if missing: pick the nearest one from /expirylist
+    expiry = req.expiry
+    if not expiry:
         try:
-            return requests.request(
-                method.upper(), url, headers=headers,
-                json=json_body, params=query_params, timeout=30
+            el = dhan.expiry_list(
+                under_security_id=req.under_security_id,
+                under_exchange_segment=req.under_exchange_segment
             )
-        except requests.RequestException as exc:  # type: ignore
-            return exc
-
-    resp = await asyncio.to_thread(_do)
-    if isinstance(resp, Exception):
-        return JSONResponse(
-            status_code=502,
-            content={
-                "ok": False,
-                "error": "Upstream HTTP error",
-                "details": str(resp),
-                "upstream": {"url": url},
-            },
-        )
+            dates = _collect_dates(el)
+            if not dates:
+                raise HTTPException(400, "No valid expiries returned by broker.")
+            expiry = sorted(dates)[0]
+        except Exception as e:
+            return _fail(f"Failed to resolve expiry automatically: {e}")
 
     try:
-        data = resp.json()
-        return JSONResponse(status_code=resp.status_code, content=data)
-    except ValueError:
-        return JSONResponse(
-            status_code=resp.status_code,
-            content={
-                "ok": False,
-                "error": "Non-JSON response from Dhan",
-                "status_code": resp.status_code,
-                "text": resp.text,
-            },
+        res = dhan.option_chain(
+            under_security_id=req.under_security_id,
+            under_exchange_segment=req.under_exchange_segment,
+            expiry=expiry
         )
-
-# ------------ Root & Health ------------
-@app.get("/", response_class=PlainTextResponse, tags=["Health & Status"])
-async def root():
-    return "DhanHQ Proxy is running. See /docs"
-
-@app.get("/health", tags=["Health & Status"])
-async def health():
-    return {"ok": True}
-
-@app.get("/broker_status", tags=["Health & Status"])
-async def broker_status():
-    cfg = _pick_env()
-    return {
-        "env": cfg["env"],
-        "base_url": cfg["base_url"],
-        "token_present": bool(cfg["token"]),
-        "client_id_present": bool(cfg["client_id"]),
-        "has_httpx": _HAS_HTTPX,
-        "mode": os.getenv("MODE", "DRY").upper(),
-    }
-
-# ------------ Market Data (Market Quote) ------------
-@app.post("/marketfeed/ltp", tags=["Market Data"])
-async def marketfeed_ltp(request: Request):
-    body = await request.json()
-    return await _request_upstream("POST", "/marketfeed/ltp", json_body=body)
-
-@app.post("/marketfeed/ohlc", tags=["Market Data"])
-async def marketfeed_ohlc(request: Request):
-    body = await request.json()
-    return await _request_upstream("POST", "/marketfeed/ohlc", json_body=body)
-
-@app.post("/marketfeed/quote", tags=["Market Data"])
-async def marketfeed_quote(request: Request):
-    body = await request.json()
-    return await _request_upstream("POST", "/marketfeed/quote", json_body=body)
-
-# ------------ Charts ------------
-@app.post("/charts/intraday", tags=["Data API's"])
-async def charts_intraday(request: Request):
-    body = await request.json()
-    return await _request_upstream("POST", "/charts/intraday", json_body=body)
-
-@app.post("/charts/historical", tags=["Data API's"])
-async def charts_historical(request: Request):
-    body = await request.json()
-    return await _request_upstream("POST", "/charts/historical", json_body=body)
-
-# ------------ Option Chain ------------
-@app.post("/optionchain", tags=["Option Chain"])
-async def option_chain(request: Request):
-    """
-    Body must match Dhan docs exactly:
-    {
-      "UnderlyingScrip": 13,
-      "UnderlyingSeg": "IDX_I",
-      "Expiry": "YYYY-MM-DD"
-    }
-    """
-    body = await request.json()
-    return await _request_upstream("POST", "/optionchain", json_body=body)
-
-@app.post("/optionchain/expirylist", tags=["Option Chain"])
-async def option_chain_expirylist(request: Request):
-    """
-    {
-      "UnderlyingScrip": 13,
-      "UnderlyingSeg": "IDX_I"
-    }
-    """
-    body = await request.json()
-    return await _request_upstream("POST", "/optionchain/expirylist", json_body=body)
-
-# ------------ Orders ------------
-@app.get("/orders", tags=["Orders"])
-async def get_orders():
-    return await _request_upstream("GET", "/orders")
-
-@app.post("/orders", tags=["Orders"])
-async def place_order(request: Request):
-    body = await request.json()
-    return await _request_upstream("POST", "/orders", json_body=body)
-
-@app.get("/orders/{order_id}", tags=["Orders"])
-async def get_order_by_id(order_id: str = Path(..., alias="order-id")):
-    return await _request_upstream("GET", f"/orders/{order_id}")
-
-@app.put("/orders/{order_id}", tags=["Orders"])
-async def modify_order(order_id: str, request: Request):
-    body = await request.json()
-    return await _request_upstream("PUT", f"/orders/{order_id}", json_body=body)
-
-@app.delete("/orders/{order_id}", tags=["Orders"])
-async def cancel_order(order_id: str):
-    return await _request_upstream("DELETE", f"/orders/{order_id}")
-
-@app.post("/orders/slicing", tags=["Orders"])
-async def place_slice_order(request: Request):
-    body = await request.json()
-    return await _request_upstream("POST", "/orders/slicing", json_body=body)
-
-@app.get("/orders/external/{correlation_id}", tags=["Orders"])
-async def get_order_by_correlation(correlation_id: str):
-    return await _request_upstream("GET", f"/orders/external/{correlation_id}")
-
-# Trades
-@app.get("/trades", tags=["Orders"])
-async def get_all_trades():
-    return await _request_upstream("GET", "/trades")
-
-@app.get("/trades/{order_id}", tags=["Orders"])
-async def get_trades_by_order(order_id: str):
-    return await _request_upstream("GET", f"/trades/{order_id}")
-
-@app.get("/trades/{from_date}/{to_date}/{page_number}", tags=["Orders"])
-async def get_trade_history(from_date: str, to_date: str, page_number: str):
-    return await _request_upstream("GET", f"/trades/{from_date}/{to_date}/{page_number}")
-
-# ------------ Super Orders ------------
-@app.get("/super/orders", tags=["Super Order"])
-async def get_super_orders():
-    return await _request_upstream("GET", "/super/orders")
-
-@app.post("/super/orders", tags=["Super Order"])
-async def place_super_order(request: Request):
-    body = await request.json()
-    return await _request_upstream("POST", "/super/orders", json_body=body)
-
-@app.put("/super/orders/{order_id}", tags=["Super Order"])
-async def modify_super_order(order_id: str, request: Request):
-    body = await request.json()
-    return await _request_upstream("PUT", f"/super/orders/{order_id}", json_body=body)
-
-@app.delete("/super/orders/{order_id}/{order_leg}", tags=["Super Order"])
-async def cancel_super_leg(order_id: str, order_leg: str):
-    return await _request_upstream("DELETE", f"/super/orders/{order_id}/{order_leg}")
-
-# ------------ Forever Orders ------------
-@app.get("/forever/orders", tags=["Forever Order"])
-async def get_forever_orders():
-    return await _request_upstream("GET", "/forever/orders")
-
-@app.post("/forever/orders", tags=["Forever Order"])
-async def place_forever_order(request: Request):
-    body = await request.json()
-    return await _request_upstream("POST", "/forever/orders", json_body=body)
-
-@app.put("/forever/orders/{order_id}", tags=["Forever Order"])
-async def modify_forever_order(order_id: str, request: Request):
-    body = await request.json()
-    return await _request_upstream("PUT", f"/forever/orders/{order_id}", json_body=body)
-
-@app.delete("/forever/orders/{order_id}", tags=["Forever Order"])
-async def cancel_forever_order(order_id: str):
-    return await _request_upstream("DELETE", f"/forever/orders/{order_id}")
-
-# ------------ Portfolio ------------
-@app.get("/positions", tags=["Portfolio"])
-async def get_positions():
-    return await _request_upstream("GET", "/positions")
-
-@app.post("/positions/convert", tags=["Portfolio"])
-async def convert_position(request: Request):
-    body = await request.json()
-    return await _request_upstream("POST", "/positions/convert", json_body=body)
-
-@app.get("/holdings", tags=["Portfolio"])
-async def get_holdings():
-    return await _request_upstream("GET", "/holdings")
-
-@app.get("/fundlimit", tags=["Funds"])
-async def get_fund_limit():
-    return await _request_upstream("GET", "/fundlimit")
-
-# ------------ Statements ------------
-@app.get("/ledger", tags=["Statements"])
-async def get_ledger(request: Request):
-    # Dhan allows optional ?from-date=&to-date= in query
-    q = dict(request.query_params)
-    return await _request_upstream("GET", "/ledger", query_params=q)
-
-# ------------ EDIS ------------
-@app.post("/edis/form", tags=["EDIS"])
-async def edis_form(request: Request):
-    body = await request.json()
-    return await _request_upstream("POST", "/edis/form", json_body=body)
-
-@app.post("/edis/bulkform", tags=["EDIS"])
-async def edis_bulk_form(request: Request):
-    body = await request.json()
-    return await _request_upstream("POST", "/edis/bulkform", json_body=body)
-
-@app.get("/edis/tpin", tags=["EDIS"])
-async def edis_tpin():
-    return await _request_upstream("GET", "/edis/tpin")
-
-@app.get("/edis/inquire/{isin}", tags=["EDIS"])
-async def edis_inquire(isin: str):
-    return await _request_upstream("GET", f"/edis/inquire/{isin}")
-
-# ------------ Trader's Control ------------
-@app.get("/killswitch", tags=["Trader's Control"])
-async def killswitch_status():
-    return await _request_upstream("GET", "/killswitch")
-
-@app.post("/killswitch", tags=["Trader's Control"])
-async def killswitch_post(request: Request):
-    # Dhan expects killSwitchStatus as query param
-    q = dict(request.query_params)
-    return await _request_upstream("POST", "/killswitch", query_params=q)
-
-# ------------ Funds / Margin ------------
-@app.post("/margincalculator", tags=["Funds"])
-async def margin_calculator(request: Request):
-    body = await request.json()
-    return await _request_upstream("POST", "/margincalculator", json_body=body)
-
-# ------------ Error Handler ------------
-@app.exception_handler(HTTPException)
-async def http_exception_handler(_, exc: HTTPException):
-    return JSONResponse(status_code=exc.status_code, content={"ok": False, "error": exc.detail})
-
-# ------------ Local Run ------------
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=int(os.getenv("PORT", "8000")),
-        reload=bool(os.getenv("RELOAD", "")),
-    )
+        return _ok(res)
+    except Exception as e:
+        # Common broker error: invalid expiry
+        return _fail(e, data={"hint": "Call /optionchain/expirylist to get valid dates and use one of them."})
