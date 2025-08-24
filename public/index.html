@@ -1,482 +1,370 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Options Trading Room</title>
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<style>
-:root{
-  --bg:#0f1218; --panel:#171b22; --muted:#2a3240; --accent:#3b82f6;
-  --text:#e5e7eb; --pos:#22c55e; --neg:#ef4444;
-}
-html,body{height:100%;}
-body{background:var(--bg);color:var(--text);}
-.card{background:var(--panel);border:1px solid var(--muted);}
-.card-header{background:linear-gradient(90deg,#1b2230,#121722);border-bottom:1px solid var(--muted);}
-.navbar{background:#0b0f16;border-bottom:1px solid var(--muted);}
-.market-status{border-radius:999px;padding:4px 10px;font-weight:600;font-size:.8rem}
-.market-status.live{background:var(--pos);color:#06260f}
-.market-status.dead{background:var(--neg);color:#2b0b0b}
-.form-select,.form-control{background:#121722;border:1px solid var(--muted);color:var(--text);}
-.form-select:focus,.form-control:focus{border-color:var(--accent);box-shadow:0 0 0 .2rem rgba(59,130,246,.15)}
-.option-table{font-size:.9rem}
-.option-table th, .option-table td{vertical-align:middle}
-.call-bg{background:rgba(34,197,94,.08)}
-.put-bg{background:rgba(239,68,68,.08)}
-.sticky-head thead{position:sticky;top:0;z-index:2}
-.time-frame .btn{--bs-btn-border-color:transparent}
-.sidebar .trading-pair{display:flex;justify-content:space-between;border-bottom:1px solid var(--muted);padding:8px 10px}
-.sidebar .pair-name{opacity:.85}
-.sidebar .pair-price small{opacity:.6}
-.badge-tag{background:#111827;border:1px solid var(--muted);color:#cbd5e1}
-</style>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>AI Options Strategy Builder</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script>
+  <style>
+    :root{
+      --bg:#0f172a;--card:#111827;--muted:#94a3b8;--accent:#3b82f6;--ok:#10b981;--bad:#ef4444;
+    }
+    body{background:#0b1220;color:#e5e7eb}
+    .hero{background:linear-gradient(135deg,#111827,#0f172a);}
+    .chip{background:#0f172a;border:1px solid #1f2937;color:#cbd5e1;border-radius:999px;padding:.25rem .6rem;font-size:.8rem}
+    .card{background:#0f172a;border:1px solid #1f2937}
+    .card-header{background:#0f172a;border-bottom:1px solid #1f2937}
+    .stat .label{color:#94a3b8;font-size:.8rem}
+    .stat .value{font-weight:700;font-size:1.25rem}
+    .badge-dot{display:inline-flex;align-items:center;gap:.4rem}
+    .dot{width:.55rem;height:.55rem;border-radius:50%}
+    .table thead th{position:sticky;top:0;background:#0f172a;border-bottom:1px solid #1f2937}
+    .call{background:rgba(16,185,129,.08)}
+    .put{background:rgba(239,68,68,.08)}
+    a.btn-icon{border:1px solid #1f2937}
+  </style>
 </head>
 <body>
 
-<nav class="navbar py-2">
-  <div class="container-fluid">
-    <div class="d-flex align-items-center gap-2">
-      <span class="fs-5 fw-bold"><i class="bi bi-graph-up"></i> OptionsTrader</span>
-      <span id="modeBadge" class="badge badge-tag"></span>
-      <span id="liveBadge" class="market-status live">LIVE</span>
-    </div>
-    <div class="d-flex align-items-center gap-2">
-      <button class="btn btn-sm btn-outline-light"><i class="bi bi-person-circle"></i></button>
-      <button class="btn btn-sm btn-outline-light"><i class="bi bi-bell"></i></button>
-      <button class="btn btn-sm btn-outline-light"><i class="bi bi-gear"></i></button>
-      <span id="clock" class="text-secondary"></span>
+  <!-- Top bar -->
+  <div class="hero py-3 border-bottom border-secondary-subtle">
+    <div class="container d-flex flex-wrap align-items-center justify-content-between gap-3">
+      <div>
+        <h4 class="m-0">AI Options Strategy Builder</h4>
+        <div class="mt-2 d-flex flex-wrap gap-2">
+          <span id="chip_dhan" class="chip"><i class="bi bi-boxes me-1"></i>Dhan v2</span>
+          <span id="chip_env" class="chip"><i class="bi bi-cloud me-1"></i>—</span>
+          <span id="chip_mode" class="chip"><i class="bi bi-sliders me-1"></i>—</span>
+        </div>
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <span id="market_flag" class="badge-dot">
+          <span class="dot" style="background:var(--ok)"></span><span>Market Open</span>
+        </span>
+        <a id="btn_refresh" class="btn btn-sm btn-light btn-icon" title="Refresh"><i class="bi bi-arrow-clockwise"></i></a>
+        <a class="btn btn-sm btn-light btn-icon" href="?api=prod" title="Use PROD"><i class="bi bi-cloud-check"></i></a>
+        <a class="btn btn-sm btn-light btn-icon" href="?api=dev" title="Use Local DEV"><i class="bi bi-pc-display"></i></a>
+      </div>
     </div>
   </div>
-</nav>
 
-<div class="container-fluid mt-3">
-  <div class="row">
-    <!-- Sidebar -->
-    <div class="col-lg-3 sidebar">
-      <div class="card mb-3">
-        <div class="card-header">Broker Status</div>
-        <div class="card-body">
-          <div id="brokerStatusText" class="small">Checking…</div>
+  <div class="container py-4">
+
+    <!-- Controls + Broker -->
+    <div class="row g-4">
+      <div class="col-lg-8">
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span>Controls</span>
+            <div class="d-flex align-items-center gap-2">
+              <button id="btn_fetch" class="btn btn-primary btn-sm">
+                <i class="bi bi-lightning-charge"></i> Fetch Option Chain
+              </button>
+              <button id="btn_clear" class="btn btn-outline-light btn-sm">Clear</button>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label">Symbol</label>
+                <select id="symbolSelect" class="form-select">
+                  <option value="13|IDX_I|NIFTY">NIFTY</option>
+                  <option value="25|IDX_I|BANKNIFTY" selected>BANKNIFTY</option>
+                  <!-- format: under_security_id|under_exchange_segment|label -->
+                </select>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Expiry</label>
+                <select id="expirySelect" class="form-select">
+                  <option value="">Loading…</option>
+                </select>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Strikes window</label>
+                <select id="strikeWin" class="form-select">
+                  <option value="10" selected>±10</option>
+                  <option value="20">±20</option>
+                  <option value="30">±30</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div><!-- /col -->
+
+      <div class="col-lg-4">
+        <div class="card h-100">
+          <div class="card-header">Broker Status</div>
+          <div class="card-body">
+            <div class="d-flex flex-column gap-2">
+              <div class="d-flex justify-content-between">
+                <span class="text-secondary">Connection</span>
+                <span id="br_conn" class="badge text-bg-success">Connected</span>
+              </div>
+              <div class="d-flex justify-content-between">
+                <span class="text-secondary">Token</span>
+                <span id="br_token" class="badge text-bg-secondary">—</span>
+              </div>
+              <div class="d-flex justify-content-between">
+                <span class="text-secondary">Client ID</span>
+                <span id="br_client" class="badge text-bg-secondary">—</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div><!-- /col -->
+    </div>
+
+    <!-- Stats -->
+    <div class="row g-4 mt-1">
+      <div class="col-md-3">
+        <div class="card stat">
+          <div class="card-body">
+            <div class="label">Spot (demo: HDFCBANK)</div>
+            <div id="spotPrice" class="value">—</div>
+          </div>
         </div>
       </div>
+      <div class="col-md-3"><div class="card stat"><div class="card-body"><div class="label">OI Change</div><div id="oiChange" class="value">—</div></div></div></div>
+      <div class="col-md-3"><div class="card stat"><div class="card-body"><div class="label">Put/Call Ratio</div><div id="pcrValue" class="value">—</div></div></div></div>
+      <div class="col-md-3"><div class="card stat"><div class="card-body"><div class="label">Avg. IV</div><div id="ivValue" class="value">—</div></div></div></div>
+    </div>
 
-      <div class="card mb-3">
-        <div class="card-header">Market Overview</div>
-        <div class="card-body p-0">
-          <div class="trading-pair">
-            <div class="pair-name">NIFTY</div>
-            <div class="pair-price" id="niftyLtp">—</div>
-          </div>
-          <div class="trading-pair">
-            <div class="pair-name">BANKNIFTY</div>
-            <div class="pair-price" id="bankLtp">—</div>
-          </div>
-          <div class="trading-pair">
-            <div class="pair-name">HDFCBANK</div>
-            <div class="pair-price" id="hdfcLtp">—</div>
-          </div>
+    <!-- Charts -->
+    <div class="row g-4 mt-1">
+      <div class="col-lg-6">
+        <div class="card">
+          <div class="card-header">Open Interest (Top Strikes)</div>
+          <div class="card-body"><canvas id="oiChart" height="220"></canvas></div>
         </div>
       </div>
-
-      <div class="card mb-3">
-        <div class="card-header">Quick Actions</div>
-        <div class="card-body d-grid gap-2">
-          <a class="btn btn-primary"><i class="bi bi-lightning-charge"></i> Place Order</a>
-          <a class="btn btn-outline-light"><i class="bi bi-graph-up"></i> Analyze Strategy</a>
-          <a class="btn btn-outline-light"><i class="bi bi-clock-history"></i> History</a>
+      <div class="col-lg-6">
+        <div class="card">
+          <div class="card-header">Volume (Top Strikes)</div>
+          <div class="card-body"><canvas id="volChart" height="220"></canvas></div>
         </div>
       </div>
     </div>
 
-    <!-- Main -->
-    <div class="col-lg-9">
-      <ul class="nav nav-tabs border-0">
-        <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tabDash">Dashboard</button></li>
-        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabStrategy">Strategy</button></li>
-        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabExpiry">Expiry</button></li>
-        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabPortfolio">Portfolio</button></li>
-      </ul>
-
-      <div class="tab-content mt-3">
-        <!-- DASHBOARD -->
-        <div class="tab-pane fade show active" id="tabDash">
-          <div class="card mb-3">
-            <div class="card-body">
-              <div class="row g-3">
-                <div class="col-md-3">
-                  <label class="form-label">Symbol (Underlying)</label>
-                  <select id="symbolSelect" class="form-select">
-                    <option value="NIFTY" selected>NIFTY</option>
-                    <option value="BANKNIFTY">BANKNIFTY</option>
-                  </select>
-                </div>
-                <div class="col-md-3">
-                  <label class="form-label">Segment</label>
-                  <select id="segmentSelect" class="form-select">
-                    <option value="IDX_I" selected>IDX_I</option>
-                  </select>
-                </div>
-                <div class="col-md-3">
-                  <label class="form-label">Expiry</label>
-                  <select id="expirySelect" class="form-select"></select>
-                </div>
-                <div class="col-md-3">
-                  <label class="form-label">&nbsp;</label>
-                  <button id="fetchBtn" class="btn btn-primary w-100"><i class="bi bi-download"></i> Fetch Option Chain</button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Stats -->
-          <div class="row g-3 mb-3">
-            <div class="col-md-3">
-              <div class="card stats-card p-3">
-                <div class="text-secondary">Spot</div>
-                <div id="spotPrice" class="fs-4 fw-bold">—</div>
-              </div>
-            </div>
-            <div class="col-md-3">
-              <div class="card stats-card p-3">
-                <div class="text-secondary">OI Change</div>
-                <div id="oiChange" class="fs-5">—</div>
-              </div>
-            </div>
-            <div class="col-md-3">
-              <div class="card stats-card p-3">
-                <div class="text-secondary">PCR</div>
-                <div id="pcrValue" class="fs-5">—</div>
-              </div>
-            </div>
-            <div class="col-md-3">
-              <div class="card stats-card p-3">
-                <div class="text-secondary">Avg IV</div>
-                <div id="ivValue" class="fs-5">—</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Charts -->
-          <div class="row g-3 mb-3">
-            <div class="col-md-6">
-              <div class="card">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                  <span>Price</span>
-                  <div class="btn-group time-frame">
-                    <button class="btn btn-sm btn-outline-light">1D</button>
-                    <button class="btn btn-sm btn-outline-light">1W</button>
-                    <button class="btn btn-sm btn-light">1M</button>
-                    <button class="btn btn-sm btn-outline-light">3M</button>
-                  </div>
-                </div>
-                <div class="card-body">
-                  <div style="height:260px"><canvas id="priceChart"></canvas></div>
-                </div>
-              </div>
-            </div>
-            <div class="col-md-6">
-              <div class="card">
-                <div class="card-header">Open Interest</div>
-                <div class="card-body">
-                  <div style="height:260px"><canvas id="oiChart"></canvas></div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Option Chain -->
-          <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center">
-              <span id="chainTitle">Option Chain</span>
-              <div class="form-check form-switch">
-                <input class="form-check-input" checked type="checkbox" id="autoRefresh">
-                <label class="form-check-label" for="autoRefresh">Auto Refresh</label>
-              </div>
-            </div>
-            <div class="card-body p-0">
-              <div class="table-responsive sticky-head" style="max-height:420px">
-                <table class="table table-hover option-table mb-0" id="chainTable">
-                  <thead class="table-dark">
-                    <tr>
-                      <th colspan="6" class="text-center call-bg">CALLS</th>
-                      <th class="text-center">Strike</th>
-                      <th colspan="6" class="text-center put-bg">PUTS</th>
-                    </tr>
-                    <tr>
-                      <th>OI</th><th>ΔOI</th><th>Vol</th><th>IV</th><th>LTP</th><th>Δ</th>
-                      <th></th>
-                      <th>Δ</th><th>LTP</th><th>IV</th><th>Vol</th><th>ΔOI</th><th>OI</th>
-                    </tr>
-                  </thead>
-                  <tbody id="chainBody"></tbody>
-                </table>
-              </div>
-            </div>
-          </div>
+    <!-- Option Chain Table -->
+    <div class="card mt-4">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span id="oc_title">Option Chain</span>
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="autoToggle" checked>
+          <label class="form-check-label" for="autoToggle">Auto refresh (30s)</label>
         </div>
-
-        <!-- STRATEGY -->
-        <div class="tab-pane fade" id="tabStrategy">
-          <div class="row g-3">
-            <div class="col-lg-8">
-              <div class="card">
-                <div class="card-header">AI Strategy (UI placeholder)</div>
-                <div class="card-body">
-                  <div class="alert alert-secondary">Yahan payoff + legs add honge. (Next sprint)</div>
-                </div>
-              </div>
-            </div>
-            <div class="col-lg-4">
-              <div class="card">
-                <div class="card-header">Payoff</div>
-                <div class="card-body">
-                  <div style="height:260px"><canvas id="payoffChart"></canvas></div>
-                </div>
-              </div>
-            </div>
-          </div>
+      </div>
+      <div class="card-body">
+        <div class="table-responsive" style="max-height:420px">
+          <table class="table table-sm table-hover align-middle" id="oc_table">
+            <thead>
+              <tr>
+                <th colspan="6" class="text-center">CALLS</th>
+                <th class="text-center">Strike</th>
+                <th colspan="6" class="text-center">PUTS</th>
+              </tr>
+              <tr class="text-secondary">
+                <th>OI</th><th>ΔOI</th><th>Vol</th><th>IV</th><th>LTP</th><th>Δ</th>
+                <th></th>
+                <th>Δ</th><th>LTP</th><th>IV</th><th>Vol</th><th>ΔOI</th><th>OI</th>
+              </tr>
+            </thead>
+            <tbody id="oc_body"><tr><td colspan="13" class="text-center text-secondary py-4">No data</td></tr></tbody>
+          </table>
         </div>
-
-        <!-- EXPIRY -->
-        <div class="tab-pane fade" id="tabExpiry">
-          <div class="card">
-            <div class="card-header">Expiry Analysis</div>
-            <div class="card-body">
-              <div id="expiryInfo">Select expiry in Dashboard tab and fetch — yahan derived insights dikhenge.</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- PORTFOLIO -->
-        <div class="tab-pane fade" id="tabPortfolio">
-          <div class="row g-3">
-            <div class="col-md-6">
-              <div class="card"><div class="card-header">Orders</div>
-                <div class="card-body"><pre id="ordersBox" class="small mb-0">—</pre></div></div>
-            </div>
-            <div class="col-md-6">
-              <div class="card"><div class="card-header">Funds</div>
-                <div class="card-body"><pre id="fundsBox" class="small mb-0">—</pre></div></div>
-            </div>
-            <div class="col-md-6">
-              <div class="card"><div class="card-header">Positions</div>
-                <div class="card-body"><pre id="positionsBox" class="small mb-0">—</pre></div></div>
-            </div>
-            <div class="col-md-6">
-              <div class="card"><div class="card-header">Holdings</div>
-                <div class="card-body"><pre id="holdingsBox" class="small mb-0">—</pre></div></div>
-            </div>
-          </div>
-        </div>
-
       </div>
     </div>
 
-  </div>
-</div>
+  </div><!-- /container -->
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script>
-// ====== CONFIG ======
-const BASE_URL = "https://options-analysis.onrender.com"; // <-- change if needed
-const MAP = {
-  NIFTY: { under_security_id: 13, eq_seg: "IDX_I", display: "NIFTY" },
-  BANKNIFTY: { under_security_id: 25, eq_seg: "IDX_I", display: "BANKNIFTY" }
-};
+  <!-- === CONFIG: Back-end base URL + env switch + self-test === -->
+  <script id="config">
+    // 1) Default API base (Render)
+    const RAW_BASE_URL = "https://options-analysis.onrender.com";
+    // 2) Trailing slash trim
+    const DEFAULT_BASE_URL = RAW_BASE_URL.replace(/\/+$/, "");
+    // 3) Presets
+    const API_PRESETS = { prod:"https://options-analysis.onrender.com", dev:"http://127.0.0.1:10000" };
+    // 4) Resolve from ?api= / localStorage
+    (function resolveBaseUrl(){
+      const q = new URLSearchParams(location.search);
+      const pick = q.get("api");
+      let chosen = null;
+      if (pick){ chosen = API_PRESETS[pick] || pick; localStorage.setItem("api_base", chosen); }
+      else { chosen = localStorage.getItem("api_base"); }
+      window.BASE_URL = (chosen || DEFAULT_BASE_URL).replace(/\/+$/, "");
+      console.log("[CFG] BASE_URL:", window.BASE_URL);
+    })();
+    // 5) Helpers
+    const withTimeout=(p,ms=15000)=>new Promise((res,rej)=>{const t=setTimeout(()=>rej(new Error("Timeout after "+ms+"ms")),ms);p.then(v=>{clearTimeout(t);res(v)}).catch(e=>{clearTimeout(t);rej(e)})});
+    async function api(path,{method="GET",params=null,body=null,headers={}}={}) {
+      const url=new URL(window.BASE_URL+path);
+      if(params) for(const [k,v] of Object.entries(params)) url.searchParams.set(k,v);
+      const opt={method,headers:{Accept:"application/json",...headers}};
+      if(body){opt.headers["Content-Type"]="application/json";opt.body=JSON.stringify(body);}
+      const r=await withTimeout(fetch(url,opt)); if(!r.ok) throw new Error("HTTP "+r.status+" "+r.statusText); return r.json();
+    }
+    const apiGet=(p,params)=>api(p,{method:"GET",params}); const apiPost=(p,body)=>api(p,{method:"POST",body});
+    // 6) Self-test
+    window.__checkBackend=async function(){try{const j=await apiGet("/__selftest");return{ok:true,info:j}}catch(e){return{ok:false,error:e?.message||String(e)}}};
+  </script>
 
-// ====== UTIL ======
-const qs = id => document.getElementById(id);
-function fmt(n){ if(n==null) return "—"; return Number(n).toLocaleString("en-IN"); }
+  <!-- === App logic === -->
+  <script>
+    // small utils
+    const fmt = n => (n===null||n===undefined||isNaN(+n)) ? "—" : (+n).toLocaleString("en-IN");
+    const byId = id => document.getElementById(id);
 
-// ====== CLOCK ======
-setInterval(()=>{ qs("clock").textContent=new Date().toLocaleTimeString();},1000);
+    // Charts
+    let oiChart, volChart;
+    function makeBar(el, label, labels, data, color){
+      const ctx = byId(el).getContext("2d");
+      if (el==="oiChart" && oiChart) oiChart.destroy();
+      if (el==="volChart" && volChart) volChart.destroy();
+      const inst = new Chart(ctx, {
+        type: "bar",
+        data: { labels, datasets: [{ label, data }] },
+        options: { plugins:{legend:{display:false}}, scales:{x:{ticks:{color:"#9aa1aa"}},y:{ticks:{color:"#9aa1aa"}}}}
+      });
+      if (el==="oiChart") oiChart = inst; else volChart = inst;
+    }
 
-// ====== CHARTS (placeholders) ======
-let oiChart, priceChart;
-function makeCharts(){
-  const pctx = document.getElementById('priceChart');
-  priceChart = new Chart(pctx,{type:'line',data:{labels:[...Array(30).keys()].map(i=>i+1),
-    datasets:[{label:'Price',data:[42450,42870,43250,43120,42980,43350,43560,43420,43650,43820,43750,43960,44120,43980,44250,44180,44320,44560,44420,44650,44820,44750,44960,45120,44980,45250,45180,45320,45560,45826]}]},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}}}});
-  const octx = document.getElementById('oiChart');
-  oiChart = new Chart(octx,{type:'bar',data:{labels:[],datasets:[
-    {label:'Call OI',data:[],backgroundColor:'rgba(34,197,94,.5)',borderColor:'rgba(34,197,94,1)',borderWidth:1},
-    {label:'Put OI',data:[],backgroundColor:'rgba(239,68,68,.5)',borderColor:'rgba(239,68,68,1)',borderWidth:1}
-  ]},options:{responsive:true,maintainAspectRatio:false}});
-}
-makeCharts();
+    // Load Expiry list for selected symbol
+    async function loadExpiries(){
+      const [under_security_id, under_exchange_segment, label] = byId("symbolSelect").value.split("|");
+      byId("oc_title").textContent = `Option Chain — ${label}`;
+      const res = await apiGet("/optionchain/expirylist", {
+        under_security_id, under_exchange_segment
+      });
+      const list = (res?.data?.data) || [];
+      const sel = byId("expirySelect");
+      sel.innerHTML = "";
+      list.forEach(x => {
+        const o = document.createElement("option");
+        o.value = x; o.textContent = x;
+        sel.appendChild(o);
+      });
+    }
 
-// ====== BROKER STATUS ======
-async function loadBrokerStatus(){
-  try{
-    const r = await fetch(`${BASE_URL}/broker_status`);
-    const j = await r.json();
-    const mode = j.mode || "TEST";
-    qs("modeBadge").textContent = `MODE: ${mode}`;
-    qs("brokerStatusText").textContent = (j.client_id_present && j.token_present) ? "Connected" : "Missing credentials";
-    qs("liveBadge").classList.toggle('dead', mode!=="LIVE");
-    qs("liveBadge").textContent = mode==="LIVE" ? "LIVE" : "SANDBOX";
-  }catch(e){ qs("brokerStatusText").textContent = "Error loading status"; }
-}
-loadBrokerStatus();
+    // Fetch Option Chain + render
+    async function fetchChain(){
+      const [under_security_id, under_exchange_segment, label] = byId("symbolSelect").value.split("|");
+      const expiry = byId("expirySelect").value;
+      if (!expiry) return;
 
-// ====== EXPIRY LIST ======
-async function loadExpiries(){
-  const sym = qs('symbolSelect').value;
-  const { under_security_id, eq_seg } = MAP[sym];
-  const url = `${BASE_URL}/optionchain/expirylist?under_security_id=${under_security_id}&under_exchange_segment=${eq_seg}`;
-  const res = await fetch(url); const j = await res.json();
-  const list = (((j||{}).data||{}).data||{}).data || [];
-  const sel = qs('expirySelect'); sel.innerHTML='';
-  list.forEach(x=>{
-    const o = document.createElement('option'); o.value = x; o.textContent = x; sel.appendChild(o);
-  });
-}
-qs('symbolSelect').addEventListener('change', loadExpiries);
+      const res = await apiPost("/optionchain", { under_security_id:+under_security_id, under_exchange_segment, expiry });
+      const raw = res?.data?.data || {};
+      const strikes = Object.keys(raw).map(k=>+k).sort((a,b)=>a-b);
+      const win = +byId("strikeWin").value;
 
-// ====== MARKET SNAPSHOTS (sidebar demo) ======
-async function loadSidebarLTPs(){
-  // Demo IDs: use indices/equities you know; adjust if needed
-  const pairs = [
-    { el:'niftyLtp', seg:'NSE_FNO', id:52175 }, // sample F&O id
-    { el:'bankLtp', seg:'NSE_FNO', id:12345 },  // replace with real id
-    { el:'hdfcLtp', seg:'NSE_EQ',  id:1333  }
-  ];
-  for(const p of pairs){
-    try{
-      const r = await fetch(`${BASE_URL}/marketfeed/ltp?exchange_segment=${p.seg}&security_id=${p.id}`);
-      const j = await r.json();
-      // Dhan SDK structure -> quick pick:
-      const val = JSON.stringify(j.data)?.match(/"ltp":\s*([0-9.]+)/i);
-      qs(p.el).textContent = val ? Number(val[1]).toLocaleString('en-IN') : "—";
-    }catch{ qs(p.el).textContent="—"; }
-  }
-}
+      // build rows
+      const tbody = byId("oc_body"); tbody.innerHTML="";
+      const ceOiTop = []; const peOiTop = []; const ceVol = []; const peVol = [];
 
-// ====== OPTION CHAIN ======
-function renderChain(rows){
-  const body = qs('chainBody'); body.innerHTML='';
-  rows.forEach(r=>{
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td class="call-bg">${fmt(r.call_oi)}</td>
-      <td class="call-bg">${fmt(r.call_chg_oi)}</td>
-      <td class="call-bg">${fmt(r.call_vol)}</td>
-      <td class="call-bg">${r.call_iv??'—'}%</td>
-      <td class="call-bg">${fmt(r.call_ltp)}</td>
-      <td class="call-bg ${r.call_chg>=0?'text-success':'text-danger'}">${r.call_chg??'—'}</td>
-      <td class="text-center fw-semibold">${fmt(r.strike)}</td>
-      <td class="put-bg ${r.put_chg>=0?'text-success':'text-danger'}">${r.put_chg??'—'}</td>
-      <td class="put-bg">${fmt(r.put_ltp)}</td>
-      <td class="put-bg">${r.put_iv??'—'}%</td>
-      <td class="put-bg">${fmt(r.put_vol)}</td>
-      <td class="put-bg">${fmt(r.put_chg_oi)}</td>
-      <td class="put-bg">${fmt(r.put_oi)}</td>
-    `;
-    body.appendChild(tr);
-  });
-}
+      const mid = strikes[Math.floor(strikes.length/2)];
+      const minS = mid - win*50, maxS = mid + win*50;
 
-function deriveMetrics(rows){
-  let coi=0, poi=0, civ=0, piv=0, ccount=0, pcount=0, dOI=0;
-  rows.forEach(r=>{
-    coi += r.call_oi||0; poi += r.put_oi||0;
-    if(r.call_iv!=null){ civ+=Number(r.call_iv); ccount++; }
-    if(r.put_iv!=null){ piv+=Number(r.put_iv); pcount++; }
-    dOI += (r.call_chg_oi||0) + (r.put_chg_oi||0);
-  });
-  const pcr = poi && coi ? (poi/coi) : null;
-  const avgIV = ( (ccount?civ/ccount:0) + (pcount?piv/pcount:0) )/ ( (ccount?1:0)+(pcount?1:0) || 1 );
-  qs('pcrValue').textContent = pcr ? pcr.toFixed(2) : '—';
-  qs('ivValue').textContent  = avgIV ? avgIV.toFixed(2)+'%' : '—';
-  qs('oiChange').textContent = dOI ? (dOI>0?'+':'')+fmt(dOI) : '—';
+      strikes.forEach(sp=>{
+        if (sp<minS || sp>maxS) return;
+        const d = raw[sp] || {};
+        const CE = d.CE || d.ce || {};
+        const PE = d.PE || d.pe || {};
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td class="call">${fmt(CE.oi)}</td>
+          <td class="call">${fmt(CE.previous_oi!=null ? (CE.oi-CE.previous_oi) : null)}</td>
+          <td class="call">${fmt(CE.volume)}</td>
+          <td class="call">${CE.implied_volatility!=null ? (CE.implied_volatility).toFixed(2) : "—"}</td>
+          <td class="call">${CE.last_price!=null ? "₹"+(+CE.last_price).toFixed(2) : "—"}</td>
+          <td class="call">${CE.change!=null ? (+CE.change).toFixed(2) : "—"}</td>
+          <td class="text-center fw-semibold">${fmt(sp)}</td>
+          <td class="put">${PE.change!=null ? (+PE.change).toFixed(2) : "—"}</td>
+          <td class="put">${PE.last_price!=null ? "₹"+(+PE.last_price).toFixed(2) : "—"}</td>
+          <td class="put">${PE.implied_volatility!=null ? (PE.implied_volatility).toFixed(2) : "—"}</td>
+          <td class="put">${fmt(PE.volume)}</td>
+          <td class="put">${fmt(PE.previous_oi!=null ? (PE.oi-PE.previous_oi) : null)}</td>
+          <td class="put">${fmt(PE.oi)}</td>`;
+        tbody.appendChild(tr);
 
-  // OI bar chart: pick top few strikes around ATM
-  const sorted = [...rows].sort((a,b)=> (b.call_oi+b.put_oi) - (a.call_oi+a.put_oi)).slice(0,12).reverse();
-  oiChart.data.labels = sorted.map(r=> r.strike);
-  oiChart.data.datasets[0].data = sorted.map(r=> r.call_oi||0);
-  oiChart.data.datasets[1].data = sorted.map(r=> r.put_oi||0);
-  oiChart.update();
-}
+        // for charts
+        ceOiTop.push({sp, v: +CE.oi||0}); peOiTop.push({sp, v:+PE.oi||0});
+        ceVol.push({sp, v:+CE.volume||0});  peVol.push({sp, v:+PE.volume||0});
+      });
 
-async function fetchChain(){
-  const sym = qs('symbolSelect').value;
-  const { under_security_id, eq_seg, display } = MAP[sym];
-  const expiry = qs('expirySelect').value;
-  if(!expiry){ alert('Select an expiry'); return; }
+      // charts: top 10 by OI / Volume
+      function topN(arr, n=10){return arr.sort((a,b)=>b.v-a.v).slice(0,n).sort((a,b)=>a.sp-b.sp)}
+      const topCe = topN(ceOiTop), topPe = topN(peOiTop);
+      const topCeV= topN(ceVol),  topPeV= topN(peVol);
 
-  qs('chainTitle').textContent = `Option Chain - ${display} (${expiry})`;
-  try{
-    const r = await fetch(`${BASE_URL}/optionchain`,{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        under_security_id, under_exchange_segment: eq_seg, expiry
-      })
-    });
-    const j = await r.json();
-    // Normalize: Dhan option_chain structure => create friendly rows:
-    const core = (((j||{}).data||{}).data||{}).data || []; // array of strikes
-    const rows = core.map(x=>({
-      strike: x.strike_price ?? x.strike ?? 0,
-      call_oi: x.CE?.oi ?? x.call_oi ?? 0,
-      call_chg_oi: x.CE?.change_oi ?? x.call_change_oi ?? 0,
-      call_vol: x.CE?.volume ?? x.call_volume ?? 0,
-      call_iv: x.CE?.iv ?? x.call_iv ?? null,
-      call_ltp: x.CE?.ltp ?? x.call_ltp ?? null,
-      call_chg: x.CE?.change ?? x.call_change ?? null,
-      put_oi: x.PE?.oi ?? x.put_oi ?? 0,
-      put_chg_oi: x.PE?.change_oi ?? x.put_change_oi ?? 0,
-      put_vol: x.PE?.volume ?? x.put_volume ?? 0,
-      put_iv: x.PE?.iv ?? x.put_iv ?? null,
-      put_ltp: x.PE?.ltp ?? x.put_ltp ?? null,
-      put_chg: x.PE?.change ?? x.put_change ?? null,
-    }));
-    // sort by strike
-    rows.sort((a,b)=> a.strike-b.strike);
-    renderChain(rows);
-    deriveMetrics(rows);
+      makeBar("oiChart","OI",
+        topCe.map(x=>x.sp).concat(topPe.map(x=>x.sp)),
+        topCe.map(x=>x.v).concat(topPe.map(x=>x.v))
+      );
+      makeBar("volChart","Volume",
+        topCeV.map(x=>x.sp).concat(topPeV.map(x=>x.sp)),
+        topCeV.map(x=>x.v).concat(topPeV.map(x=>x.v))
+      );
+    }
 
-    // Spot estimate (mid of ATM legs if available)
-    const midIdx = Math.floor(rows.length/2);
-    const atm = rows[midIdx]?.strike || rows[0]?.strike || null;
-    qs('spotPrice').textContent = atm ? `₹${fmt(atm)}` : '—';
+    // Spot (demo equity) + random small stats
+    async function loadSpot(){
+      // demo: HDFCBANK equity 1333 on NSE
+      const res = await apiGet("/marketfeed/ltp",{exchange_segment:"NSE",security_id:1333});
+      const ltp = res?.data?.data?.NSE_EQ?.[0]?.ltp ?? null;
+      byId("spotPrice").textContent = (ltp!=null) ? "₹"+(+ltp).toFixed(2) : "—";
+      // fake quick stats (placeholder until you wire true ones):
+      byId("oiChange").textContent = (Math.random()>0.5?"+":"-")+(Math.random()*2).toFixed(1)+"%";
+      byId("pcrValue").textContent = (0.7+Math.random()*0.3).toFixed(2);
+      byId("ivValue").textContent = (16+Math.random()*3).toFixed(1)+"%";
+    }
 
-  }catch(e){
-    console.error(e);
-    alert('Option chain fetch failed');
-  }
-}
+    // Broker status + chips
+    async function initStatus(){
+      const st = await __checkBackend();
+      if (!st.ok){
+        byId("br_conn").className="badge text-bg-danger"; byId("br_conn").textContent="Backend error";
+        console.error(st.error); return;
+      }
+      const info = st.info?.status || {};
+      byId("chip_env").textContent = info.env || "—";
+      byId("chip_mode").textContent = "MODE: " + (info.mode || "—");
+      const tokenOk = !!info.token_present, cliOk = !!info.client_id_present;
+      byId("br_conn").className = "badge "+(tokenOk&&cliOk ? "text-bg-success":"text-bg-warning");
+      byId("br_conn").textContent = (tokenOk&&cliOk) ? "Connected" : "Partial";
+      byId("br_token").className = "badge "+(tokenOk?"text-bg-success":"text-bg-danger");
+      byId("br_token").textContent = tokenOk ? "present" : "missing";
+      byId("br_client").className = "badge "+(cliOk?"text-bg-success":"text-bg-danger");
+      byId("br_client").textContent = cliOk ? "present" : "missing";
+    }
 
-// ====== PORTFOLIO ======
-async function loadPortfolio(){
-  for(const [path, el] of [
-    ['/orders','ordersBox'], ['/positions','positionsBox'],
-    ['/holdings','holdingsBox'], ['/funds','fundsBox']
-  ]){
-    try{ const r=await fetch(`${BASE_URL}${path}`); const j=await r.json();
-      qs(el).textContent = JSON.stringify(j.data, null, 2);
-    }catch{ qs(el).textContent='—'; }
-  }
-}
+    // Auto refresh
+    let timer=null;
+    function setAuto(){
+      if (timer){ clearInterval(timer); timer=null; }
+      if (byId("autoToggle").checked){
+        timer=setInterval(()=>{ fetchChain().catch(console.error); loadSpot().catch(console.error); }, 30000);
+      }
+    }
 
-// ====== EVENTS ======
-qs('fetchBtn').addEventListener('click', fetchChain);
-let timer=null;
-qs('autoRefresh').addEventListener('change', (e)=>{
-  if(e.target.checked){ timer=setInterval(fetchChain, 30000);}
-  else if(timer){ clearInterval(timer); timer=null; }
-});
+    // Events
+    byId("symbolSelect").addEventListener("change", ()=> loadExpiries().then(fetchChain).catch(console.error));
+    byId("btn_fetch").addEventListener("click", ()=> fetchChain().catch(console.error));
+    byId("btn_clear").addEventListener("click", ()=> { byId("oc_body").innerHTML=`<tr><td colspan="13" class="text-center text-secondary py-4">Cleared</td></tr>`; });
+    byId("btn_refresh").addEventListener("click", ()=> { initStatus(); loadExpiries().then(fetchChain); loadSpot(); });
+    byId("autoToggle").addEventListener("change", setAuto);
 
-// ====== INIT ======
-(async function init(){
-  await loadBrokerStatus();
-  await loadExpiries();
-  await loadSidebarLTPs();
-  await loadPortfolio();
-})();
-</script>
+    // Boot
+    (async function boot(){
+      await initStatus();
+      await loadExpiries();
+      await fetchChain();
+      await loadSpot();
+      setAuto();
+    })();
+  </script>
+
 </body>
 </html>
