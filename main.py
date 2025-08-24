@@ -1,12 +1,21 @@
-# main.py  — Dhan v2 DATA proxy (single file)
-from fastapi import FastAPI, HTTPException, Query
+# main.py
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-import os, requests
-from typing import Optional, Dict, Any, List
+from typing import Dict, Optional, Any, List
+import httpx, os, time
 
-app = FastAPI(title="options-data-api", version="2.0")
+# ---- App ----
+app = FastAPI(
+    title="Options-Analysis – Dhan Proxy",
+    version="2.0.0",
+    description="Proxy for DhanHQ v2 with TEST mode & diagnostics",
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
 
+# ---- CORS ----
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,213 +24,222 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------- CONFIG ----------
-def MODE() -> str:
-    m = (os.getenv("MODE") or "LIVE").strip().upper()
-    return m if m in {"DRY","LIVE","SANDBOX"} else "LIVE"
+# ---- MODE / ENV ----
+START_TS = int(time.time())
+LAST_UPSTREAM: Dict[str, Any] = {}
 
-def pick(live_key: str, sbx_key: str) -> Optional[str]:
-    return os.getenv(live_key) if MODE()=="LIVE" else os.getenv(sbx_key)
+def _pick_env() -> Dict[str, Optional[str]]:
+    env = (os.getenv("DHAN_ENV") or "SANDBOX").strip().upper()
+    if env not in {"SANDBOX","LIVE"}: env = "SANDBOX"
 
-def BASE_URL() -> str:
-    return (pick("DHAN_LIVE_BASE_URL","DHAN_SANDBOX_BASE_URL") or "").rstrip("/")
+    if env == "LIVE":
+        token     = os.getenv("DHAN_LIVE_ACCESS_TOKEN") or os.getenv("DHAN_ACCESS_TOKEN")
+        client_id = os.getenv("DHAN_LIVE_CLIENT_ID")    or os.getenv("DHAN_CLIENT_ID")
+        base_url  = os.getenv("DHAN_LIVE_BASE_URL")     or "https://api.dhan.co/v2"
+    else:
+        token     = os.getenv("DHAN_SANDBOX_ACCESS_TOKEN") or os.getenv("DHAN_ACCESS_TOKEN")
+        client_id = os.getenv("DHAN_SANDBOX_CLIENT_ID")    or os.getenv("DHAN_CLIENT_ID")
+        base_url  = os.getenv("DHAN_SANDBOX_BASE_URL")     or "https://sandbox.dhan.co/v2"
 
-def CLIENT_ID() -> str:
-    return pick("DHAN_LIVE_CLIENT_ID","DHAN_SANDBOX_CLIENT_ID") or os.getenv("DHAN_CLIENT_ID","")
+    return {"env": env, "token": token, "client_id": client_id, "base_url": base_url}
 
-def ACCESS_TOKEN() -> str:
-    return pick("DHAN_LIVE_ACCESS_TOKEN","DHAN_SANDBOX_ACCESS_TOKEN") or os.getenv("DHAN_ACCESS_TOKEN","")
-
-def headers() -> Dict[str,str]:
-    if MODE()=="DRY":  # not used, but keep consistent
-        return {"accept":"application/json","content-type":"application/json"}
-    if not CLIENT_ID() or not ACCESS_TOKEN():
-        raise HTTPException(400, "Missing CLIENT_ID or ACCESS_TOKEN env vars.")
+def _make_headers(token: str, client_id: str) -> Dict[str,str]:
     return {
-        "accept":"application/json",
-        "content-type":"application/json",
-        "client-id": CLIENT_ID(),
-        "access-token": ACCESS_TOKEN(),
+        "access-token": token,
+        "client-id": client_id,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
     }
 
-# Dhan REST paths (edit here if vendor changes)
-DH_PATHS = {
-    "orders": "/orders",
-    "positions": "/positions",
-    "expiry_list": "/expiry-list",
-    "option_chain": "/option-chain",
-    "ohlc_data": "/ohlc-data",                   # Market Quote API (LTP/Quote/Full)
-    "holdings": "/holdings",
-    "fund_limits": "/fund-limits",
-    "trade_book": "/tradebook",                  # GET /tradebook?order_id=
-    "trade_history": "/trade-history",           # GET /trade-history?from_date=&to_date=&page_number=
-    "intraday_minute": "/intraday-minute-data",  # GET with query
-    "historical_daily": "/historical-daily-data" # GET with query
-}
+# ---- Proxy Core ----
+async def _proxy_request(method: str, path: str, payload: Any = None) -> JSONResponse:
+    mode = (os.getenv("MODE") or "LIVE").strip().upper()
+    cfg = _pick_env()
 
-def is_dry(): return MODE()=="DRY"
+    # TEST MODE → return mock from testmode.py
+    if mode == "TEST":
+        from testmode import mock_dispatch  # local import
+        mocked = mock_dispatch(method, path, payload)
+        return JSONResponse(status_code=200, content={"mode":"TEST","data": mocked})
 
-def GET(path: str, params: Dict[str,Any]|None=None):
-    if is_dry(): return {"status":"success","remarks":"DRY","data":[]}
-    url = f"{BASE_URL()}{path}"
-    try:
-        r = requests.get(url, headers=headers(), params=params, timeout=30)
-        if r.status_code>=400: raise HTTPException(r.status_code, r.text)
-        return r.json()
-    except requests.RequestException as e:
-        raise HTTPException(502, f"Upstream GET failed: {e}")
+    # LIVE / SANDBOX → call upstream
+    token, client_id, base_url = cfg["token"], cfg["client_id"], cfg["base_url"]
+    if not token or not client_id:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "ok": False,
+                "error": "Missing Dhan credentials",
+                "details": {
+                    "env": cfg["env"],
+                    "token_present": bool(token),
+                    "client_id_present": bool(client_id),
+                },
+            },
+        )
 
-def POST(path: str, payload: Dict[str,Any]):
-    if is_dry(): return {"status":"success","remarks":"DRY","data":payload}
-    url = f"{BASE_URL()}{path}"
-    try:
-        r = requests.post(url, headers=headers(), json=payload, timeout=30)
-        if r.status_code>=400: raise HTTPException(r.status_code, r.text)
-        return r.json()
-    except requests.RequestException as e:
-        raise HTTPException(502, f"Upstream POST failed: {e}")
+    url = f"{base_url}{path}"
+    headers = _make_headers(token, client_id)
+    timeout = httpx.Timeout(20.0, connect=10.0)
 
-# ---------- MODELS (request bodies) ----------
-class OptionChainBody(BaseModel):
-    under_security_id: int = Field(..., example=13, description="e.g. 13 = NIFTY")
-    under_exchange_segment: str = Field(..., example="IDX_I")
-    expiry: str = Field(..., example="2025-09-25", description="YYYY-MM-DD from /expiry_list")
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        try:
+            if method == "POST":
+                resp = await client.post(url, json=payload, headers=headers)
+            elif method == "GET":
+                # for GET with query dict
+                if isinstance(payload, dict) and payload:
+                    resp = await client.get(url, params=payload, headers=headers)
+                else:
+                    resp = await client.get(url, headers=headers)
+            elif method == "PUT":
+                resp = await client.put(url, json=payload, headers=headers)
+            elif method == "DELETE":
+                resp = await client.delete(url, headers=headers)
+            else:
+                return JSONResponse(status_code=400, content={"ok":False,"error":f"Unsupported method: {method}"})
+        except httpx.HTTPError as exc:
+            return JSONResponse(
+                status_code=502,
+                content={"ok":False, "error":"Upstream HTTP error", "details":str(exc), "upstream":{"url":url}},
+            )
 
-class MarketQuoteBody(BaseModel):
-    # Dhan docs: {"NSE_EQ":[1333]} etc.
-    securities: Dict[str, List[int]]
-    # mode choose: ticker_data / ohlc_data / quote_data  (server passes through as-is)
-
-class TradeHistoryQuery(BaseModel):
-    from_date: str = Field(..., example="2025-08-01")
-    to_date: str = Field(..., example="2025-08-24")
-    page_number: int = 0
-
-# ---------- UTILS ----------
-def flatten_option_chain(raw: dict) -> dict:
-    rows=[]
-    try:
-        data = raw.get("data") or {}
-        strikes = data.get("data") or data.get("option_chain") or []
-        for s in strikes:
-            strike = s.get("strike_price") or s.get("strike") or s.get("sp")
-            ce = s.get("CE") or s.get("call") or {}
-            pe = s.get("PE") or s.get("put") or {}
-            rows.append({
-                "strike": strike,
-                "ce_ltp": ce.get("ltp"), "ce_oi": ce.get("oi"), "ce_iv": ce.get("iv"),
-                "ce_bid": ce.get("bid"), "ce_ask": ce.get("ask"),
-                "pe_ltp": pe.get("ltp"), "pe_oi": pe.get("oi"), "pe_iv": pe.get("iv"),
-                "pe_bid": pe.get("bid"), "pe_ask": pe.get("ask"),
-            })
-    except Exception:
-        rows=[]
-    return {"rows": rows, "raw": raw}
-
-# ---------- ROUTES ----------
-@app.get("/")
-def root(): return {"service":"options-data-api","ok":True,"mode":MODE()}
-
-@app.get("/health")
-def health(): return {"ok":True}
-
-@app.get("/broker_status")
-def broker_status():
-    return {
-        "mode": MODE(), "env": MODE(),
-        "token_present": bool(ACCESS_TOKEN()),
-        "client_id_present": bool(CLIENT_ID()),
-        "base_url": BASE_URL(),
-    }
-
-# Core account data
-@app.get("/orders")    def orders():    return GET(DH_PATHS["orders"])
-@app.get("/positions") def positions(): return GET(DH_PATHS["positions"])
-@app.get("/holdings")  def holdings():  return GET(DH_PATHS["holdings"])
-@app.get("/fund_limits") def fund_limits(): return GET(DH_PATHS["fund_limits"])
-
-# Trade book & history
-@app.get("/trade_book")
-def trade_book(order_id: str = Query(...)):
-    return GET(DH_PATHS["trade_book"], params={"order_id": order_id})
-
-@app.post("/trade_history")
-def trade_history(q: TradeHistoryQuery):
-    return GET(DH_PATHS["trade_history"], params=q.model_dump())
-
-# Expiry list (GET with query params)
-@app.get("/expiry_list")
-def expiry_list(
-    under_security_id: int = Query(..., example=13),
-    under_exchange_segment: str = Query(..., example="IDX_I"),
-):
-    return GET(DH_PATHS["expiry_list"], params={
-        "under_security_id": under_security_id,
-        "under_exchange_segment": under_exchange_segment
+    # record last upstream info (for /__last_upstream)
+    LAST_UPSTREAM.update({
+        "ts": int(time.time()), "method": method, "url": url, "status": resp.status_code
     })
 
-# Option chain (POST), plus flattened table
-@app.post("/option_chain")
-def option_chain(body: OptionChainBody):
-    return POST(DH_PATHS["option_chain"], payload=body.model_dump())
+    try:
+        data = resp.json()
+        return JSONResponse(status_code=resp.status_code, content=data)
+    except ValueError:
+        return JSONResponse(
+            status_code=resp.status_code,
+            content={"ok":False,"error":"Non-JSON response from Dhan","status_code":resp.status_code,"text":resp.text},
+        )
 
-@app.post("/option_chain_table")
-def option_chain_table(body: OptionChainBody):
-    raw = option_chain(body)
-    return flatten_option_chain(raw)
+# ---- Schemas ----
+class MarketfeedRequest(BaseModel):
+    NSE_EQ:  Optional[List[int]] = Field(None)
+    NSE_FNO: Optional[List[int]] = Field(None)
+    BSE_EQ:  Optional[List[int]] = Field(None)
 
-# Market Quote / LTP / Depth (POST)
-@app.post("/market_quote")
-def market_quote(body: MarketQuoteBody):
-    return POST(DH_PATHS["ohlc_data"], payload=body.model_dump())
+class OptionChainReq(BaseModel):
+    UnderlyingScrip: int
+    UnderlyingSeg: str
+    Expiry: Optional[str] = None
 
-# Intraday minute OHLCV (last 5 trading days) — GET with query params
-@app.get("/intraday_minute_data")
-def intraday_minute_data(
-    security_id: int = Query(..., example=1333),
-    exchange_segment: str = Query(..., example="NSE"),
-    instrument_type: str = Query(..., example="EQ"),  # e.g., EQ / IDX_I / NSE_FNO
-    interval: Optional[str] = Query(None, description="Optional timeframe like 1,5,15,25,60 if supported"),
-):
-    params = {
-        "security_id": security_id,
-        "exchange_segment": exchange_segment,
-        "instrument_type": instrument_type,
-    }
-    if interval: params["interval"] = interval
-    return GET(DH_PATHS["intraday_minute"], params=params)
+class ExpiryListReq(BaseModel):
+    UnderlyingScrip: int
+    UnderlyingSeg: str
 
-# Historical daily OHLC — GET with query params
-@app.get("/historical_daily_data")
-def historical_daily_data(
-    security_id: int = Query(..., example=1333),
-    exchange_segment: str = Query(..., example="NSE"),
-    instrument_type: str = Query(..., example="EQ"),
-    expiry_code: Optional[str] = Query(None, description="For derivatives if required"),
-    from_date: str = Query(..., example="2025-01-01"),
-    to_date: str = Query(..., example="2025-08-24"),
-):
-    params = {
-        "security_id": security_id,
-        "exchange_segment": exchange_segment,
-        "instrument_type": instrument_type,
-        "from_date": from_date,
-        "to_date": to_date,
-    }
-    if expiry_code: params["expiry_code"]=expiry_code
-    return GET(DH_PATHS["historical_daily"], params=params)
+class IntradayChartsRequest(BaseModel):
+    securityId: str
+    exchangeSegment: str
+    instrument: str
+    interval: str
+    oi: Optional[bool] = False
+    fromDate: Optional[str] = None
+    toDate: Optional[str] = None
 
-# ---------- WebSocket placeholders ----------
-@app.get("/marketfeed")
-def marketfeed_info():
+class HistoricalChartsRequest(BaseModel):
+    securityId: str
+    exchangeSegment: str
+    instrument: str
+    expiryCode: Optional[int] = None
+    oi: Optional[bool] = False
+    fromDate: Optional[str] = None
+    toDate: Optional[str] = None
+
+# ---- Health / Diagnostics ----
+@app.get("/health")
+async def health():
+    return {"ok": True}
+
+@app.get("/broker_status")
+async def broker_status():
+    cfg = _pick_env()
     return {
-        "supported": False,
-        "why": "Market feed is a client WebSocket stream. Connect from your client using Dhan SDK.",
+        "mode": (os.getenv("MODE") or "LIVE").upper(),
+        "env": cfg["env"],
+        "base_url": cfg["base_url"],
+        "has_creds": bool(cfg["token"] and cfg["client_id"]),
+        "token_present": bool(cfg["token"]),
+        "client_id_present": bool(cfg["client_id"]),
     }
 
-@app.get("/order_update")
-def order_update_info():
+@app.get("/__version")
+async def __version():
     return {
-        "supported": False,
-        "why": "Order updates are WebSocket events. Consume directly from client.",
+        "app": app.title,
+        "version": app.version,
+        "mode": (os.getenv("MODE") or "LIVE").upper(),
+        "env": (_pick_env()["env"]),
+        "uptime_sec": int(time.time()) - START_TS,
     }
+
+@app.get("/__routes")
+async def __routes():
+    return sorted([r.path for r in app.routes])
+
+@app.post("/__echo")
+async def __echo(body: dict):
+    return {"received": body}
+
+@app.get("/__last_upstream")
+async def __last_upstream():
+    return LAST_UPSTREAM or {"note": "no upstream calls yet (maybe MODE=TEST?)"}
+
+# ---- Marketfeed ----
+@app.post("/marketfeed/ltp")
+async def marketfeed_ltp(body: MarketfeedRequest):
+    return await _proxy_request("POST", "/marketfeed/ltp", body.model_dump(exclude_none=True))
+
+@app.post("/marketfeed/ohlc")
+async def marketfeed_ohlc(body: MarketfeedRequest):
+    return await _proxy_request("POST", "/marketfeed/ohlc", body.model_dump(exclude_none=True))
+
+@app.post("/marketfeed/quote")
+async def marketfeed_quote(body: MarketfeedRequest):
+    return await _proxy_request("POST", "/marketfeed/quote", body.model_dump(exclude_none=True))
+
+# ---- Option Chain ----
+@app.post("/optionchain")
+async def optionchain(body: OptionChainReq):
+    # LIVE/SANDBOX: Dhan needs Expiry. If missing, advise client to hit /optionchain/expirylist first.
+    return await _proxy_request("POST", "/optionchain", body.model_dump(exclude_none=True))
+
+@app.post("/optionchain/expirylist")
+async def optionchain_expirylist(body: ExpiryListReq):
+    return await _proxy_request("POST", "/optionchain/expirylist", body.model_dump(exclude_none=True))
+
+# ---- Portfolio / Funds ----
+@app.get("/orders")
+async def orders():
+    return await _proxy_request("GET", "/orders")
+
+@app.get("/positions")
+async def positions():
+    return await _proxy_request("GET", "/positions")
+
+@app.get("/holdings")
+async def holdings():
+    return await _proxy_request("GET", "/holdings")
+
+@app.get("/funds")
+async def funds():
+    return await _proxy_request("GET", "/funds")
+
+# ---- Charts ----
+@app.post("/charts/intraday")
+async def charts_intraday(body: IntradayChartsRequest):
+    return await _proxy_request("POST", "/charts/intraday", body.model_dump(exclude_none=True))
+
+@app.post("/charts/historical")
+async def charts_historical(body: HistoricalChartsRequest):
+    return await _proxy_request("POST", "/charts/historical", body.model_dump(exclude_none=True))
+
+# ---- Local run ----
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT","8000")))
