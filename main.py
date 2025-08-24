@@ -1,93 +1,134 @@
-from fastapi import FastAPI, Body
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from dhanhq import dhanhq
 import os
 
-app = FastAPI(title="Options Analysis (DhanHQ v2)", version="1.0.0")
+app = FastAPI(title="DhanHQ Demo API")
 
-# ---- Env / Client ----
-DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID", "")
-DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN", "")
+# ----- Env & client -----
+CLIENT_ID = os.getenv("DHAN_LIVE_CLIENT_ID", "")
+ACCESS_TOKEN = os.getenv("DHAN_LIVE_ACCESS_TOKEN", "")
+MODE = os.getenv("MODE", "LIVE")  # LIVE/DRY
 
-def get_dhan():
-    if not DHAN_CLIENT_ID or not DHAN_ACCESS_TOKEN:
-        raise RuntimeError("Missing DHAN_CLIENT_ID or DHAN_ACCESS_TOKEN")
-    # DhanHQ SDK client
-    return dhanhq(DHAN_CLIENT_ID, DHAN_ACCESS_TOKEN)
+dhan = None
+if CLIENT_ID and ACCESS_TOKEN:
+    try:
+        dhan = dhanhq(CLIENT_ID, ACCESS_TOKEN)
+    except Exception as e:
+        # SDK init errors (rare)
+        print("Dhan init error:", e)
 
-# ---- Health / Status ----
+# ----- Helpers -----
+def ok(data):
+    return {"status": "success", "remarks": "", "data": data}
+
+def fail(msg):
+    return {"status": "failure", "remarks": {"error_message": str(msg)}, "data": {}}
+
+# ----- Health / status -----
+@app.get("/")
+def root():
+    return {"hello": "world"}
+
 @app.get("/broker_status")
 def broker_status():
     return {
-        "mode": "LIVE",                 # Render env me LIVE; sandbox use karna ho to SDK-level/calls change karna hoga
-        "token_present": bool(DHAN_ACCESS_TOKEN),
-        "client_id_present": bool(DHAN_CLIENT_ID),
+        "mode": MODE,
+        "token_present": bool(ACCESS_TOKEN),
+        "client_id_present": bool(CLIENT_ID),
     }
 
-# ---- Orders / Portfolio ----
+def ensure_client():
+    if not (CLIENT_ID and ACCESS_TOKEN):
+        raise HTTPException(
+            status_code=400,
+            detail="Missing DHAN_LIVE_CLIENT_ID or DHAN_LIVE_ACCESS_TOKEN env vars.",
+        )
+    if dhan is None:
+        raise HTTPException(status_code=500, detail="Dhan client not initialized.")
+
+# ----- Orders -----
 @app.get("/orders")
-def get_orders():
+def orders():
+    ensure_client()
     try:
-        return get_dhan().get_order_list()
+        resp = dhan.get_order_list()
+        return ok(resp)
     except Exception as e:
-        return JSONResponse({"detail": str(e)}, status_code=500)
+        return JSONResponse(fail(e), status_code=500)
 
+# ----- Positions -----
 @app.get("/positions")
-def get_positions():
+def positions():
+    ensure_client()
     try:
-        return get_dhan().get_positions()
+        resp = dhan.get_positions()
+        return ok(resp)
     except Exception as e:
-        return JSONResponse({"detail": str(e)}, status_code=500)
+        return JSONResponse(fail(e), status_code=500)
 
-@app.get("/holdings")
-def get_holdings():
+# ----- Expiry list (e.g. NIFTY 13 / IDX_I) -----
+@app.post("/expiry_list")
+async def expiry_list(req: Request):
+    ensure_client()
+    body = await req.json()
+    under_security_id = body.get("under_security_id")
+    under_exchange_segment = body.get("under_exchange_segment")
+
+    if under_security_id is None or not under_exchange_segment:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide 'under_security_id' and 'under_exchange_segment'.",
+        )
     try:
-        return get_dhan().get_holdings()
+        resp = dhan.expiry_list(
+            under_security_id=under_security_id,
+            under_exchange_segment=under_exchange_segment,
+        )
+        return ok(resp)
     except Exception as e:
-        return JSONResponse({"detail": str(e)}, status_code=500)
+        return JSONResponse(fail(e), status_code=500)
 
-# ---- Option Chain ----
+# ----- Option chain -----
 @app.post("/option_chain")
-def option_chain(
-    body: dict = Body(
-        example={
-            "under_security_id": 13,            # NIFTY
-            "under_exchange_segment": "IDX_I",  # Index F&O
-            "expiry": "2024-10-31"              # optional; latest available dekhne ko empty bhi chalta
-        }
-    )
-):
-    try:
-        u_sid = body.get("under_security_id", 13)
-        u_seg = body.get("under_exchange_segment", "IDX_I")
-        expiry = body.get("expiry")  # may be None
+async def option_chain(req: Request):
+    """
+    Body:
+    {
+      "under_security_id": 13,
+      "under_exchange_segment": "IDX_I",
+      "expiry": "YYYY-MM-DD"   # optional; if missing => latest
+    }
+    """
+    ensure_client()
+    body = await req.json()
+    u_sid = body.get("under_security_id")
+    u_seg = body.get("under_exchange_segment")
+    expiry = body.get("expiry")  # optional
 
-        return get_dhan().option_chain(
+    if u_sid is None or not u_seg:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide 'under_security_id' and 'under_exchange_segment'.",
+        )
+
+    try:
+        # If expiry not supplied, pick latest from /expiry_list
+        if not expiry:
+            elist = dhan.expiry_list(under_security_id=u_sid, under_exchange_segment=u_seg)
+            # SDK usually returns list of ISO dates; pick the first or max
+            if isinstance(elist, list) and elist:
+                # Many APIs return ascending; choose the nearest (first)
+                expiry = str(elist[0])
+            else:
+                raise ValueError("No expiries returned for given underlying.")
+
+        resp = dhan.option_chain(
             under_security_id=u_sid,
             under_exchange_segment=u_seg,
-            expiry=expiry
+            expiry=expiry,
         )
+        return ok({"requested_expiry": expiry, "option_chain": resp})
     except Exception as e:
-        return JSONResponse({"detail": str(e)}, status_code=500)
-
-# ---- Quick quote / OHLC snapshot (optional helper) ----
-@app.get("/ohlc")
-def ohlc(security_id: str = "1333", segment: str = "NSE_EQ"):
-    """
-    Example: /ohlc?security_id=1333&segment=NSE_EQ  (HDFC)
-    For multiple, enhance to accept CSV and map to dict {"NSE_EQ":[1333,14436]}
-    """
-    try:
-        data = {segment: [int(security_id)]}
-        return get_dhan().ohlc_data(securities=data)
-    except Exception as e:
-        return JSONResponse({"detail": str(e)}, status_code=500)
-
-# ---- Root ----
-@app.get("/")
-def root():
-    return {
-        "service": "Options Analysis API (DhanHQ v2)",
-        "docs": "/docs",
-        "endpoints": ["/broker_status", "/orders", "/positions", "/holdings", "/option_chain (POST)", "/ohlc"]
-    }
+        # Common server message for invalid date
+        return JSONResponse(fail(e), status_code=400)
