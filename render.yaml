@@ -1,19 +1,25 @@
 services:
+  # Back-end (FastAPI)
   - type: web
-    name: options-analysis
+    name: options-analysis-api
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
     autoDeploy: true
-
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11
+        value: "3.11"
       - key: DHAN_CLIENT_ID
         sync: false
       - key: DHAN_ACCESS_TOKEN
         sync: false
+      - key: FRONTEND_ORIGIN
+        value: https://options-analysis-frontend.onrender.com
 
-    # 👇 ye line add karo taki public/index.html expose ho jaye
+  # Front-end (static site from /public)
+  - type: static
+    name: options-analysis-frontend
+    buildCommand: ""
     staticPublishPath: ./public
+    autoDeploy: true
