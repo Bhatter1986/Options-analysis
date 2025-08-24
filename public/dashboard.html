@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Options-analysis • Data Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#0b0e12;--card:#141a22;--ink:#e6edf3;--muted:#9aa4b2;--ok:#16a34a;--bad:#ef4444;--pri:#3b82f6;--chip:#1f2732;}
+  *{box-sizing:border-box} html,body{height:100%}
+  body{margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+  .wrap{max-width:1100px;margin:32px auto;padding:0 16px}
+  h1{font-size:24px;margin:0 0 8px}
+  .sub{color:var(--muted);margin-bottom:20px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
+  .card{background:var(--card);border:1px solid #1e2632;border-radius:14px;padding:14px}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  input,select,button,textarea{background:#0f141c;border:1px solid #253042;color:var(--ink);border-radius:10px;padding:10px 12px}
+  input,select{width:100%}
+  button{cursor:pointer;background:var(--pri);border-color:transparent}
+  button.ghost{background:#0f141c;border-color:#253042}
+  .pill{display:inline-flex;gap:8px;align-items:center;background:var(--chip);border:1px solid #223042;border-radius:999px;padding:6px 10px;color:var(--muted);font-size:12px}
+  .ok{color:var(--ok)} .bad{color:var(--bad)}
+  pre{background:#0f141c;border:1px solid #253042;padding:12px;border-radius:12px;max-height:360px;overflow:auto;white-space:pre-wrap;word-wrap:break-word}
+  .k{color:#93c5fd} .v{color:#fcd34d}
+  .small{font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Options-analysis • Data Dashboard</h1>
+  <div class="sub">Pure data viewer for your Dhan v2 endpoints (no strategy/analytics). Use the forms to hit APIs — results appear as pretty JSON.</div>
+
+  <!-- Status -->
+  <div class="grid">
+    <div class="card">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <strong>Service Status</strong>
+        <button class="ghost" onclick="selfTest()">Refresh</button>
+      </div>
+      <div class="row" style="margin-top:10px;gap:10px" id="statusRow">
+        <span class="pill">mode: <b id="mode">…</b></span>
+        <span class="pill">env: <b id="env">…</b></span>
+        <span class="pill">token: <b id="tok">…</b></span>
+        <span class="pill">client: <b id="cid">…</b></span>
+      </div>
+      <div class="small" id="baseNote" style="margin-top:8px"></div>
+    </div>
+
+    <!-- Quick portfolio -->
+    <div class="card">
+      <strong>Portfolio (GET)</strong>
+      <div class="row" style="margin-top:10px">
+        <button onclick="hit('/orders')">/orders</button>
+        <button onclick="hit('/positions')">/positions</button>
+        <button onclick="hit('/holdings')">/holdings</button>
+        <button onclick="hit('/funds')">/funds</button>
+      </div>
+    </div>
+
+    <!-- Market snapshot -->
+    <div class="card">
+      <strong>Market Snapshot (GET)</strong>
+      <div class="row" style="margin-top:10px">
+        <select id="m_seg">
+          <option>NSE</option><option>BSE</option><option>NSE_FNO</option><option>MCX_COMM</option>
+        </select>
+        <input id="m_sid" placeholder="security_id (e.g. 1333)" value="1333"/>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button onclick="hit(`/marketfeed/ltp?exchange_segment=${val('m_seg')}&security_id=${val('m_sid')}`)">LTP</button>
+        <button onclick="hit(`/marketfeed/ohlc?exchange_segment=${val('m_seg')}&security_id=${val('m_sid')}`)">OHLC</button>
+        <button onclick="hit(`/marketfeed/quote?exchange_segment=${val('m_seg')}&security_id=${val('m_sid')}`)">Quote</button>
+      </div>
+    </div>
+
+    <!-- Option chain -->
+    <div class="card">
+      <strong>Option Chain</strong>
+      <div class="row" style="margin-top:10px">
+        <input id="u_sec" placeholder="under_security_id" value="13"/>
+        <select id="u_seg">
+          <option>IDX_I</option><option>STK_I</option>
+        </select>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button onclick="hit(`/optionchain/expirylist?under_security_id=${val('u_sec')}&under_exchange_segment=${val('u_seg')}`)">Expiry list</button>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <input id="exp" placeholder='expiry YYYY-MM-DD (pick from list)'/>
+        <button onclick="postJSON('/optionchain',{under_security_id: num('u_sec'), under_exchange_segment: val('u_seg'), expiry: val('exp')})">Fetch Chain (POST)</button>
+      </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="card">
+      <strong>Charts</strong>
+      <div class="row" style="margin-top:10px">
+        <input id="c_sid" value="1333" placeholder="security_id"/>
+        <select id="c_seg"><option>NSE</option><option>BSE</option></select>
+        <select id="c_type"><option>EQUITY</option><option>INDEX</option></select>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button onclick="hit(`/charts/intraday?security_id=${val('c_sid')}&exchange_segment=${val('c_seg')}&instrument_type=${val('c_type')}`)">Intraday</button>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <input id="from" value="2024-01-01" placeholder="from (YYYY-MM-DD)"/>
+        <input id="to" value="2024-02-01" placeholder="to (YYYY-MM-DD)"/>
+        <input id="expc" value="0" placeholder="expiry_code (0)"/>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button onclick="hit(`/charts/historical?security_id=${val('c_sid')}&exchange_segment=${val('c_seg')}&instrument_type=${val('c_type')}&expiry_code=${val('expc')}&from_date=${val('from')}&to_date=${val('to')}`)">Historical</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Output -->
+  <div class="card" style="margin-top:16px">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <strong>Response</strong>
+      <div class="row">
+        <button class="ghost" onclick="copyOut()">Copy</button>
+        <button class="ghost" onclick="downloadOut()">Download JSON</button>
+        <button onclick="clearOut()">Clear</button>
+      </div>
+    </div>
+    <div class="small" id="hitUrl" style="margin:8px 0 6px"></div>
+    <pre id="out">Ready.</pre>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const val = id => encodeURIComponent($(id).value.trim());
+const num = id => Number($(id).value.trim() || "0");
+
+function pretty(obj){
+  try{
+    return JSON.stringify(obj,null,2)
+      .replace(/\"([^\"]+)\":/g,'<span class="k">"$1"</span>:')
+      .replace(/: ([\[\{])/g,': <span class="v">$1</span>');
+  }catch{ return String(obj); }
+}
+function setOut(url, data){
+  $("hitUrl").textContent = url || "";
+  $("out").innerHTML = (typeof data === "string") ? data : pretty(data);
+}
+async function hit(path){
+  try{
+    setOut(location.origin+path, "Loading…");
+    const r = await fetch(path);
+    const j = await r.json();
+    setOut(location.origin+path, j);
+  }catch(e){ setOut(path, String(e)); }
+}
+async function postJSON(path, body){
+  try{
+    setOut(location.origin+path, "Loading…");
+    const r = await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const j = await r.json();
+    setOut(location.origin+path, j);
+  }catch(e){ setOut(path, String(e)); }
+}
+function copyOut(){
+  const t = $("out").innerText; navigator.clipboard.writeText(t);
+}
+function downloadOut(){
+  const t = $("out").innerText || "{}";
+  const blob = new Blob([t],{type:"application/json"});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = 'response.json'; a.click();
+  URL.revokeObjectURL(a.href);
+}
+function clearOut(){ setOut("", "Ready."); }
+
+async function selfTest(){
+  try{
+    const r = await fetch('/__selftest');
+    const j = await r.json();
+    $('mode').textContent = j.status.mode;
+    $('env').textContent = j.status.env;
+    $('tok').innerHTML = j.status.token_present ? '<b class="ok">present</b>' : '<b class="bad">missing</b>';
+    $('cid').innerHTML = j.status.client_id_present ? '<b class="ok">present</b>' : '<b class="bad">missing</b>';
+    $('baseNote').textContent = j.status.base_url_note || '';
+  }catch(e){
+    $('tok').innerHTML = '<b class="bad">error</b>';
+    $('cid').innerHTML = '<b class="bad">error</b>';
+  }
+}
+selfTest();
+</script>
+</body>
+</html>
