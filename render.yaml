@@ -1,5 +1,4 @@
 services:
-  # Back-end (FastAPI)
   - type: web
     name: options-analysis-api
     env: python
@@ -16,10 +15,5 @@ services:
         sync: false
       - key: FRONTEND_ORIGIN
         value: https://options-analysis-frontend.onrender.com
-
-  # Front-end (static site from /public)
-  - type: static
-    name: options-analysis-frontend
-    buildCommand: ""
-    staticPublishPath: ./public
-    autoDeploy: true
+      - key: OPENAI_API_KEY        # <-- add this
+        sync: false
