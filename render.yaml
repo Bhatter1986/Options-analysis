@@ -4,10 +4,16 @@ services:
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
     autoDeploy: true
+
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.11
       - key: DHAN_CLIENT_ID
         sync: false
       - key: DHAN_ACCESS_TOKEN
         sync: false
+
+    # 👇 ye line add karo taki public/index.html expose ho jaye
+    staticPublishPath: ./public
