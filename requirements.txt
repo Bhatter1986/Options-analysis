@@ -1,6 +1,6 @@
 fastapi
 uvicorn
 python-dotenv
-requests
 openai
-dhanhq
+requests
+dhan-hq==2.0.0   # (agar v2 package use kar rahe ho)
