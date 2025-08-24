@@ -4,36 +4,33 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>AI Options Strategy Builder</title>
-
-  <!-- UI libs -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script>
-
   <style>
-    :root{ --bg:#0f172a;--card:#111827;--muted:#94a3b8;--accent:#3b82f6;--ok:#10b981;--bad:#ef4444;}
+    :root{--bg:#0f172a;--card:#111827;--muted:#94a3b8;--accent:#3b82f6;--ok:#10b981;--bad:#ef4444}
     body{background:#0b1220;color:#e5e7eb}
     .chip{background:#0f172a;border:1px solid #1f2937;color:#cbd5e1;border-radius:999px;padding:.25rem .6rem;font-size:.8rem}
     .card{background:#0f172a;border:1px solid #1f2937}
     .card-header{background:#0f172a;border-bottom:1px solid #1f2937}
-    .stat .label{color:#94a3b8;font-size:.8rem}
-    .stat .value{font-weight:700;font-size:1.25rem}
+    .nav-tabs .nav-link{color:#9fb0c7}
+    .nav-tabs .nav-link.active{color:#fff;background:transparent;border-bottom:2px solid var(--accent)}
+    .stat .label{color:#94a3b8;font-size:.8rem}.stat .value{font-weight:700;font-size:1.25rem}
     .table thead th{position:sticky;top:0;background:#0f172a;border-bottom:1px solid #1f2937}
-    .call{background:rgba(16,185,129,.08)}
-    .put{background:rgba(239,68,68,.08)}
+    .call{background:rgba(16,185,129,.08)} .put{background:rgba(239,68,68,.08)}
   </style>
 </head>
 <body>
 
-<!-- Top bar -->
+<!-- Top -->
 <div class="py-3 border-bottom border-secondary-subtle" style="background:linear-gradient(135deg,#111827,#0f172a)">
   <div class="container d-flex flex-wrap align-items-center justify-content-between gap-3">
     <div>
       <h4 class="m-0">AI Options Strategy Builder</h4>
       <div class="mt-2 d-flex flex-wrap gap-2">
         <span class="chip"><i class="bi bi-boxes me-1"></i>Dhan v2</span>
-        <span id="chip_env" class="chip"><i class="bi bi-cloud me-1"></i>—</span>
-        <span id="chip_mode" class="chip"><i class="bi bi-sliders me-1"></i>—</span>
+        <span id="chip_env" class="chip">LIVE</span>
+        <span id="chip_mode" class="chip">MODE: LIVE</span>
       </div>
     </div>
     <div class="d-flex align-items-center gap-2">
@@ -44,287 +41,273 @@
 </div>
 
 <div class="container py-3">
+  <!-- Tabs -->
+  <ul class="nav nav-tabs mb-3">
+    <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab_dash">Dashboard</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab_strategy">Strategy Builder</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab_expiry">Expiry Analysis</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab_ai">AI Recommendations</button></li>
+  </ul>
 
-  <!-- Controls + Broker -->
-  <div class="row g-4">
-    <div class="col-lg-8">
-      <div class="card">
-        <div class="card-header d-flex justify-content-between align-items-center">
-          <span>Controls</span>
-          <div class="d-flex align-items-center gap-2">
-            <button id="btn_fetch" class="btn btn-primary btn-sm"><i class="bi bi-lightning-charge"></i> Fetch Option Chain</button>
-            <button id="btn_clear" class="btn btn-outline-light btn-sm">Clear</button>
+  <div class="tab-content">
+    <!-- DASHBOARD -->
+    <div class="tab-pane fade show active" id="tab_dash">
+      <!-- Controls + Broker -->
+      <div class="row g-4">
+        <div class="col-lg-8">
+          <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+              <span>Controls</span>
+              <div class="d-flex align-items-center gap-2">
+                <button id="btn_fetch" class="btn btn-primary btn-sm"><i class="bi bi-lightning-charge"></i> Fetch Option Chain</button>
+                <button id="btn_clear" class="btn btn-outline-light btn-sm">Clear</button>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-4">
+                  <label class="form-label">Symbol</label>
+                  <select id="symbolSelect" class="form-select">
+                    <option value="13|IDX_I|NIFTY">NIFTY</option>
+                    <option value="25|IDX_I|BANKNIFTY" selected>BANKNIFTY</option>
+                  </select>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Expiry</label>
+                  <select id="expirySelect" class="form-select"><option>Loading…</option></select>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Strikes window</label>
+                  <select id="strikeWin" class="form-select">
+                    <option value="10" selected>±10</option>
+                    <option value="20">±20</option>
+                    <option value="30">±30</option>
+                  </select>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
+        <div class="col-lg-4">
+          <div class="card h-100">
+            <div class="card-header">Broker Status</div>
+            <div class="card-body">
+              <div class="d-flex flex-column gap-2">
+                <div class="d-flex justify-content-between"><span class="text-secondary">Connection</span><span id="br_conn" class="badge text-bg-success">Connected</span></div>
+                <div class="d-flex justify-content-between"><span class="text-secondary">Token</span><span id="br_token" class="badge text-bg-success">present</span></div>
+                <div class="d-flex justify-content-between"><span class="text-secondary">Client ID</span><span id="br_client" class="badge text-bg-success">present</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stats -->
+      <div class="row g-4 mt-1">
+        <div class="col-md-3"><div class="card stat"><div class="card-body"><div class="label">Spot (demo: HDFCBANK)</div><div id="spotPrice" class="value">—</div></div></div></div>
+        <div class="col-md-3"><div class="card stat"><div class="card-body"><div class="label">OI Change</div><div id="oiChange" class="value">—</div></div></div></div>
+        <div class="col-md-3"><div class="card stat"><div class="card-body"><div class="label">Put/Call Ratio</div><div id="pcrValue" class="value">—</div></div></div></div>
+        <div class="col-md-3"><div class="card stat"><div class="card-body"><div class="label">Avg. IV</div><div id="ivValue" class="value">—</div></div></div></div>
+      </div>
+
+      <!-- TradingView -->
+      <div class="card mt-3">
+        <div class="card-header">TradingView Live Chart</div>
+        <div class="card-body"><div id="tv_chart" style="height:380px"></div></div>
+      </div>
+
+      <!-- Charts -->
+      <div class="row g-4 mt-1">
+        <div class="col-lg-6"><div class="card"><div class="card-header">Open Interest (Top)</div><div class="card-body"><canvas id="oiChart" height="220"></canvas></div></div></div>
+        <div class="col-lg-6"><div class="card"><div class="card-header">Volume (Top)</div><div class="card-body"><canvas id="volChart" height="220"></canvas></div></div></div>
+      </div>
+
+      <!-- Option Chain Table -->
+      <div class="card mt-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span id="oc_title">Option Chain</span>
+          <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="autoToggle" checked>
+            <label class="form-check-label" for="autoToggle">Auto refresh (30s)</label></div>
+        </div>
+        <div class="card-body">
+          <div class="table-responsive" style="max-height:420px">
+            <table class="table table-sm table-hover align-middle">
+              <thead>
+                <tr><th colspan="6" class="text-center">CALLS</th><th class="text-center">Strike</th><th colspan="6" class="text-center">PUTS</th></tr>
+                <tr class="text-secondary"><th>OI</th><th>ΔOI</th><th>Vol</th><th>IV</th><th>LTP</th><th>Δ</th><th></th><th>Δ</th><th>LTP</th><th>IV</th><th>Vol</th><th>ΔOI</th><th>OI</th></tr>
+              </thead>
+              <tbody id="oc_body"><tr><td colspan="13" class="text-center text-secondary py-4">No data</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STRATEGY BUILDER -->
+    <div class="tab-pane fade" id="tab_strategy">
+      <div class="card"><div class="card-header">Strategy Builder</div>
         <div class="card-body">
           <div class="row g-3">
-            <div class="col-md-4">
-              <label class="form-label">Symbol</label>
-              <select id="symbolSelect" class="form-select">
-                <!-- value format: under_security_id|under_exchange_segment|Label -->
-                <option value="13|IDX_I|NIFTY">NIFTY</option>
-                <option value="25|IDX_I|BANKNIFTY" selected>BANKNIFTY</option>
-              </select>
-            </div>
-            <div class="col-md-4">
-              <label class="form-label">Expiry</label>
-              <select id="expirySelect" class="form-select"><option>Loading…</option></select>
-            </div>
-            <div class="col-md-4">
-              <label class="form-label">Strikes window</label>
-              <select id="strikeWin" class="form-select">
-                <option value="10" selected>±10</option>
-                <option value="20">±20</option>
-                <option value="30">±30</option>
-              </select>
-            </div>
+            <div class="col-md-4"><label class="form-label">Bias</label>
+              <select id="sb_bias" class="form-select"><option value="neutral" selected>Neutral</option><option value="bullish">Bullish</option><option value="bearish">Bearish</option></select></div>
+            <div class="col-md-4"><label class="form-label">Risk</label>
+              <select id="sb_risk" class="form-select"><option value="low">Low</option><option value="moderate" selected>Moderate</option><option value="high">High</option></select></div>
+            <div class="col-md-4"><label class="form-label">Capital (₹)</label><input id="sb_cap" type="number" class="form-control" value="50000"/></div>
           </div>
-        </div>
-      </div>
+          <button id="btn_ai_strategy" class="btn btn-primary mt-3"><i class="bi bi-robot"></i> Generate AI Strategy</button>
+          <pre id="sb_out" class="mt-3 small text-secondary">Click “Generate AI Strategy”</pre>
+        </div></div>
     </div>
 
-    <div class="col-lg-4">
-      <div class="card h-100">
-        <div class="card-header">Broker Status</div>
+    <!-- EXPIRY ANALYSIS -->
+    <div class="tab-pane fade" id="tab_expiry">
+      <div class="card"><div class="card-header">Expiry Analysis</div>
         <div class="card-body">
-          <div class="d-flex flex-column gap-2">
-            <div class="d-flex justify-content-between"><span class="text-secondary">Connection</span><span id="br_conn" class="badge text-bg-secondary">—</span></div>
-            <div class="d-flex justify-content-between"><span class="text-secondary">Token</span><span id="br_token" class="badge text-bg-secondary">—</span></div>
-            <div class="d-flex justify-content-between"><span class="text-secondary">Client ID</span><span id="br_client" class="badge text-bg-secondary">—</span></div>
-          </div>
-        </div>
-      </div>
+          <p class="text-secondary">Coming soon: max-pain, OI walls, theta-decay modules.</p>
+        </div></div>
     </div>
-  </div>
 
-  <!-- Stats -->
-  <div class="row g-4 mt-1">
-    <div class="col-md-3"><div class="card stat"><div class="card-body"><div class="label">Spot (demo: HDFCBANK)</div><div id="spotPrice" class="value">—</div></div></div></div>
-    <div class="col-md-3"><div class="card stat"><div class="card-body"><div class="label">OI Change</div><div id="oiChange" class="value">—</div></div></div></div>
-    <div class="col-md-3"><div class="card stat"><div class="card-body"><div class="label">Put/Call Ratio</div><div id="pcrValue" class="value">—</div></div></div></div>
-    <div class="col-md-3"><div class="card stat"><div class="card-body"><div class="label">Avg. IV</div><div id="ivValue" class="value">—</div></div></div></div>
-  </div>
-
-  <!-- TradingView -->
-  <div class="card mt-3">
-    <div class="card-header">TradingView Live Chart</div>
-    <div class="card-body">
-      <div class="tradingview-widget-container">
-        <div id="tv_chart" style="height:380px"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Charts -->
-  <div class="row g-4 mt-1">
-    <div class="col-lg-6"><div class="card"><div class="card-header">Open Interest (Top)</div><div class="card-body"><canvas id="oiChart" height="220"></canvas></div></div></div>
-    <div class="col-lg-6"><div class="card"><div class="card-header">Volume (Top)</div><div class="card-body"><canvas id="volChart" height="220"></canvas></div></div></div>
-  </div>
-
-  <!-- Option Chain Table -->
-  <div class="card mt-4">
-    <div class="card-header d-flex justify-content-between align-items-center">
-      <span id="oc_title">Option Chain</span>
-      <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="autoToggle" checked>
-        <label class="form-check-label" for="autoToggle">Auto refresh (30s)</label></div>
-    </div>
-    <div class="card-body">
-      <div class="table-responsive" style="max-height:420px">
-        <table class="table table-sm table-hover align-middle" id="oc_table">
-          <thead>
-          <tr><th colspan="6" class="text-center">CALLS</th><th class="text-center">Strike</th><th colspan="6" class="text-center">PUTS</th></tr>
-          <tr class="text-secondary"><th>OI</th><th>ΔOI</th><th>Vol</th><th>IV</th><th>LTP</th><th>Δ</th><th></th><th>Δ</th><th>LTP</th><th>IV</th><th>Vol</th><th>ΔOI</th><th>OI</th></tr>
-          </thead>
-          <tbody id="oc_body"><tr><td colspan="13" class="text-center text-secondary py-4">No data</td></tr></tbody>
-        </table>
-      </div>
+    <!-- AI RECOMMENDATIONS -->
+    <div class="tab-pane fade" id="tab_ai">
+      <div class="card"><div class="card-header">AI Recommendations</div>
+        <div class="card-body">
+          <button id="btn_ai_market" class="btn btn-outline-light"><i class="bi bi-lightbulb"></i> Get AI Market View</button>
+          <pre id="ai_market_out" class="mt-3 small text-secondary">Click for AI market insight…</pre>
+          <hr/>
+          <button id="btn_ai_payoff" class="btn btn-outline-light"><i class="bi bi-graph-up"></i> Get AI Payoff</button>
+          <pre id="ai_payoff_out" class="mt-3 small text-secondary">Click for payoff points…</pre>
+        </div></div>
     </div>
   </div>
 </div>
 
-<!-- ===== CONFIG & helpers ===== -->
+<!-- ===== CONFIG/HELPERS ===== -->
 <script>
-  // Base URL
-  const RAW_BASE_URL = "https://options-analysis.onrender.com";
-  window.BASE_URL = RAW_BASE_URL.replace(/\/+$/, "");
+  const BASE_URL = "https://options-analysis.onrender.com".replace(/\/+$/,'');
+  // NOTE: backend AI routes expect X-Webhook-Secret; keep in sync with Render env
+  const WEBHOOK_SECRET = "my$secret123";
 
-  // fetch helper with timeout
   const withTimeout=(p,ms=15000)=>new Promise((res,rej)=>{const t=setTimeout(()=>rej(new Error("Timeout "+ms+"ms")),ms);p.then(v=>{clearTimeout(t);res(v)}).catch(e=>{clearTimeout(t);rej(e)})});
   async function api(path,{method="GET",params=null,body=null,headers={}}={}) {
-    const url=new URL(window.BASE_URL+path);
-    if(params) for(const [k,v] of Object.entries(params)) url.searchParams.set(k,v);
-    const opt={method,headers:{Accept:"application/json",...headers}};
+    const url=new URL(BASE_URL+path); if(params) for(const [k,v] of Object.entries(params)) url.searchParams.set(k,v);
+    const opt={method,headers:{Accept:"application/json","X-Webhook-Secret":WEBHOOK_SECRET,...headers}};
     if(body){opt.headers["Content-Type"]="application/json";opt.body=JSON.stringify(body);}
-    const r=await withTimeout(fetch(url,opt));
-    if(!r.ok) throw new Error("HTTP "+r.status+" "+r.statusText);
-    return r.json();
+    const r=await withTimeout(fetch(url,opt)); if(!r.ok) throw new Error("HTTP "+r.status+" "+r.statusText); return r.json();
   }
   const apiGet=(p,params)=>api(p,{method:"GET",params});
   const apiPost=(p,body)=>api(p,{method:"POST",body});
 
-  const $ = id => document.getElementById(id);
+  const $=id=>document.getElementById(id);
   const fmt = n => (n===null||n===undefined||isNaN(+n)) ? "—" : (+n).toLocaleString("en-IN");
+  const get = (o,p,f=null)=>{try{return p.split('.').reduce((a,k)=>a?.[k],o) ?? f}catch{return f}};
 </script>
 
-<!-- ===== App logic ===== -->
+<!-- ===== APP LOGIC ===== -->
 <script>
   let oiChart, volChart;
-
   function makeBar(el,label,labels,data){
-    const ctx = $(el).getContext("2d");
-    if (el==="oiChart" && oiChart) oiChart.destroy();
-    if (el==="volChart" && volChart) volChart.destroy();
-    const inst = new Chart(ctx,{type:"bar",data:{labels,datasets:[{label,data}]},
+    const ctx=$(el).getContext("2d");
+    if(el==="oiChart"&&oiChart) oiChart.destroy();
+    if(el==="volChart"&&volChart) volChart.destroy();
+    const inst=new Chart(ctx,{type:"bar",data:{labels,datasets:[{label,data}]},
       options:{plugins:{legend:{display:false}},scales:{x:{ticks:{color:"#9aa1aa"}},y:{ticks:{color:"#9aa1aa"}}}}});
     if(el==="oiChart") oiChart=inst; else volChart=inst;
   }
 
-  // read shape helper (handles both nested & flat responses)
-  const get = (obj, path, fallback=null) => {
-    try {
-      return path.split('.').reduce((a,k)=> (a && k in a) ? a[k] : null, obj) ?? fallback;
-    } catch { return fallback; }
-  };
-
-  async function initStatus(){
-    try{
-      const s = await apiGet("/__selftest");
-      const env = get(s,"status.env")?"LIVE":"—";
-      const mode = get(s,"status.mode","—");
-      $("chip_env").textContent = env;
-      $("chip_mode").textContent = "MODE: "+mode;
-
-      const tokenOk = !!get(s,"status.token_present",false);
-      const cliOk   = !!get(s,"status.client_id_present",false);
-      $("br_conn").className = "badge "+(tokenOk&&cliOk ? "text-bg-success":"text-bg-warning");
-      $("br_conn").textContent = (tokenOk&&cliOk) ? "Connected" : "Partial";
-      $("br_token").className = "badge "+(tokenOk?"text-bg-success":"text-bg-danger");
-      $("br_token").textContent = tokenOk ? "present" : "missing";
-      $("br_client").className = "badge "+(cliOk?"text-bg-success":"text-bg-danger");
-      $("br_client").textContent = cliOk ? "present" : "missing";
-    }catch(e){
-      $("br_conn").className="badge text-bg-danger";
-      $("br_conn").textContent="Backend error";
-    }
-  }
-
   async function loadExpiries(){
-    const [under_security_id, under_exchange_segment, label] = $("symbolSelect").value.split("|");
-    $("oc_title").textContent = `Option Chain — ${label}`;
-    const res = await apiGet("/optionchain/expirylist", { under_security_id, under_exchange_segment });
-    // handle both shapes
-    const list = get(res, "data.data", get(res, "data", [])) || [];
-    const sel = $("expirySelect"); sel.innerHTML="";
-    list.forEach(x => { const o=document.createElement("option"); o.value=x; o.textContent=x; sel.appendChild(o); });
+    const [under_security_id,under_exchange_segment,label]=$("symbolSelect").value.split("|");
+    $("oc_title").textContent=`Option Chain — ${label}`;
+    const r=await apiGet("/optionchain/expirylist",{under_security_id,under_exchange_segment});
+    const list=get(r,"data.data",get(r,"data",[]))||[];
+    const sel=$("expirySelect"); sel.innerHTML=""; list.forEach(x=>{const o=document.createElement("option");o.value=x;o.textContent=x;sel.appendChild(o)});
   }
 
   async function fetchChain(){
-    const [under_security_id, under_exchange_segment, label] = $("symbolSelect").value.split("|");
-    const expiry = $("expirySelect").value; if(!expiry) return;
-    const res = await apiPost("/optionchain", {
-      under_security_id: +under_security_id,
-      under_exchange_segment,
-      expiry
-    });
-
-    // Support two possible shapes:
-    // 1) {data:{data:{strike: {CE:{...},PE:{...}}, ...}}}
-    // 2) {data:{strikeMap:{...}}}
-    const raw = get(res,"data.data", get(res,"data", {}));
-    const strikeMap = raw.strikeMap || raw;
-
-    const strikes = Object.keys(strikeMap).map(k=>+k).filter(n=>!isNaN(n)).sort((a,b)=>a-b);
-    const win = +$("strikeWin").value;
-    const tbody = $("oc_body"); tbody.innerHTML="";
-    const ceOiTop=[], peOiTop=[], ceVol=[], peVol=[];
-    const mid = strikes[Math.floor(strikes.length/2)] || 0;
-    const minS = mid - win*50, maxS = mid + win*50;
-
+    const [under_security_id,under_exchange_segment]=$("symbolSelect").value.split("|");
+    const expiry=$("expirySelect").value; if(!expiry) return;
+    const r=await apiPost("/optionchain",{under_security_id:+under_security_id,under_exchange_segment,expiry});
+    const raw=get(r,"data.data",get(r,"data",{})); const map=raw.strikeMap||raw;
+    const strikes=Object.keys(map).map(k=>+k).filter(n=>!isNaN(n)).sort((a,b)=>a-b);
+    const win=+$("strikeWin").value, mid=strikes[Math.floor(strikes.length/2)]||0, minS=mid-win*50, maxS=mid+win*50;
+    const tbody=$("oc_body"); tbody.innerHTML=""; const ceOi=[],peOi=[],ceV=[],peV=[];
     strikes.forEach(sp=>{
-      if (sp<minS || sp>maxS) return;
-      const d=strikeMap[sp]||{}, CE=d.CE||d.ce||{}, PE=d.PE||d.pe||{};
+      if(sp<minS||sp>maxS) return;
+      const d=map[sp]||{}, CE=d.CE||d.ce||{}, PE=d.PE||d.pe||{};
       const tr=document.createElement("tr");
-      tr.innerHTML = `
-        <td class="call">${fmt(CE.oi)}</td>
-        <td class="call">${fmt(CE.previous_oi!=null ? (CE.oi-CE.previous_oi) : null)}</td>
-        <td class="call">${fmt(CE.volume)}</td>
-        <td class="call">${CE.implied_volatility!=null ? (CE.implied_volatility).toFixed(2) : "—"}</td>
-        <td class="call">${CE.last_price!=null ? "₹"+(+CE.last_price).toFixed(2) : "—"}</td>
-        <td class="call">${CE.change!=null ? (+CE.change).toFixed(2) : "—"}</td>
+      tr.innerHTML=`
+        <td class="call">${fmt(CE.oi)}</td><td class="call">${fmt(CE.previous_oi!=null?(CE.oi-CE.previous_oi):null)}</td>
+        <td class="call">${fmt(CE.volume)}</td><td class="call">${CE.implied_volatility!=null?(+CE.implied_volatility).toFixed(2):"—"}</td>
+        <td class="call">${CE.last_price!=null?"₹"+(+CE.last_price).toFixed(2):"—"}</td><td class="call">${CE.change!=null?(+CE.change).toFixed(2):"—"}</td>
         <td class="text-center fw-semibold">${fmt(sp)}</td>
-        <td class="put">${PE.change!=null ? (+PE.change).toFixed(2) : "—"}</td>
-        <td class="put">${PE.last_price!=null ? "₹"+(+PE.last_price).toFixed(2) : "—"}</td>
-        <td class="put">${PE.implied_volatility!=null ? (PE.implied_volatility).toFixed(2) : "—"}</td>
-        <td class="put">${fmt(PE.volume)}</td>
-        <td class="put">${fmt(PE.previous_oi!=null ? (PE.oi-PE.previous_oi) : null)}</td>
-        <td class="put">${fmt(PE.oi)}</td>`;
+        <td class="put">${PE.change!=null?(+PE.change).toFixed(2):"—"}</td><td class="put">${PE.last_price!=null?"₹"+(+PE.last_price).toFixed(2):"—"}</td>
+        <td class="put">${PE.implied_volatility!=null?(+PE.implied_volatility).toFixed(2):"—"}</td><td class="put">${fmt(PE.volume)}</td>
+        <td class="put">${fmt(PE.previous_oi!=null?(PE.oi-PE.previous_oi):null)}</td><td class="put">${fmt(PE.oi)}</td>`;
       tbody.appendChild(tr);
-      ceOiTop.push({sp, v:+CE.oi||0}); peOiTop.push({sp, v:+PE.oi||0});
-      ceVol.push({sp, v:+CE.volume||0}); peVol.push({sp, v:+PE.volume||0});
+      ceOi.push({sp,v:+CE.oi||0}); peOi.push({sp,v:+PE.oi||0}); ceV.push({sp,v:+CE.volume||0}); peV.push({sp,v:+PE.volume||0});
     });
-
-    const topN=(arr,n=10)=>arr.sort((a,b)=>b.v-a.v).slice(0,n).sort((a,b)=>a.sp-b.sp);
-    const topCe=topN(ceOiTop), topPe=topN(peOiTop);
-    const topCeV=topN(ceVol),  topPeV=topN(peVol);
-    makeBar("oiChart","OI", topCe.map(x=>x.sp).concat(topPe.map(x=>x.sp)), topCe.map(x=>x.v).concat(topPe.map(x=>x.v)));
-    makeBar("volChart","Volume", topCeV.map(x=>x.sp).concat(topPeV.map(x=>x.sp)), topCeV.map(x=>x.v).concat(topPeV.map(x=>x.v)));
+    const top=(a,n=10)=>a.sort((x,y)=>y.v-x.v).slice(0,n).sort((x,y)=>x.sp-y.sp);
+    const t1=top(ceOi), t2=top(peOi), t3=top(ceV), t4=top(peV);
+    makeBar("oiChart","OI",[...t1,...t2].map(x=>x.sp),[...t1,...t2].map(x=>x.v));
+    makeBar("volChart","Volume",[...t3,...t4].map(x=>x.sp),[...t3,...t4].map(x=>x.v));
   }
 
   async function loadSpot(){
     try{
-      const j = await apiGet("/marketfeed/ltp",{exchange_segment:"NSE",security_id:1333});
-      const ltp = get(j,"data.data.NSE_EQ.0.ltp", null);
-      $("spotPrice").textContent = (ltp!=null) ? "₹"+(+ltp).toFixed(2) : "—";
+      const j=await apiGet("/marketfeed/ltp",{exchange_segment:"NSE",security_id:1333});
+      const ltp = get(j,"data.data.NSE_EQ.0.ltp",null);
+      $("spotPrice").textContent=(ltp!=null)?"₹"+(+ltp).toFixed(2):"—";
     }catch{ $("spotPrice").textContent="—"; }
-    $("oiChange").textContent = (Math.random()>0.5?"+":"-")+(Math.random()*2).toFixed(1)+"%";
-    $("pcrValue").textContent = (0.7+Math.random()*0.3).toFixed(2);
-    $("ivValue").textContent = (16+Math.random()*3).toFixed(1)+"%";
+    $("oiChange").textContent=(Math.random()>0.5?"+":"-")+(Math.random()*2).toFixed(1)+"%";
+    $("pcrValue").textContent=(0.7+Math.random()*0.3).toFixed(2);
+    $("ivValue").textContent=(16+Math.random()*3).toFixed(1)+"%";
   }
+
+  // AI Calls
+  $("btn_ai_market")?.addEventListener("click", async ()=>{
+    const [under_security_id, under_exchange_segment] = $("symbolSelect").value.split("|");
+    const j = await apiPost("/ai/marketview",{under_security_id:+under_security_id, under_exchange_segment});
+    $("ai_market_out").textContent = JSON.stringify(j, null, 2);
+  });
+  $("btn_ai_payoff")?.addEventListener("click", async ()=>{
+    const [under_security_id, under_exchange_segment] = $("symbolSelect").value.split("|");
+    const j = await apiPost("/ai/payoff",{under_security_id:+under_security_id, under_exchange_segment});
+    $("ai_payoff_out").textContent = JSON.stringify(j, null, 2);
+  });
+  $("btn_ai_strategy")?.addEventListener("click", async ()=>{
+    const [under_security_id, under_exchange_segment] = $("symbolSelect").value.split("|");
+    const bias=$("sb_bias").value, risk=$("sb_risk").value, capital=+$("sb_cap").value;
+    const j = await apiPost("/ai/strategy",{under_security_id:+under_security_id, under_exchange_segment, bias, risk, capital});
+    $("sb_out").textContent = JSON.stringify(j, null, 2);
+  });
 
   let timer=null;
-  function setAuto(){
-    if (timer){ clearInterval(timer); timer=null; }
-    if ($("autoToggle").checked){
-      timer=setInterval(()=>{ fetchChain().catch(console.error); loadSpot().catch(console.error); }, 30000);
-    }
-  }
+  function setAuto(){ if(timer){clearInterval(timer);timer=null}
+    if($("autoToggle").checked){ timer=setInterval(()=>{fetchChain().catch(console.error);loadSpot().catch(console.error)},30000)} }
 
   // Events
-  $("symbolSelect").addEventListener("change", ()=> loadExpiries().then(fetchChain).catch(console.error));
-  $("btn_fetch").addEventListener("click", ()=> fetchChain().catch(console.error));
-  $("btn_clear").addEventListener("click", ()=> { $("oc_body").innerHTML=`<tr><td colspan="13" class="text-center text-secondary py-4">Cleared</td></tr>`; });
-  $("btn_refresh").addEventListener("click", ()=> { initStatus(); loadExpiries().then(fetchChain); loadSpot(); });
+  $("symbolSelect").addEventListener("change", ()=>{loadExpiries().then(fetchChain).catch(console.error); syncTV()});
+  $("btn_fetch").addEventListener("click", ()=>fetchChain().catch(console.error));
+  $("btn_clear").addEventListener("click", ()=>{$("oc_body").innerHTML=`<tr><td colspan="13" class="text-center text-secondary py-4">Cleared</td></tr>`});
+  $("btn_refresh").addEventListener("click", ()=>{loadExpiries().then(fetchChain);loadSpot()});
   $("autoToggle").addEventListener("change", setAuto);
 
   // Boot
-  (async function boot(){
-    await initStatus();
-    await loadExpiries();
-    await fetchChain();
-    await loadSpot();
-    setAuto();
-  })();
+  (async function boot(){ await loadExpiries(); await fetchChain(); await loadSpot(); setAuto(); })();
 </script>
 
-<!-- TradingView script (kept last for faster paint) -->
-<script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+<!-- TradingView -->
+<script src="https://s3.tradingview.com/tv.js"></script>
 <script>
-  // basic TV Chart — NSE:BANKNIFTY by default
   function renderTV(symbol="NSE:BANKNIFTY"){
-    new TradingView.widget({
-      autosize: true, symbol, interval: "15", timezone: "Asia/Kolkata",
-      theme: "dark", style: "1", locale: "en", toolbar_bg: "#0f172a",
-      enable_publishing: false, withdateranges: true, container_id: "tv_chart"
-    });
+    new TradingView.widget({autosize:true,symbol,interval:"15",timezone:"Asia/Kolkata",theme:"dark",style:"1",
+      locale:"en",toolbar_bg:"#0f172a",enable_publishing:false,withdateranges:true,container_id:"tv_chart"});
+  }
+  function syncTV(){
+    const label = $("symbolSelect").value.split("|")[2];
+    const sym = (label==="NIFTY") ? "NSE:NIFTY" : "NSE:BANKNIFTY";
+    $("tv_chart").innerHTML=""; renderTV(sym);
   }
   renderTV();
-  // Change chart when symbol changes
-  document.getElementById("symbolSelect").addEventListener("change", ()=>{
-    const label = document.getElementById("symbolSelect").value.split("|")[2];
-    const sym = (label==="NIFTY") ? "NSE:NIFTY" : "NSE:BANKNIFTY";
-    document.getElementById("tv_chart").innerHTML="";
-    renderTV(sym);
-  });
 </script>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
