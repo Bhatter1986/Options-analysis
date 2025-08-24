@@ -1,3 +1,5 @@
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 dhanhq==2.0.2
+pydantic==2.11.7
+python-dotenv==1.1.1
