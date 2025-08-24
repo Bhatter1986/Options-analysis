@@ -1,19 +1,29 @@
 services:
   - type: web
-    name: options-analysis-api
-    env: python
+    name: options-analysis
+    env: docker
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
+    healthCheckPath: /health
     autoDeploy: true
     envVars:
-      - key: PYTHON_VERSION
-        value: "3.11"
-      - key: DHAN_CLIENT_ID
+      # ---- MODE: LIVE or TEST (SANDBOX) ----
+      - key: MODE
+        value: TEST
+
+      # ---- Dhan credentials (set one pair depending on MODE) ----
+      - key: DHAN_LIVE_CLIENT_ID
         sync: false
-      - key: DHAN_ACCESS_TOKEN
+      - key: DHAN_LIVE_ACCESS_TOKEN
         sync: false
-      - key: FRONTEND_ORIGIN
-        value: https://options-analysis-frontend.onrender.com
-      - key: OPENAI_API_KEY        # <-- add this
+      - key: DHAN_SANDBOX_CLIENT_ID
         sync: false
+      - key: DHAN_SANDBOX_ACCESS_TOKEN
+        sync: false
+
+      # ---- Optional: OpenAI (only needed if you use /ai endpoints) ----
+      - key: OPENAI_API_KEY
+        sync: false
+
+      # CORS (already wide-open in code; keep for clarity)
+      - key: ALLOW_ORIGINS
+        value: "*"
