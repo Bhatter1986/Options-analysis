@@ -1,69 +1,68 @@
+# main.py
 import os
-import json
-from typing import Any, Dict, Optional, List
+import sys
+from typing import Optional, List, Dict, Any
 
-from fastapi import FastAPI, Query, Body
+from fastapi import FastAPI, Query, Body, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-# ---- Load env ----
-load_dotenv()
-DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID", "").strip()
-DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN", "").strip()
-
-# ---- DhanHQ SDK ----
-# pip install dhanhq  (v2.x)
+# ---- Dhan SDK ----
 try:
-    from dhanhq import dhanhq, marketfeed, orderupdate  # type: ignore
+    from dhanhq import dhanhq, marketfeed, orderupdate
 except Exception as e:
-    dhanhq = None  # so we can boot and explain in /health
-    marketfeed = None
-    orderupdate = None
-    _import_error = str(e)
-else:
-    _import_error = None
+    print("DhanHQ SDK import error:", e, file=sys.stderr)
+    raise
 
-app = FastAPI(title="Options-analysis (Dhan v2 + AI)", version="2.0")
+load_dotenv()
+
+CLIENT_ID = os.getenv("DHAN_CLIENT_ID", "").strip()
+ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN", "").strip()
+
+if not CLIENT_ID or not ACCESS_TOKEN:
+    print("WARNING: DHAN_CLIENT_ID / DHAN_ACCESS_TOKEN not set", file=sys.stderr)
+
+# Init SDK (lazy, but here global)
+dhan = dhanhq(CLIENT_ID, ACCESS_TOKEN)
+
+app = FastAPI(title="Options-analysis (Dhan v2 + AI)", version="1.0.0")
 
 # ---- CORS ----
+allowed = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",")]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"],
+    allow_origins=allowed if allowed != ["*"] else ["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# ---- Dhan client (lazy) ----
-_dhan_client = None
-def dhan_client():
-    global _dhan_client
-    if _dhan_client is None:
-        if dhanhq is None:
-            raise RuntimeError(f"dhanhq import failed: {_import_error}")
-        if not (DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN):
-            raise RuntimeError("DHAN_CLIENT_ID / DHAN_ACCESS_TOKEN missing")
-        _dhan_client = dhanhq(DHAN_CLIENT_ID, DHAN_ACCESS_TOKEN)
-    return _dhan_client
+# --------- Helpers ----------
+IDX_MAP = {
+    "NIFTY": {"under_security_id": "13", "under_exchange_segment": "IDX_I"},
+    "BANKNIFTY": {"under_security_id": "25", "under_exchange_segment": "IDX_I"},
+    "FINNIFTY": {"under_security_id": "256265", "under_exchange_segment": "IDX_I"},  # update if needed
+}
 
-# ---------- Schemas (minimal) ----------
+def ok(data: Any) -> Dict[str, Any]:
+    return {"status": "success", "data": data}
+
+def fail(detail: str, code: int = 400) -> None:
+    raise HTTPException(status_code=code, detail=detail)
+
+# --------- Models ----------
 class PlaceOrderReq(BaseModel):
     security_id: str
-    exchange_segment: str  # e.g., "NSE", "NSE_FNO", "MCX", etc.
+    exchange_segment: str
     transaction_type: str  # dhan.BUY / dhan.SELL
     quantity: int
-    order_type: str        # dhan.MARKET / LIMIT / SL / SLM
-    product_type: str      # dhan.INTRA / CNC / NRML
-    price: Optional[float] = 0
-    trigger_price: Optional[float] = 0
-    disclosed_quantity: Optional[int] = 0
+    order_type: str        # dhan.MARKET / dhan.LIMIT / etc.
+    product_type: str      # dhan.INTRA / dhan.CNC / etc.
+    price: Optional[float] = 0.0
+    trigger_price: Optional[float] = 0.0
     validity: Optional[str] = None
-    after_market_order: Optional[bool] = False
-    bo_profit_value: Optional[float] = None
-    bo_stop_loss_Value: Optional[float] = None
-    drv_expiry_date: Optional[str] = None
-    drv_option_type: Optional[str] = None
-    drv_strike_price: Optional[float] = None
-    tag: Optional[str] = None
+    link_id: Optional[str] = None
 
 class ModifyOrderReq(BaseModel):
     order_id: str
@@ -73,343 +72,327 @@ class ModifyOrderReq(BaseModel):
     price: Optional[float] = None
     trigger_price: Optional[float] = None
     disclosed_quantity: Optional[int] = None
-    validity: Optional[str] = None
 
 class ForeverOrderReq(BaseModel):
     security_id: str
     exchange_segment: str
     transaction_type: str
     product_type: str
+    product: str           # SINGLE / OCO
     quantity: int
     price: float
     trigger_price: float
+    remarks: Optional[str] = None
 
-# ---------- Helpers ----------
-def ok(data: Any, **extra):
-    return {"status": "success", "data": data, **extra}
-
-def err(e: Exception, **extra):
-    return {"status": "error", "error": str(e), **extra}
-
-# ---------- Meta ----------
-@app.get("/")
-def root():
-    return ok(
-        {
-            "app": app.title,
-            "mode": "LIVE",
-            "env": "LIVE",
-            "endpoints": [
-                "/health", "/broker_status",
-                "/market/quote", "/marketfeed/ping",
-                "/option/expirylist",
-                "/orders", "/orders/place", "/orders/modify", "/orders/cancel",
-                "/orders/{order_id}", "/tradebook/{order_id}",
-                "/tradehistory",
-                "/positions", "/holdings", "/funds",
-                "/charts/intraday", "/charts/historical",
-                "/forever/place", "/forever/modify", "/forever/cancel",
-                "/edis/generate_tpin", "/edis/open_browser_for_tpin", "/edis/inquiry",
-                "/dhan/exec", "/__selftest",
-            ]
-        }
-    )
-
+# --------- Basic ----------
 @app.get("/health")
 def health():
-    return ok({
-        "python": os.getenv("PYTHON_VERSION", "3.x"),
-        "dhanhq_import": "ok" if _import_error is None else f"failed: {_import_error}",
-        "client_id_present": bool(DHAN_CLIENT_ID),
-        "token_present": bool(DHAN_ACCESS_TOKEN),
-    })
+    return ok({"app": app.title, "version": app.version})
 
 @app.get("/broker_status")
 def broker_status():
     return ok({
         "mode": "LIVE",
-        "token_present": bool(DHAN_ACCESS_TOKEN),
-        "client_id_present": bool(DHAN_CLIENT_ID),
+        "token_present": bool(ACCESS_TOKEN),
+        "client_id_present": bool(CLIENT_ID),
+        "openai_present": bool(os.getenv("OPENAI_API_KEY", "").strip()),
     })
 
-# ---------- Option Chain: Expiry List ----------
-@app.get("/option/expirylist")
-def expiry_list(
-    under_security_id: str = Query(..., description="e.g., 13 for NIFTY, 25 for BANKNIFTY"),
-    under_exchange_segment: str = Query(..., description="e.g., IDX_I for Index, NSE for cash underlying"),
-):
-    """
-    Dhan v2 SDK: dhan.expiry_list(under_security_id, under_exchange_segment)
-    """
+@app.get("/__selftest")
+def selftest():
+    status = {
+        "env": True,
+        "mode": "LIVE",
+        "token_present": bool(ACCESS_TOKEN),
+        "client_id_present": bool(CLIENT_ID),
+        "openai_present": bool(os.getenv("OPENAI_API_KEY", "").strip()),
+    }
+    sample = {}
     try:
-        d = dhan_client()
-        data = d.expiry_list(under_security_id=under_security_id, under_exchange_segment=under_exchange_segment)
-        return ok(data)
+        # Try a lightweight call – get funds (doesn't require params)
+        funds = dhan.get_fund_limits()
+        sample["funds_ok"] = True if isinstance(funds, dict) else False
     except Exception as e:
-        return err(e, hint="Check under_security_id & under_exchange_segment")
+        sample["funds_ok"] = False
+        sample["error"] = str(e)
+    return {"status": "success", "data": {"status": status, "sample": sample}}
 
-# ---------- Market Quote (REST snapshot) ----------
+# --------- Market Quote / Data ----------
 @app.get("/market/quote")
 def market_quote(
+    security_id: str = Query(..., description="e.g., '13' for NIFTY underlying OR script id"),
+    exchange_segment: str = Query(..., description="e.g., 'IDX_I', 'NSE', etc."),
+    mode: str = Query("full", description="ticker|quote|full (SDK handles internally)")
+):
+    try:
+        data = dhan.get_quote(security_id, exchange_segment)
+        return ok(data)
+    except Exception as e:
+        fail(f"quote error: {e}", 502)
+
+@app.get("/charts/intraday")
+def charts_intraday(
     security_id: str = Query(...),
     exchange_segment: str = Query(...),
-    instrument_type: Optional[str] = Query(None, description="If API requires"),
-    subscription_type: Optional[int] = Query(None, description="Ticker/Quote/Full mode integers if applicable"),
+    instrument_type: str = Query("OPTIDX")
 ):
-    """
-    Snapshot quote via SDK (method name may differ by SDK version).
-    If method isn't available, return 501 gracefully.
-    """
     try:
-        d = dhan_client()
-        if hasattr(d, "get_quote"):
-            data = d.get_quote(
-                security_id=security_id,
-                exchange_segment=exchange_segment,
-                instrument_type=instrument_type,
-                subscription_type=subscription_type,
-            )
-            return ok(data)
-        return {"status": "not_supported", "message": "SDK method get_quote not found in this version"}
+        data = dhan.intraday_minute_data(security_id, exchange_segment, instrument_type)
+        return ok(data)
     except Exception as e:
-        return err(e)
+        fail(f"intraday error: {e}", 502)
 
-# ---------- Orders ----------
-@app.get("/orders")
-def orders_list():
+@app.get("/charts/historical")
+def charts_historical(
+    security_id: str = Query(...),
+    exchange_segment: str = Query(...),
+    instrument_type: str = Query("OPTIDX"),
+    expiry_code: Optional[str] = None,
+    from_date: Optional[str] = None,  # 'YYYY-MM-DD'
+    to_date: Optional[str] = None,
+    interval: Optional[str] = None    # depends on SDK support
+):
     try:
-        d = dhan_client()
-        return ok(d.get_order_list())
+        data = dhan.historical_daily_data(
+            security_id=security_id,
+            exchange_segment=exchange_segment,
+            instrument_type=instrument_type,
+            expiry_code=expiry_code or "",
+            from_date=from_date or "",
+            to_date=to_date or "",
+        )
+        return ok(data)
     except Exception as e:
-        return err(e)
+        fail(f"historical error: {e}", 502)
+
+# --------- Option Chain / Expiry ----------
+@app.get("/option/expirylist")
+def option_expirylist(
+    under_security_id: Optional[str] = Query(None),
+    under_exchange_segment: Optional[str] = Query(None),
+    symbol: Optional[str] = Query(None, description="Shortcut: NIFTY/BANKNIFTY/FINNIFTY")
+):
+    try:
+        if symbol:
+            sym = symbol.upper()
+            if sym not in IDX_MAP:
+                fail("Unknown symbol; use NIFTY/BANKNIFTY/FINNIFTY")
+            under_security_id = IDX_MAP[sym]["under_security_id"]
+            under_exchange_segment = IDX_MAP[sym]["under_exchange_segment"]
+
+        if not under_security_id or not under_exchange_segment:
+            fail("under_security_id & under_exchange_segment required")
+
+        data = dhan.expiry_list(
+            under_security_id=under_security_id,
+            under_exchange_segment=under_exchange_segment
+        )
+        return ok(data)
+    except Exception as e:
+        fail(f"expirylist error: {e}", 502)
+
+@app.get("/optionchain")
+def option_chain(
+    under_security_id: Optional[str] = Query(None),
+    under_exchange_segment: Optional[str] = Query(None),
+    expiry_code: str = Query(...),
+    symbol: Optional[str] = Query(None)
+):
+    try:
+        if symbol:
+            sym = symbol.upper()
+            if sym not in IDX_MAP:
+                fail("Unknown symbol; use NIFTY/BANKNIFTY/FINNIFTY")
+            under_security_id = IDX_MAP[sym]["under_security_id"]
+            under_exchange_segment = IDX_MAP[sym]["under_exchange_segment"]
+
+        if not under_security_id or not under_exchange_segment:
+            fail("under_security_id & under_exchange_segment required")
+
+        data = dhan.option_chain(
+            under_security_id=under_security_id,
+            under_exchange_segment=under_exchange_segment,
+            expiry_code=expiry_code
+        )
+        return ok(data)
+    except Exception as e:
+        fail(f"optionchain error: {e}", 502)
+
+# --------- Orders ----------
+@app.post("/orders/place")
+def orders_place(req: PlaceOrderReq):
+    try:
+        res = dhan.place_order(
+            security_id=req.security_id,
+            exchange_segment=req.exchange_segment,
+            transaction_type=req.transaction_type,
+            quantity=req.quantity,
+            order_type=req.order_type,
+            product_type=req.product_type,
+            price=req.price or 0,
+            trigger_price=req.trigger_price or 0,
+            validity=req.validity,
+            link_id=req.link_id
+        )
+        return ok(res)
+    except Exception as e:
+        fail(f"place_order error: {e}", 502)
+
+@app.post("/orders/modify")
+def orders_modify(req: ModifyOrderReq):
+    try:
+        res = dhan.modify_order(
+            order_id=req.order_id,
+            order_type=req.order_type,
+            leg_name=req.leg_name,
+            quantity=req.quantity,
+            price=req.price,
+            trigger_price=req.trigger_price,
+            disclosed_quantity=req.disclosed_quantity
+        )
+        return ok(res)
+    except Exception as e:
+        fail(f"modify_order error: {e}", 502)
+
+@app.post("/orders/cancel")
+def orders_cancel(order_id: str = Body(..., embed=True)):
+    try:
+        res = dhan.cancel_order(order_id)
+        return ok(res)
+    except Exception as e:
+        fail(f"cancel_order error: {e}", 502)
 
 @app.get("/orders/{order_id}")
 def order_by_id(order_id: str):
     try:
-        d = dhan_client()
-        return ok(d.get_order_by_id(order_id))
+        res = dhan.get_order_by_id(order_id)
+        return ok(res)
     except Exception as e:
-        return err(e)
+        fail(f"get_order_by_id error: {e}", 502)
 
-@app.post("/orders/place")
-def place_order(req: PlaceOrderReq):
+@app.get("/orders")
+def order_list():
     try:
-        d = dhan_client()
-        resp = d.place_order(**req.model_dump(exclude_none=True))
-        return ok(resp)
+        res = dhan.get_order_list()
+        return ok(res)
     except Exception as e:
-        return err(e)
+        fail(f"get_order_list error: {e}", 502)
 
-@app.post("/orders/modify")
-def modify_order(req: ModifyOrderReq):
-    try:
-        d = dhan_client()
-        resp = d.modify_order(**req.model_dump(exclude_none=True))
-        return ok(resp)
-    except Exception as e:
-        return err(e)
-
-@app.post("/orders/cancel")
-def cancel_order(order_id: str = Body(..., embed=True)):
-    try:
-        d = dhan_client()
-        return ok(d.cancel_order(order_id))
-    except Exception as e:
-        return err(e)
-
-# ---------- Trades ----------
 @app.get("/tradebook/{order_id}")
-def trade_book(order_id: str):
+def tradebook(order_id: str):
     try:
-        d = dhan_client()
-        return ok(d.get_trade_book(order_id))
+        res = dhan.get_trade_book(order_id)
+        return ok(res)
     except Exception as e:
-        return err(e)
+        fail(f"tradebook error: {e}", 502)
 
 @app.get("/tradehistory")
-def trade_history(
-    from_date: str = Query(..., description="YYYY-MM-DD"),
-    to_date: str = Query(..., description="YYYY-MM-DD"),
-    page_number: int = Query(0)
-):
+def tradehistory(from_date: Optional[str] = None, to_date: Optional[str] = None, page_number: int = 0):
     try:
-        d = dhan_client()
-        return ok(d.get_trade_history(from_date, to_date, page_number))
+        res = dhan.get_trade_history(from_date or "", to_date or "", page_number)
+        return ok(res)
     except Exception as e:
-        return err(e)
+        fail(f"tradehistory error: {e}", 502)
 
-# ---------- Portfolio ----------
+# --------- Portfolio / Funds ----------
 @app.get("/positions")
 def positions():
     try:
-        d = dhan_client()
-        return ok(d.get_positions())
+        res = dhan.get_positions()
+        return ok(res)
     except Exception as e:
-        return err(e)
+        fail(f"positions error: {e}", 502)
 
 @app.get("/holdings")
 def holdings():
     try:
-        d = dhan_client()
-        return ok(d.get_holdings())
+        res = dhan.get_holdings()
+        return ok(res)
     except Exception as e:
-        return err(e)
+        fail(f"holdings error: {e}", 502)
 
 @app.get("/funds")
 def funds():
     try:
-        d = dhan_client()
-        return ok(d.get_fund_limits())
+        res = dhan.get_fund_limits()
+        return ok(res)
     except Exception as e:
-        return err(e)
+        fail(f"funds error: {e}", 502)
 
-# ---------- Historical / Intraday ----------
-@app.get("/charts/intraday")
-def intraday_minute_data(
-    security_id: str = Query(...),
-    exchange_segment: str = Query(...),
-    instrument_type: str = Query(...),
-    interval: Optional[int] = Query(1, description="minute interval supported by API"),
-    from_date: Optional[str] = Query(None, description="YYYY-MM-DD HH:MM"),
-    to_date: Optional[str] = Query(None, description="YYYY-MM-DD HH:MM"),
-):
-    try:
-        d = dhan_client()
-        data = d.intraday_minute_data(
-            security_id=security_id,
-            exchange_segment=exchange_segment,
-            instrument_type=instrument_type
-        )
-        # SDK returns full set; client can filter for interval/time as needed
-        return ok({"raw": data, "note": "Filter by interval/from/to on client if needed"})
-    except Exception as e:
-        return err(e)
-
-@app.get("/charts/historical")
-def historical_daily_data(
-    security_id: str = Query(...),
-    exchange_segment: str = Query(...),
-    instrument_type: str = Query(...),
-    expiry_code: Optional[str] = Query(None),
-    from_date: str = Query(..., description="YYYY-MM-DD"),
-    to_date: str = Query(..., description="YYYY-MM-DD"),
-):
-    try:
-        d = dhan_client()
-        data = d.historical_daily_data(
-            security_id=security_id,
-            exchange_segment=exchange_segment,
-            instrument_type=instrument_type,
-            expiry_code=expiry_code,
-            from_date=from_date,
-            to_date=to_date,
-        )
-        return ok(data)
-    except Exception as e:
-        return err(e)
-
-# ---------- Forever Orders ----------
+# --------- Forever Orders ----------
 @app.post("/forever/place")
 def forever_place(req: ForeverOrderReq):
     try:
-        d = dhan_client()
-        return ok(d.place_forever(**req.model_dump()))
+        res = dhan.place_forever(
+            security_id=req.security_id,
+            exchange_segment=req.exchange_segment,
+            transaction_type=req.transaction_type,
+            product_type=req.product_type,
+            product=req.product,
+            quantity=req.quantity,
+            price=req.price,
+            trigger_price=req.trigger_price,
+            remarks=req.remarks
+        )
+        return ok(res)
     except Exception as e:
-        return err(e)
+        fail(f"forever_place error: {e}", 502)
 
 @app.post("/forever/modify")
-def forever_modify(
-    order_id: str = Body(...),
-    price: float = Body(...),
-    trigger_price: float = Body(...)
-):
+def forever_modify(order_id: str = Body(...), price: float = Body(...), trigger_price: float = Body(...)):
     try:
-        d = dhan_client()
-        return ok(d.modify_forever(order_id, price, trigger_price))
+        res = dhan.modify_forever(order_id=order_id, price=price, trigger_price=trigger_price)
+        return ok(res)
     except Exception as e:
-        return err(e)
+        fail(f"forever_modify error: {e}", 502)
 
 @app.post("/forever/cancel")
 def forever_cancel(order_id: str = Body(..., embed=True)):
     try:
-        d = dhan_client()
-        return ok(d.cancel_forever(order_id))
+        res = dhan.cancel_forever(order_id)
+        return ok(res)
     except Exception as e:
-        return err(e)
+        fail(f"forever_cancel error: {e}", 502)
 
-# ---------- eDIS ----------
+# --------- eDIS / TPIN ----------
 @app.post("/edis/generate_tpin")
 def edis_generate_tpin():
     try:
-        d = dhan_client()
-        return ok(d.generate_tpin())
+        res = dhan.generate_tpin()
+        return ok(res)
     except Exception as e:
-        return err(e)
+        fail(f"generate_tpin error: {e}", 502)
+
+class OpenTPINReq(BaseModel):
+    isin: str
+    qty: int = 1
+    exchange: str = "NSE"
 
 @app.post("/edis/open_browser_for_tpin")
-def edis_open_browser_for_tpin(isin: str = Body(...), qty: int = Body(1), exchange: str = Body("NSE")):
+def edis_open_browser_for_tpin(req: OpenTPINReq):
     try:
-        d = dhan_client()
-        return ok(d.open_browser_for_tpin(isin=isin, qty=qty, exchange=exchange))
+        res = dhan.open_browser_for_tpin(isin=req.isin, qty=req.qty, exchange=req.exchange)
+        return ok(res)
     except Exception as e:
-        return err(e)
+        fail(f"open_browser_for_tpin error: {e}", 502)
 
 @app.get("/edis/inquiry")
 def edis_inquiry():
     try:
-        d = dhan_client()
-        return ok(d.edis_inquiry())
+        res = dhan.edis_inquiry()
+        return ok(res)
     except Exception as e:
-        return err(e)
+        fail(f"edis_inquiry error: {e}", 502)
 
-# ---------- Marketfeed placeholders (WS handled client-side) ----------
-@app.get("/marketfeed/ping")
-def marketfeed_ping():
-    return ok({"ws": "Use client-side dhanhq.marketfeed to connect to live feed WS."})
-
-# ---------- Generic executor (power-user) ----------
-class ExecReq(BaseModel):
-    method: str
-    args: Dict[str, Any] = {}
-
+# --------- Utility: exec a minimal SDK method by name (for debugging only) ----------
 @app.post("/dhan/exec")
-def dhan_exec(req: ExecReq):
+def dhan_exec(method: str = Body(...), payload: Dict[str, Any] = Body(default={})):
     """
-    Call any dhanhq SDK method dynamically:
-    POST /dhan/exec { "method": "fetch_security_list", "args": {"mode": "compact"} }
+    Dangerous in prod; keep it for quick checks. Calls dhan.<method>(**payload).
     """
     try:
-        d = dhan_client()
-        if not hasattr(d, req.method):
-            return {"status": "error", "error": f"Method {req.method} not found on sdk"}
-        fn = getattr(d, req.method)
-        out = fn(**req.args) if isinstance(req.args, dict) else fn(req.args)
-        # ensure JSON serializable
-        try:
-            json.dumps(out)
-            return ok(out)
-        except TypeError:
-            return ok({"repr": repr(out)})
+        fn = getattr(dhan, method)
+        res = fn(**payload) if payload else fn()
+        return ok({"method": method, "result": res})
     except Exception as e:
-        return err(e, called=req.method, args=req.args)
-
-# ---------- Self test ----------
-@app.get("/__selftest")
-def __selftest():
-    res = {
-        "ok": True,
-        "status": {
-            "env": bool(DHAN_ACCESS_TOKEN or DHAN_CLIENT_ID),
-            "mode": "LIVE",
-            "token_present": bool(DHAN_ACCESS_TOKEN),
-            "client_id_present": bool(DHAN_CLIENT_ID),
-        }
-    }
-    # Try a small sample call if possible
-    try:
-        d = dhan_client()
-        sample = d.expiry_list(under_security_id="13", under_exchange_segment="IDX_I")
-    except Exception as e:
-        sample = {"status": "error", "error": str(e)}
-    res["sample_expirylist"] = sample
-    return res
+        fail(f"dhan_exec error: {e}", 500)
