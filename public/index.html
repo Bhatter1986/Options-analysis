@@ -1,376 +1,483 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Option Analysis • Trading Room</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AI Options Strategy Builder</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"/>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet"/>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script>
   <style>
-    :root{ --bg:#0f172a;--card:#111827;--muted:#94a3b8;--accent:#3b82f6;--ok:#10b981;--bad:#ef4444;}
-    body{background:#0b1220;color:#e5e7eb}
-    .hero{background:linear-gradient(135deg,#111827,#0f172a);}
-    .chip{background:#0f172a;border:1px solid #1f2937;color:#cbd5e1;border-radius:999px;padding:.25rem .6rem;font-size:.8rem}
-    .card{background:#0f172a;border:1px solid #1f2937}
-    .card-header{background:#0f172a;border-bottom:1px solid #1f2937}
-    .stat .label{color:#94a3b8;font-size:.8rem}
-    .stat .value{font-weight:700;font-size:1.25rem}
-    .badge-dot{display:inline-flex;align-items:center;gap:.4rem}
-    .dot{width:.55rem;height:.55rem;border-radius:50%}
-    .table thead th{position:sticky;top:0;background:#0f172a;border-bottom:1px solid #1f2937}
-    .call{background:rgba(16,185,129,.08)}
-    .put{background:rgba(239,68,68,.08)}
-    a.btn-icon{border:1px solid #1f2937}
-    .nav-tabs .nav-link{color:#9fb0c7}
-    .nav-tabs .nav-link.active{color:#fff;background:transparent;border-bottom:2px solid var(--accent)}
+    :root {
+      --bg:#0b1220; --panel:#121a2c; --panel-2:#0f172a; --text:#e2e8f0; --muted:#94a3b8;
+      --accent:#3b82f6; --good:#22c55e; --bad:#ef4444; --border:#23324a;
+    }
+    html,body{height:100%;}
+    body{background:var(--bg);color:var(--text);}
+    .topbar{background:linear-gradient(90deg,#0b1220,#0e1627); border-bottom:1px solid var(--border);}
+    .brand{font-weight:700;font-size:1.2rem}
+    .badge-live{background:var(--good); color:#05240d; font-weight:700}
+    .card{background:var(--panel); border:1px solid var(--border)}
+    .card-header{background:var(--panel-2); border-bottom:1px solid var(--border)}
+    .stat .value{font-size:1.35rem; font-weight:700; color:#cfe3ff}
+    .nav-tabs .nav-link{color:var(--muted); border:none;}
+    .nav-tabs .nav-link.active{color:var(--accent); border-bottom:2px solid var(--accent); background:transparent}
+    .table thead th{border-bottom:1px solid var(--border); color:#bcd0ff}
+    .table td, .table th{border-color:var(--border); color:var(--text)}
+    .bg-call{background:rgba(34,197,94,.08)}
+    .bg-put{background:rgba(239,68,68,.08)}
+    .sticky-sidebar{position:sticky; top:16px}
+    .pill{border:1px solid var(--border); background:var(--panel-2); color:#cbd5e1; border-radius:999px; padding:2px 10px; margin-right:6px; cursor:pointer}
+    .pill.active{border-color:var(--accent); color:#fff}
+    .small-muted{color:var(--muted); font-size:.85rem}
   </style>
 </head>
 <body>
-
-  <!-- Top bar -->
-  <div class="hero py-3 border-bottom border-secondary-subtle">
-    <div class="container d-flex flex-wrap align-items-center justify-content-between gap-3">
-      <div>
-        <h4 class="m-0">Trading Room — Option Analysis</h4>
-        <div class="mt-2 d-flex flex-wrap gap-2">
-          <span class="chip"><i class="bi bi-graph-up me-1"></i>Dhan v2</span>
-          <span id="chip_env" class="chip"><i class="bi bi-cloud me-1"></i>—</span>
-          <span id="chip_mode" class="chip"><i class="bi bi-sliders me-1"></i>—</span>
-        </div>
+  <!-- TOP BAR -->
+  <div class="topbar py-2">
+    <div class="container-fluid d-flex align-items-center justify-content-between">
+      <div class="d-flex align-items-center gap-3">
+        <div class="brand"><i class="bi bi-robot"></i> AI Options Strategy Builder</div>
+        <span id="brokerChip" class="badge badge-live">LIVE</span>
+        <span id="modeChip" class="pill">MODE: LIVE</span>
+        <span id="apiChip" class="pill">Dhan v2</span>
       </div>
       <div class="d-flex align-items-center gap-2">
-        <span id="market_flag" class="badge-dot"><span class="dot" style="background:var(--ok)"></span><span>Live</span></span>
-        <a id="btn_refresh" class="btn btn-sm btn-light btn-icon" title="Refresh"><i class="bi bi-arrow-clockwise"></i></a>
-        <a class="btn btn-sm btn-light btn-icon" href="?api=prod" title="Use PROD"><i class="bi bi-cloud-check"></i></a>
-        <a class="btn btn-sm btn-light btn-icon" href="?api=dev" title="Use Local DEV"><i class="bi bi-pc-display"></i></a>
+        <span id="clock" class="small-muted me-2"></span>
+        <a class="btn btn-sm btn-outline-light" href="#settings" data-bs-toggle="tab"><i class="bi bi-gear"></i></a>
       </div>
     </div>
   </div>
 
-  <div class="container py-3">
-    <!-- Tabs: Option + Settings -->
-    <ul class="nav nav-tabs mb-3" role="tablist">
-      <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#option" type="button">Option Analysis</button></li>
-      <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#settings" type="button">Settings</button></li>
-    </ul>
+  <div class="container-fluid mt-3">
+    <div class="row g-3">
+      <!-- SIDEBAR -->
+      <aside class="col-lg-3">
+        <div class="sticky-sidebar">
+          <div class="card mb-3">
+            <div class="card-header fw-semibold">Connection Status</div>
+            <div class="card-body">
+              <div class="d-flex justify-content-between"><span>Broker</span><span id="status-conn" class="text-success">Connected</span></div>
+              <div class="d-flex justify-content-between"><span>Token</span><span id="status-token" class="text-success">present</span></div>
+              <div class="d-flex justify-content-between"><span>Client ID</span><span id="status-cid" class="text-success">present</span></div>
+              <div class="d-flex justify-content-between"><span>OpenAI</span><span id="status-openai" class="text-success">present</span></div>
+            </div>
+          </div>
 
-    <div class="tab-content">
-      <!-- OPTION ANALYSIS -->
-      <div class="tab-pane fade show active" id="option">
-        <!-- Controls + Broker -->
-        <div class="row g-4">
-          <div class="col-lg-8">
-            <div class="card">
-              <div class="card-header d-flex justify-content-between align-items-center">
-                <span>Controls</span>
-                <div class="d-flex align-items-center gap-2">
-                  <button id="btn_fetch" class="btn btn-primary btn-sm"><i class="bi bi-lightning-charge"></i> Fetch Option Chain</button>
-                  <button id="btn_clear" class="btn btn-outline-light btn-sm">Clear</button>
-                </div>
+          <div class="card mb-3">
+            <div class="card-header fw-semibold">Watchlists</div>
+            <div class="card-body">
+              <div class="mb-2 small-muted">Indices</div>
+              <div id="wl-indices" class="mb-3"></div>
+              <div class="mb-2 small-muted">Stocks</div>
+              <div id="wl-stocks"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header fw-semibold">Quick Stats</div>
+            <div class="card-body">
+              <div class="stat mb-3">
+                <div class="small-muted">Spot</div><div id="stat-spot" class="value">—</div>
+              </div>
+              <div class="stat mb-3">
+                <div class="small-muted">Put/Call Ratio</div><div id="stat-pcr" class="value">—</div>
+              </div>
+              <div class="stat mb-0">
+                <div class="small-muted">Avg. IV</div><div id="stat-iv" class="value">—</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- MAIN -->
+      <main class="col-lg-9">
+        <ul class="nav nav-tabs" id="mainTabs" role="tablist">
+          <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#realtime" type="button">Real-time Market Data</button></li>
+          <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#dashboard" type="button">Dashboard</button></li>
+          <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#strategy" type="button">Strategy Builder</button></li>
+          <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#expiry" type="button">Expiry Analysis</button></li>
+          <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#ai" type="button">AI Recommendations</button></li>
+          <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#portfolio" type="button">Portfolio</button></li>
+          <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#settings" type="button">Settings</button></li>
+        </ul>
+
+        <div class="tab-content mt-3">
+          <!-- REAL-TIME -->
+          <section id="realtime" class="tab-pane fade show active">
+            <div class="card mb-3">
+              <div class="card-header d-flex align-items-center justify-content-between">
+                <div class="fw-semibold">Controls</div>
+                <div class="small-muted">Market <span id="mkt-dot" class="text-success">Open</span></div>
               </div>
               <div class="card-body">
-                <div class="row g-3">
-                  <div class="col-md-5">
-                    <label class="form-label">Symbol (Indices + EQ)</label>
-                    <select id="symbolSelect" class="form-select">
-                      <!-- format: under_security_id|under_exchange_segment|label|spot_exchange -->
-                      <optgroup label="Indices (NSE)">
-                        <option value="13|IDX_I|NIFTY|NSE_INDEX">NIFTY 50</option>
-                        <option value="25|IDX_I|BANKNIFTY|NSE_INDEX" selected>BANKNIFTY</option>
-                        <option value="27|IDX_I|FINNIFTY|NSE_INDEX">FINNIFTY</option>
-                        <option value="48|IDX_I|MIDCPNIFTY|NSE_INDEX">MIDCPNIFTY</option>
-                      </optgroup>
-                      <optgroup label="Index (BSE)">
-                        <option value="1|IDX_B|SENSEX|BSE_INDEX">SENSEX</option>
-                      </optgroup>
-                      <optgroup label="Stocks (demo)">
-                        <option value="1333|NSE|HDFCBANK|NSE">HDFCBANK (EQ)</option>
-                      </optgroup>
+                <div class="row g-2">
+                  <div class="col-md-4">
+                    <label class="small-muted mb-1">Symbol</label>
+                    <select id="sym" class="form-select">
+                      <option value="NSE:NIFTY|13|IDX_I">NIFTY</option>
+                      <option value="NSE:BANKNIFTY|25|IDX_I">BANKNIFTY</option>
+                      <option value="NSE:HDFCBANK|1333|NSE_EQ">HDFCBANK</option>
                     </select>
                   </div>
                   <div class="col-md-4">
-                    <label class="form-label">Expiry</label>
-                    <select id="expirySelect" class="form-select"><option value="">Loading…</option></select>
+                    <label class="small-muted mb-1">Expiry</label>
+                    <select id="expiry" class="form-select"><option>Loading…</option></select>
                   </div>
-                  <div class="col-md-3">
-                    <label class="form-label">Strikes window</label>
-                    <select id="strikeWin" class="form-select">
-                      <option value="10" selected>±10</option>
-                      <option value="20">±20</option>
-                      <option value="30">±30</option>
+                  <div class="col-md-4 d-flex align-items-end gap-2">
+                    <select id="strikeWindow" class="form-select">
+                      <option value="10">±10</option><option value="20">±20</option><option value="40">±40</option>
                     </select>
+                    <button id="btnFetch" class="btn btn-primary"><i class="bi bi-lightning-charge"></i> Fetch Option Chain</button>
+                    <button id="btnRefresh" class="btn btn-outline-light"><i class="bi bi-arrow-repeat"></i></button>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
 
-          <!-- Broker status -->
-          <div class="col-lg-4">
-            <div class="card h-100">
-              <div class="card-header">Broker Status</div>
-              <div class="card-body">
-                <div class="d-flex flex-column gap-2">
-                  <div class="d-flex justify-content-between"><span class="text-secondary">Connection</span><span id="br_conn" class="badge text-bg-success">Connected</span></div>
-                  <div class="d-flex justify-content-between"><span class="text-secondary">Token</span><span id="br_token" class="badge text-bg-secondary">—</span></div>
-                  <div class="d-flex justify-content-between"><span class="text-secondary">Client ID</span><span id="br_client" class="badge text-bg-secondary">—</span></div>
+            <div class="row g-3">
+              <div class="col-lg-8">
+                <div class="card mb-3">
+                  <div class="card-header">TradingView Live Chart</div>
+                  <div class="card-body">
+                    <div id="tv_container" style="height:420px"></div>
+                  </div>
+                </div>
+
+                <div class="card">
+                  <div class="card-header d-flex align-items-center justify-content-between">
+                    <span>Option Chain</span>
+                    <small class="small-muted" id="ocMeta">—</small>
+                  </div>
+                  <div class="card-body">
+                    <div class="table-responsive">
+                      <table class="table table-sm table-hover">
+                        <thead>
+                          <tr>
+                            <th colspan="6" class="text-center">CALLS</th>
+                            <th class="text-center">Strike</th>
+                            <th colspan="6" class="text-center">PUTS</th>
+                          </tr>
+                          <tr>
+                            <th>OI</th><th>ΔOI</th><th>Vol</th><th>IV</th><th>LTP</th><th>Δ</th>
+                            <th></th>
+                            <th>Δ</th><th>LTP</th><th>IV</th><th>Vol</th><th>ΔOI</th><th>OI</th>
+                          </tr>
+                        </thead>
+                        <tbody id="ocBody"><tr><td colspan="13" class="text-center small-muted">No data yet.</td></tr></tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="col-lg-4">
+                <div class="card mb-3">
+                  <div class="card-header">Top OI (Calls / Puts)</div>
+                  <div class="card-body">
+                    <canvas id="oiChart" height="200"></canvas>
+                  </div>
+                </div>
+                <div class="card mb-3">
+                  <div class="card-header">Volume (Top Strikes)</div>
+                  <div class="card-body">
+                    <canvas id="volChart" height="200"></canvas>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-header">AI</div>
+                  <div class="card-body d-grid gap-2">
+                    <button id="btnAIView" class="btn btn-outline-light"><i class="bi bi-stars"></i> Market View</button>
+                    <button id="btnAIStrat" class="btn btn-outline-light"><i class="bi bi-diagram-3"></i> Build Strategy</button>
+                    <button id="btnAIPayoff" class="btn btn-outline-light"><i class="bi bi-graph-up"></i> Payoff</button>
+                    <div id="aiOut" class="small-muted"></div>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        </div>
+          </section>
 
-        <!-- Stats -->
-        <div class="row g-4 mt-1">
-          <div class="col-md-3"><div class="card stat"><div class="card-body"><div class="label">Spot</div><div id="spotPrice" class="value">—</div></div></div></div>
-          <div class="col-md-3"><div class="card stat"><div class="card-body"><div class="label">OI Change</div><div id="oiChange" class="value">—</div></div></div></div>
-          <div class="col-md-3"><div class="card stat"><div class="card-body"><div class="label">Put/Call Ratio</div><div id="pcrValue" class="value">—</div></div></div></div>
-          <div class="col-md-3"><div class="card stat"><div class="card-body"><div class="label">Avg. IV</div><div id="ivValue" class="value">—</div></div></div></div>
-        </div>
-
-        <!-- Charts -->
-        <div class="row g-4 mt-1">
-          <div class="col-lg-6"><div class="card"><div class="card-header">Open Interest (Top Strikes)</div><div class="card-body"><canvas id="oiChart" height="220"></canvas></div></div></div>
-          <div class="col-lg-6"><div class="card"><div class="card-header">Volume (Top Strikes)</div><div class="card-body"><canvas id="volChart" height="220"></canvas></div></div></div>
-        </div>
-
-        <!-- Option Chain Table -->
-        <div class="card mt-4">
-          <div class="card-header d-flex justify-content-between align-items-center">
-            <span id="oc_title">Option Chain</span>
-            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="autoToggle" checked>
-              <label class="form-check-label" for="autoToggle">Auto refresh (30s)</label></div>
-          </div>
-          <div class="card-body">
-            <div class="table-responsive" style="max-height:420px">
-              <table class="table table-sm table-hover align-middle" id="oc_table">
-                <thead>
-                  <tr><th colspan="6" class="text-center">CALLS</th><th class="text-center">Strike</th><th colspan="6" class="text-center">PUTS</th></tr>
-                  <tr class="text-secondary"><th>OI</th><th>ΔOI</th><th>Vol</th><th>IV</th><th>LTP</th><th>Δ</th><th></th><th>Δ</th><th>LTP</th><th>IV</th><th>Vol</th><th>ΔOI</th><th>OI</th></tr>
-                </thead>
-                <tbody id="oc_body"><tr><td colspan="13" class="text-center text-secondary py-4">No data</td></tr></tbody>
-              </table>
+          <!-- DASHBOARD (summary) -->
+          <section id="dashboard" class="tab-pane fade">
+            <div class="row g-3">
+              <div class="col-md-3"><div class="card stat p-3"><div class="small-muted">Spot</div><div id="d-spot" class="value">—</div></div></div>
+              <div class="col-md-3"><div class="card stat p-3"><div class="small-muted">OI Change</div><div id="d-oichg" class="value">—</div></div></div>
+              <div class="col-md-3"><div class="card stat p-3"><div class="small-muted">PCR</div><div id="d-pcr" class="value">—</div></div></div>
+              <div class="col-md-3"><div class="card stat p-3"><div class="small-muted">Avg. IV</div><div id="d-iv" class="value">—</div></div></div>
             </div>
-          </div>
-        </div>
-      </div>
+          </section>
 
-      <!-- SETTINGS -->
-      <div class="tab-pane fade" id="settings">
-        <div class="row g-4">
-          <div class="col-lg-6">
-            <div class="card"><div class="card-header">API & Env</div>
-              <div class="card-body">
-                <div class="mb-3">
-                  <label class="form-label">Backend Base URL</label>
-                  <input id="inp_baseurl" type="text" class="form-control" placeholder="https://options-analysis.onrender.com">
-                  <small class="text-secondary">?api=prod / ?api=dev se bhi switch kar sakte ho</small>
+          <!-- STRATEGY -->
+          <section id="strategy" class="tab-pane fade">
+            <div class="card">
+              <div class="card-header">Strategy Builder</div>
+              <div class="card-body row g-3">
+                <div class="col-md-3">
+                  <label class="small-muted mb-1">Bias</label>
+                  <select id="bias" class="form-select">
+                    <option>Bullish</option><option>Bearish</option><option>Neutral</option>
+                  </select>
                 </div>
-                <div class="mb-3">
-                  <label class="form-label">AI Webhook Secret (header: X-Webhook-Secret)</label>
-                  <input id="inp_secret" type="password" class="form-control" placeholder="your-secret">
+                <div class="col-md-3">
+                  <label class="small-muted mb-1">Risk</label>
+                  <select id="risk" class="form-select">
+                    <option>Conservative</option><option>Moderate</option><option>Aggressive</option>
+                  </select>
                 </div>
-                <div class="mb-3">
-                  <label class="form-label">Auto Refresh (seconds)</label>
-                  <input id="inp_autoref" type="number" min="5" class="form-control" value="30">
+                <div class="col-md-3">
+                  <label class="small-muted mb-1">Capital (₹)</label>
+                  <input id="capital" class="form-control" type="number" value="50000"/>
                 </div>
-                <button id="btn_save_settings" class="btn btn-primary">Save Settings</button>
+                <div class="col-md-3 d-flex align-items-end">
+                  <button id="buildStrat" class="btn btn-primary w-100"><i class="bi bi-magic"></i> Build</button>
+                </div>
+                <div class="col-12">
+                  <pre id="stratOut" class="small-muted mb-0">—</pre>
+                </div>
               </div>
             </div>
-          </div>
+          </section>
 
-          <div class="col-lg-6">
-            <div class="card"><div class="card-header">Theme</div>
+          <!-- EXPIRY -->
+          <section id="expiry" class="tab-pane fade">
+            <div class="card">
+              <div class="card-header">Expiry Analysis</div>
               <div class="card-body">
-                <p class="text-secondary m-0">Dark theme enabled by default (this UI). Light theme optional aage add kar sakte hain.</p>
+                <pre id="expiryOut" class="small-muted mb-0">—</pre>
               </div>
             </div>
-          </div>
+          </section>
+
+          <!-- AI RECOMMENDATIONS -->
+          <section id="ai" class="tab-pane fade">
+            <div class="card">
+              <div class="card-header">AI Recommendations</div>
+              <div class="card-body"><pre id="aiOnlyOut" class="small-muted mb-0">—</pre></div>
+            </div>
+          </section>
+
+          <!-- PORTFOLIO -->
+          <section id="portfolio" class="tab-pane fade">
+            <div class="card">
+              <div class="card-header">Portfolio (Demo)</div>
+              <div class="card-body"><div class="small-muted">Positions/Orders wiring aage add karenge.</div></div>
+            </div>
+          </section>
+
+          <!-- SETTINGS -->
+          <section id="settings" class="tab-pane fade">
+            <div class="card">
+              <div class="card-header">Settings</div>
+              <div class="card-body row g-3">
+                <div class="col-md-6">
+                  <label class="small-muted mb-1">API Base</label>
+                  <input id="apiBase" class="form-control" value=""/>
+                  <div class="form-text">Blank = same origin. Example: https://options-analysis.onrender.com</div>
+                </div>
+                <div class="col-md-3 d-flex align-items-end">
+                  <button id="saveSettings" class="btn btn-outline-light w-100">Save</button>
+                </div>
+              </div>
+            </div>
+          </section>
         </div>
-      </div><!-- /settings -->
+      </main>
     </div>
   </div>
 
-  <!-- === CONFIG + API helpers === -->
+  <!-- TV widget -->
   <script>
-    // base url & environment
-    const RAW_BASE_URL = "https://options-analysis.onrender.com";
-    const DEFAULT_BASE_URL = RAW_BASE_URL.replace(/\/+$/, "");
-    const API_PRESETS = { prod:"https://options-analysis.onrender.com", dev:"http://127.0.0.1:10000" };
-
-    (function resolveBaseUrl(){
-      const q = new URLSearchParams(location.search);
-      const pick = q.get("api");
-      let chosen = pick ? (API_PRESETS[pick] || pick) : localStorage.getItem("api_base");
-      if (pick) localStorage.setItem("api_base", chosen);
-      window.BASE_URL = (chosen || DEFAULT_BASE_URL).replace(/\/+$/, "");
-      console.log("[CFG] BASE_URL:", window.BASE_URL);
-    })();
-
-    const withTimeout=(p,ms=15000)=>new Promise((res,rej)=>{const t=setTimeout(()=>rej(new Error("Timeout "+ms+"ms")),ms);p.then(v=>{clearTimeout(t);res(v)}).catch(e=>{clearTimeout(t);rej(e)})});
-    async function api(path,{method="GET",params=null,body=null,headers={}}={}) {
-      const url=new URL(window.BASE_URL+path);
-      if(params) for(const [k,v] of Object.entries(params)) url.searchParams.set(k,v);
-      const opt={method,headers:{Accept:"application/json","X-Webhook-Secret":(localStorage.getItem("webhook_secret")||""),...headers}};
-      if(body){opt.headers["Content-Type"]="application/json";opt.body=JSON.stringify(body);}
-      const r=await withTimeout(fetch(url,opt)); if(!r.ok) throw new Error("HTTP "+r.status+" "+r.statusText); return r.json();
-    }
-    const apiGet=(p,params)=>api(p,{method:"GET",params}); const apiPost=(p,body)=>api(p,{method:"POST",body});
-    window.__checkBackend=async ()=>{try{const j=await apiGet("/__selftest");return{ok:true,info:j}}catch(e){return{ok:false,error:e?.message||String(e)}}};
-  </script>
-
-  <!-- === App logic === -->
-  <script>
-    const fmt = n => (n===null||n===undefined||isNaN(+n)) ? "—" : (+n).toLocaleString("en-IN");
-    const byId = id => document.getElementById(id);
-    let oiChart, volChart, timer=null;
-
-    function makeBar(el, label, labels, data){
-      const ctx = byId(el).getContext("2d");
-      if (el==="oiChart" && oiChart) oiChart.destroy();
-      if (el==="volChart" && volChart) volChart.destroy();
-      const inst = new Chart(ctx, { type:"bar", data:{labels, datasets:[{label, data}]},
-        options:{plugins:{legend:{display:false}},scales:{x:{ticks:{color:"#9aa1aa"}},y:{ticks:{color:"#9aa1aa"}}}}});
-      if (el==="oiChart") oiChart=inst; else volChart=inst;
-    }
-
-    // Map for spot index segment (Dhan LTP)
-    function mapSpotSegment(under_exchange_segment, spot_exchange_from_value){
-      // value carried in option: ...|spot_exchange
-      if (spot_exchange_from_value) return spot_exchange_from_value;
-      // fallback mapping
-      if (under_exchange_segment==="IDX_I") return "NSE_INDEX";
-      if (under_exchange_segment==="IDX_B") return "BSE_INDEX";
-      return "NSE";
-    }
-
-    async function loadExpiries(){
-      const [under_security_id, under_exchange_segment, label] = byId("symbolSelect").value.split("|");
-      byId("oc_title").textContent = `Option Chain — ${label}`;
-      const res = await apiGet("/optionchain/expirylist", { under_security_id, under_exchange_segment });
-      const list = (res?.data?.data) || [];
-      const sel = byId("expirySelect"); sel.innerHTML = "";
-      list.forEach(x => { const o=document.createElement("option"); o.value=x; o.textContent=x; sel.appendChild(o); });
-    }
-
-    async function fetchChain(){
-      const [under_security_id, under_exchange_segment, label] = byId("symbolSelect").value.split("|");
-      const expiry = byId("expirySelect").value; if(!expiry) return;
-      const res = await apiPost("/optionchain", { under_security_id:+under_security_id, under_exchange_segment, expiry });
-      const raw = res?.data?.data || {};
-      const strikes = Object.keys(raw).map(k=>+k).sort((a,b)=>a-b);
-      const win = +byId("strikeWin").value;
-
-      const tbody = byId("oc_body"); tbody.innerHTML="";
-      const ceOiTop=[], peOiTop=[], ceVol=[], peVol=[];
-      const mid = strikes[Math.floor(strikes.length/2)] || 0;
-      const minS = mid - win*50, maxS = mid + win*50;
-
-      strikes.forEach(sp=>{
-        if (sp<minS || sp>maxS) return;
-        const d=raw[sp]||{}, CE=d.CE||d.ce||{}, PE=d.PE||d.pe||{};
-        const tr=document.createElement("tr");
-        tr.innerHTML = `
-          <td class="call">${fmt(CE.oi)}</td>
-          <td class="call">${fmt(CE.previous_oi!=null ? (CE.oi-CE.previous_oi) : null)}</td>
-          <td class="call">${fmt(CE.volume)}</td>
-          <td class="call">${CE.implied_volatility!=null ? (CE.implied_volatility).toFixed(2) : "—"}</td>
-          <td class="call">${CE.last_price!=null ? "₹"+(+CE.last_price).toFixed(2) : "—"}</td>
-          <td class="call">${CE.change!=null ? (+CE.change).toFixed(2) : "—"}</td>
-          <td class="text-center fw-semibold">${fmt(sp)}</td>
-          <td class="put">${PE.change!=null ? (+PE.change).toFixed(2) : "—"}</td>
-          <td class="put">${PE.last_price!=null ? "₹"+(+PE.last_price).toFixed(2) : "—"}</td>
-          <td class="put">${PE.implied_volatility!=null ? (PE.implied_volatility).toFixed(2) : "—"}</td>
-          <td class="put">${fmt(PE.volume)}</td>
-          <td class="put">${fmt(PE.previous_oi!=null ? (PE.oi-PE.previous_oi) : null)}</td>
-          <td class="put">${fmt(PE.oi)}</td>`;
-        tbody.appendChild(tr);
-        ceOiTop.push({sp, v:+CE.oi||0}); peOiTop.push({sp, v:+PE.oi||0});
-        ceVol.push({sp, v:+CE.volume||0});  peVol.push({sp, v:+PE.volume||0});
-      });
-
-      const topN=(arr,n=10)=>arr.sort((a,b)=>b.v-a.v).slice(0,n).sort((a,b)=>a.sp-b.sp);
-      const topCe=topN(ceOiTop), topPe=topN(peOiTop);
-      const topCeV=topN(ceVol),  topPeV=topN(peVol);
-      makeBar("oiChart","OI", topCe.map(x=>x.sp).concat(topPe.map(x=>x.sp)), topCe.map(x=>x.v).concat(topPe.map(x=>x.v)));
-      makeBar("volChart","Volume", topCeV.map(x=>x.sp).concat(topPeV.map(x=>x.sp)), topCeV.map(x=>x.v).concat(topPeV.map(x=>x.v)));
-    }
-
-    async function loadSpot(){
-      const [under_security_id, under_exchange_segment, label, spot_exchange] = byId("symbolSelect").value.split("|");
-      const ex = mapSpotSegment(under_exchange_segment, spot_exchange);
-      const res = await apiGet("/marketfeed/ltp",{exchange_segment:ex,security_id:+under_security_id});
-      const ltp = res?.data?.data?.NSE_EQ?.[0]?.ltp
-               || res?.data?.data?.NSE_INDEX?.[0]?.ltp
-               || res?.data?.data?.BSE_INDEX?.[0]?.ltp
-               || res?.data?.data?.BSE_EQ?.[0]?.ltp
-               || null;
-      byId("spotPrice").textContent = (ltp!=null) ? "₹"+(+ltp).toFixed(2) : "—";
-      // placeholder quick stats (until backend provides):
-      byId("oiChange").textContent = (Math.random()>0.5?"+":"-")+(Math.random()*2).toFixed(1)+"%";
-      byId("pcrValue").textContent = (0.7+Math.random()*0.3).toFixed(2);
-      byId("ivValue").textContent = (16+Math.random()*3).toFixed(1)+"%";
-    }
-
-    async function initStatus(){
-      const st = await __checkBackend();
-      if (!st.ok){
-        byId("br_conn").className="badge text-bg-danger"; byId("br_conn").textContent="Backend error"; return;
+    const TV = {
+      render(symbol){ 
+        const container = document.getElementById('tv_container');
+        container.innerHTML = '';
+        const script = document.createElement('script');
+        script.src = "https://s3.tradingview.com/tv.js";
+        script.onload = () => {
+          new TradingView.widget({
+            symbol, interval: "15", container_id: "tv_container",
+            autosize: true, theme: "dark", hide_legend: false,
+            locale: "en", style: "1"
+          });
+        };
+        document.body.appendChild(script);
       }
-      const info = st.info?.status || {};
-      byId("chip_env").textContent = info.env || "—";
-      byId("chip_mode").textContent = "MODE: " + (info.mode || "—");
-      const tokenOk = !!info.token_present, cliOk = !!info.client_id_present;
-      byId("br_conn").className = "badge "+(tokenOk&&cliOk ? "text-bg-success":"text-bg-warning");
-      byId("br_conn").textContent = (tokenOk&&cliOk) ? "Connected" : "Partial";
-      byId("br_token").className = "badge "+(tokenOk?"text-bg-success":"text-bg-danger");
-      byId("br_token").textContent = tokenOk ? "present" : "missing";
-      byId("br_client").className = "badge "+(cliOk?"text-bg-success":"text-bg-danger");
-      byId("br_client").textContent = cliOk ? "present" : "missing";
-    }
-
-    function setAuto(){
-      const sec = +(localStorage.getItem("auto_refresh_sec")||30);
-      byId("autoToggle").checked = true;
-      if (timer){ clearInterval(timer); timer=null; }
-      timer=setInterval(()=>{ fetchChain().catch(console.error); loadSpot().catch(console.error); }, Math.max(5,sec)*1000);
-    }
-
-    // Settings load/save
-    function loadSettingsUI(){
-      byId("inp_baseurl").value = window.BASE_URL;
-      byId("inp_secret").value = localStorage.getItem("webhook_secret") || "";
-      byId("inp_autoref").value = localStorage.getItem("auto_refresh_sec") || 30;
-    }
-    byId("btn_save_settings").addEventListener("click", ()=>{
-      const base = byId("inp_baseurl").value.trim().replace(/\/+$/,"");
-      const sec  = byId("inp_secret").value;
-      const au   = +byId("inp_autoref").value || 30;
-      localStorage.setItem("api_base", base);
-      localStorage.setItem("webhook_secret", sec);
-      localStorage.setItem("auto_refresh_sec", au);
-      alert("Saved. Page will use new settings from next request.");
-      window.location.reload();
-    });
-
-    // Events
-    byId("symbolSelect").addEventListener("change", ()=> loadExpiries().then(fetchChain).then(loadSpot).catch(console.error));
-    byId("btn_fetch").addEventListener("click", ()=> fetchChain().catch(console.error));
-    byId("btn_clear").addEventListener("click", ()=> { byId("oc_body").innerHTML=`<tr><td colspan="13" class="text-center text-secondary py-4">Cleared</td></tr>`; });
-    byId("btn_refresh").addEventListener("click", ()=> { initStatus(); loadExpiries().then(fetchChain); loadSpot(); });
-
-    // Boot
-    (async function boot(){
-      loadSettingsUI();
-      await initStatus();
-      await loadExpiries();
-      await fetchChain();
-      await loadSpot();
-      setAuto();
-    })();
+    };
   </script>
 
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // ---------- Utilities ----------
+    const $ = sel => document.querySelector(sel);
+    const apiBaseInput = $('#apiBase');
+    const apiBase = () => (apiBaseInput.value || '').trim() || '';
+    const HEADERS = () => ({ 'Content-Type': 'application/json', 'X-Webhook-Secret': 'my$secret123' });
+
+    const WL_INDICES = [
+      {label:'NIFTY', val:'NSE:NIFTY|13|IDX_I'},
+      {label:'BANKNIFTY', val:'NSE:BANKNIFTY|25|IDX_I'},
+      {label:'FINNIFTY', val:'NSE:FINNIFTY|256265|IDX_I'}
+    ];
+    const WL_STOCKS = [
+      {label:'HDFCBANK', val:'NSE:HDFCBANK|1333|NSE_EQ'},
+      {label:'RELIANCE', val:'NSE:RELIANCE|180|NSE_EQ'}
+    ];
+
+    function pills(containerId, list){
+      const box = document.getElementById(containerId);
+      box.innerHTML = '';
+      list.forEach((x,i)=>{
+        const b = document.createElement('span');
+        b.className = 'pill'+(i===0?' active':'');
+        b.textContent = x.label;
+        b.onclick = ()=>{ document.querySelectorAll('#'+containerId+' .pill').forEach(p=>p.classList.remove('active'));
+          b.classList.add('active'); $('#sym').value = x.val; onSymbolChange(); };
+        box.appendChild(b);
+      });
+    }
+
+    // ---------- Clock ----------
+    setInterval(()=>$('#clock').textContent = new Date().toLocaleTimeString(), 1000);
+
+    // ---------- Charts ----------
+    let oiChart, volChart;
+    function buildCharts(){
+      const oiCtx = document.getElementById('oiChart');
+      const volCtx = document.getElementById('volChart');
+      oiChart = new Chart(oiCtx,{type:'bar',data:{labels:[],datasets:[{label:'Calls',data:[]},{label:'Puts',data:[]}]},options:{responsive:true}});
+      volChart = new Chart(volCtx,{type:'bar',data:{labels:[],datasets:[{label:'Volume',data:[]} ]},options:{responsive:true}});
+    }
+
+    // ---------- API helpers ----------
+    async function jget(path){
+      const url = (apiBase()? apiBase(): '') + path;
+      const r = await fetch(url, {headers: HEADERS()});
+      if(!r.ok) throw new Error(await r.text());
+      return r.json();
+    }
+    async function jpost(path, body){
+      const url = (apiBase()? apiBase(): '') + path;
+      const r = await fetch(url, {method:'POST', headers: HEADERS(), body: JSON.stringify(body)});
+      if(!r.ok) throw new Error(await r.text());
+      return r.json();
+    }
+
+    // ---------- Wiring ----------
+    async function selftest(){
+      const s = await jget('/__selftest');
+      $('#status-openai').textContent = s.status?.openai_present ? 'present' : '—';
+      $('#modeChip').textContent = 'MODE: ' + (s.status?.mode || 'LIVE');
+      $('#apiChip').textContent = 'Dhan v2';
+    }
+
+    async function brokerStatus(){
+      const b = await jget('/broker_status');
+      $('#status-conn').textContent = 'Connected';
+      $('#status-token').textContent = b.token_present? 'present':'—';
+      $('#status-cid').textContent = b.client_id_present? 'present':'—';
+    }
+
+    function parseSym(){
+      const [tvSym, under_id, seg] = $('#sym').value.split('|');
+      return { tvSym, under_id, seg };
+    }
+
+    async function loadExpiry(){
+      const { under_id, seg } = parseSym();
+      const q = `/optionchain/expirylist?under_security_id=${encodeURIComponent(under_id)}&under_exchange_segment=${encodeURIComponent(seg)}`;
+      const data = await jget(q);
+      const list = data?.data?.data || data?.data || [];
+      const expSel = $('#expiry');
+      expSel.innerHTML = '';
+      list.forEach((d,i)=>{
+        const opt = document.createElement('option'); opt.value = d; opt.textContent = d; expSel.appendChild(opt);
+      });
+      $('#ocMeta').textContent = `${seg} • ${under_id}`;
+    }
+
+    async function fetchLTP(){
+      const { under_id, seg, tvSym } = parseSym();
+      // If index → use under_id as security_id for LTP; if stock, same idea
+      const q = `/marketfeed/ltp?exchange_segment=${encodeURIComponent(seg)}&security_id=${encodeURIComponent(under_id)}`;
+      const r = await jget(q);
+      const ltp = r?.data?.ltp ?? r?.ltp ?? '—';
+      $('#stat-spot').textContent = ltp;
+      $('#d-spot').textContent = ltp;
+      TV.render(tvSym);
+    }
+
+    function rowHtml(r){
+      return `<tr>
+        <td class="bg-call">${r.ce_oi??''}</td>
+        <td class="bg-call">${r.ce_oi_change??''}</td>
+        <td class="bg-call">${r.ce_volume??''}</td>
+        <td class="bg-call">${r.ce_iv??''}</td>
+        <td class="bg-call">₹${r.ce_ltp??''}</td>
+        <td class="bg-call">${r.ce_chg??''}</td>
+        <td class="text-center fw-semibold">${r.strike}</td>
+        <td class="bg-put">${r.pe_chg??''}</td>
+        <td class="bg-put">₹${r.pe_ltp??''}</td>
+        <td class="bg-put">${r.pe_iv??''}</td>
+        <td class="bg-put">${r.pe_volume??''}</td>
+        <td class="bg-put">${r.pe_oi_change??''}</td>
+        <td class="bg-put">${r.pe_oi??''}</td>
+      </tr>`;
+    }
+
+    async function fetchOC(){
+      const { under_id, seg } = parseSym();
+      const body = { under_security_id: under_id, under_exchange_segment: seg, expiry: $('#expiry').value };
+      const data = await jpost('/optionchain', body);
+      const rows = data?.rows || [];
+      $('#ocBody').innerHTML = rows.length? rows.map(rowHtml).join('') : '<tr><td colspan="13" class="text-center small-muted">No data.</td></tr>';
+      // Stats
+      $('#stat-pcr').textContent = (data?.metrics?.pcr ?? '—');
+      $('#d-pcr').textContent = (data?.metrics?.pcr ?? '—');
+      $('#stat-iv').textContent = (data?.metrics?.avg_iv ?? '—');
+      $('#d-iv').textContent = (data?.metrics?.avg_iv ?? '—');
+      // Charts
+      const labels = rows.map(r=>r.strike);
+      const ceOI = rows.map(r=>r.ce_oi||0), peOI=rows.map(r=>r.pe_oi||0), vol = rows.map(r=>(r.ce_volume||0)+(r.pe_volume||0));
+      oiChart.data.labels = labels; oiChart.data.datasets[0].data = ceOI; oiChart.data.datasets[1].data = peOI; oiChart.update();
+      volChart.data.labels = labels; volChart.data.datasets[0].data = vol; volChart.update();
+    }
+
+    // AI hooks
+    async function ai(path, payload){
+      $('#aiOut').textContent = 'Thinking…';
+      const r = await jpost(path, payload);
+      $('#aiOut').textContent = r.text || JSON.stringify(r,null,2);
+      $('#aiOnlyOut').textContent = $('#aiOut').textContent;
+    }
+
+    // Symbol change handler
+    async function onSymbolChange(){
+      await loadExpiry();
+      await fetchLTP();
+    }
+
+    // Settings
+    $('#saveSettings').onclick = () => alert('Saved. (API base used: ' + apiBase() + ')');
+
+    // Buttons
+    $('#btnFetch').onclick = fetchOC;
+    $('#btnRefresh').onclick = async ()=>{await fetchLTP(); await fetchOC();};
+    $('#sym').onchange = onSymbolChange;
+    $('#btnAIView').onclick = ()=>{ const {under_id,seg}=parseSym(); ai('/ai/marketview',{under_security_id:under_id, under_exchange_segment:seg, expiry:$('#expiry').value});};
+    $('#btnAIStrat').onclick = ()=>{ const {under_id,seg}=parseSym(); ai('/ai/strategy',{under_security_id:under_id, under_exchange_segment:seg, expiry:$('#expiry').value, bias:$('#bias').value, risk:$('#risk').value, capital:+$('#capital').value});};
+    $('#btnAIPayoff').onclick = ()=>{ const {under_id,seg}=parseSym(); ai('/ai/payoff',{under_security_id:under_id, under_exchange_segment:seg, expiry:$('#expiry').value});};
+    $('#buildStrat').onclick = $('#btnAIStrat').onclick;
+
+    // Init
+    (async function init(){
+      pills('wl-indices', WL_INDICES);
+      pills('wl-stocks', WL_STOCKS);
+      buildCharts();
+      await selftest();
+      await brokerStatus();
+      await onSymbolChange();
+    })();
+  </script>
 </body>
 </html>
