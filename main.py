@@ -1,238 +1,210 @@
 # main.py
-import os
-import json
-import datetime as dt
-from typing import Any, Dict, Optional
-
-import requests
-from fastapi import FastAPI, Query, Body
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Optional, Dict, Any
+import os, json, requests
+from dotenv import load_dotenv
 
-# -------------------------------------------------
-# Environment & constants
-# -------------------------------------------------
-MODE = os.getenv("MODE", "LIVE").upper()
-BASE_URL = os.getenv("DHAN_LIVE_BASE_URL", "https://api.dhan.co/v2").rstrip("/")
-ACCESS_TOKEN = os.getenv("DHAN_LIVE_ACCESS_TOKEN", "")
-CLIENT_ID = os.getenv("DHAN_LIVE_CLIENT_ID", "")
+load_dotenv()
+
+app = FastAPI(title="Options-analysis (Dhan v2 + AI)")
+
+# ------------------------------------------------------------
+# Environment & Config
+# ------------------------------------------------------------
+MODE = os.getenv("MODE", "LIVE").upper()  # LIVE | SANDBOX
+
+def pick(prefix: str, default: Optional[str] = None) -> Optional[str]:
+    return os.getenv(f"DHAN_{MODE}_{prefix}", default)
+
+BASE_URL = pick("BASE_URL", "https://api.dhan.co/v2").rstrip("/")
+ACCESS_TOKEN = pick("ACCESS_TOKEN", "")
+CLIENT_ID = pick("CLIENT_ID", "")
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "my$ecret123")
 
-# Quick map for common indices (adjust as you like)
-INDEX_MAP = {
-    # Dhan securityId for indices (examples)
-    "NIFTY": {"under_security_id": "13", "under_exchange_segment": "IDX_I"},
-    "BANKNIFTY": {"under_security_id": "25", "under_exchange_segment": "IDX_I"},
-    "FINNIFTY": {"under_security_id": "53", "under_exchange_segment": "IDX_I"},
-}
+SESSION = requests.Session()
+SESSION.timeout = 30
 
-# -------------------------------------------------
-# FastAPI app
-# -------------------------------------------------
-app = FastAPI(title="Options-analysis (Dhan v2 + AI)", version="2.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # tighten for prod
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# -------------------------------------------------
-# Helpers
-# -------------------------------------------------
 def dh_headers() -> Dict[str, str]:
+    """
+    Dhan v2 headers.
+    Docs: access-token + client-id
+    """
     return {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
-        "Client-Id": CLIENT_ID,
         "Content-Type": "application/json",
+        "access-token": ACCESS_TOKEN,
+        "client-id": CLIENT_ID,
     }
-
 
 def dh_post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """
-    POST to Dhan v2. path is path AFTER /v2 (e.g., 'option-chain/expiry-list')
+    Generic POST to Dhan v2.
+    path: e.g. 'option/expiry-list' or 'option/chain'
     """
     url = f"{BASE_URL}/{path.lstrip('/')}"
     try:
-        r = requests.post(url, headers=dh_headers(), json=payload, timeout=20)
-        if r.status_code == 200:
-            return {"status": "success", "data": r.json()}
-        return {
+        r = SESSION.post(url, headers=dh_headers(), data=json.dumps(payload))
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Dhan network error: {e}")
+    if r.status_code >= 400:
+        # return body for visibility
+        raise HTTPException(status_code=r.status_code, detail={
             "status": "error",
             "code": r.status_code,
             "url": url,
             "payload": payload,
-            "body": {"raw": r.text},
-        }
-    except Exception as e:
-        return {"status": "error", "exception": str(e)}
+            "body": {"raw": r.text}
+        })
+    try:
+        return r.json()
+    except ValueError:
+        return {"status": "success", "raw": r.text}
 
-
-def dh_get(path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def dh_get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
     url = f"{BASE_URL}/{path.lstrip('/')}"
     try:
-        r = requests.get(url, headers=dh_headers(), params=params or {}, timeout=20)
-        if r.status_code == 200:
-            return {"status": "success", "data": r.json()}
-        return {
+        r = SESSION.get(url, headers=dh_headers(), params=params)
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Dhan network error: {e}")
+    if r.status_code >= 400:
+        raise HTTPException(status_code=r.status_code, detail={
             "status": "error",
             "code": r.status_code,
             "url": url,
             "params": params,
-            "body": {"raw": r.text},
-        }
-    except Exception as e:
-        return {"status": "error", "exception": str(e)}
+            "body": {"raw": r.text}
+        })
+    try:
+        return r.json()
+    except ValueError:
+        return {"status": "success", "raw": r.text}
 
+# ------------------------------------------------------------
+# CORS for frontend
+# ------------------------------------------------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], allow_credentials=True,
+    allow_methods=["*"], allow_headers=["*"],
+)
 
-def ok_status() -> Dict[str, Any]:
+# ------------------------------------------------------------
+# Health & Status
+# ------------------------------------------------------------
+@app.get("/health")
+def health():
+    return {"ok": True, "app": app.title}
+
+@app.get("/broker_status")
+def broker_status():
     return {
-        "env": MODE == "LIVE",
         "mode": MODE,
         "token_present": bool(ACCESS_TOKEN),
         "client_id_present": bool(CLIENT_ID),
         "openai_present": bool(OPENAI_API_KEY),
     }
 
-# -------------------------------------------------
-# Schemas (for POST bodies)
-# -------------------------------------------------
-class ExpiryListIn(BaseModel):
-    under_security_id: str
-    under_exchange_segment: str  # e.g., IDX_I
-
-
-class OptionChainIn(ExpiryListIn):
-    expiry_date: str  # YYYY-MM-DD
-
-
-# -------------------------------------------------
-# Basic routes
-# -------------------------------------------------
-@app.get("/")
-def root(api: Optional[str] = None):
-    return {"app": app.title, "mode": MODE, "env": MODE, "endpoints": [
-        "/health",
-        "/broker_status",
-        "/marketfeed/ltp",
-        "/option-chain/expirylist",
-        "/option-chain",
-        "/ai/test",
-        "/__selftest",
-    ]}
-
-
-@app.get("/health")
-def health():
-    return {"ok": True, "ts": dt.datetime.utcnow().isoformat() + "Z"}
-
-
-@app.get("/broker_status")
-def broker_status():
-    st = ok_status()
-    return {
-        "mode": MODE,
-        "connected": st["token_present"] and st["client_id_present"],
-        "token_present": st["token_present"],
-        "client_id_present": st["client_id_present"],
-    }
-
-# -------------------------------------------------
-# Market data (examples)
-# -------------------------------------------------
+# ------------------------------------------------------------
+# Real-time Market (simple LTP helper)
+# ------------------------------------------------------------
 @app.get("/marketfeed/ltp")
-def ltp(symbol: str = Query(..., description="e.g. NSE:HDFCBANK or NSE:NIFTY 50")):
-    """
-    Example LTP via Dhan quote endpoint (adjust as per the asset).
-    For NSE stocks use security_id; for indices you might need derived price
-    or a dedicated endpoint if available.
-    This route is left generic and returns a placeholder for now.
-    """
-    # You can wire your own symbol->securityId map and call Dhan quote APIs.
-    return {"status": "todo", "hint": "Map symbol to securityId and call Dhan quote API."}
-
-# -------------------------------------------------
-# Option chain
-# -------------------------------------------------
-@app.post("/option-chain/expirylist")
-def option_chain_expiry_list(body: ExpiryListIn = Body(...)):
-    """
-    Proxy to Dhan v2: POST /v2/option-chain/expiry-list
-    body: { under_security_id, under_exchange_segment }
-    """
-    return dh_post("option-chain/expiry-list", body.dict())
-
-
-@app.post("/option-chain")
-def option_chain(body: OptionChainIn = Body(...)):
-    """
-    Proxy to Dhan v2: POST /v2/option-chain
-    body: { under_security_id, under_exchange_segment, expiry_date }
-    """
-    return dh_post("option-chain", body.dict())
-
-# -------------------------------------------------
-# Convenience GET wrappers for your UI (so you can call with query params)
-# -------------------------------------------------
-@app.get("/optionchain/expirylist")
-def expirylist_query(
-    under_security_id: str = Query(...),
-    under_exchange_segment: str = Query(...),
+def marketfeed_ltp(
+    security_id: str = Query(..., description="Dhan security id"),
+    exchange_segment: str = Query(..., description="e.g. NSE_EQ, IDX_I, NSE_FNO"),
 ):
+    """
+    Lightweight LTP endpoint. Dhan v2 marketfeed LTP/quote can vary by account;
+    if your account supports POST quote, wire it similarly here.
+    """
+    # Many users have a GET quote endpoint exposed as /marketfeed/quote
+    # If your account only supports POST, convert this to dh_post.
+    params = {"securityId": security_id, "exchangeSegment": exchange_segment}
+    return dh_get("marketfeed/quote", params)
+
+# ------------------------------------------------------------
+# Option Chain — Expiry list & Chain
+# ------------------------------------------------------------
+@app.get("/optionchain/expirylist")
+def option_expiry_list(
+    under_security_id: str = Query(..., description="Underlying security id"),
+    under_exchange_segment: str = Query(..., description="IDX_I | NSE_EQ | NSE_FNO ..."),
+):
+    """
+    Correct Dhan v2 path: POST /v2/option/expiry-list
+    """
     payload = {
         "under_security_id": under_security_id,
         "under_exchange_segment": under_exchange_segment,
     }
-    return dh_post("option-chain/expiry-list", payload)
-
+    return dh_post("option/expiry-list", payload)
 
 @app.get("/optionchain")
-def optionchain_query(
-    under_security_id: str = Query(...),
-    under_exchange_segment: str = Query(...),
-    expiry_date: str = Query(...),
+def option_chain(
+    under_security_id: str = Query(..., description="Underlying security id"),
+    under_exchange_segment: str = Query(..., description="IDX_I | NSE_EQ | NSE_FNO ..."),
+    expiry_date: str = Query(..., description="YYYY-MM-DD"),
 ):
+    """
+    Correct Dhan v2 path: POST /v2/option/chain
+    """
     payload = {
         "under_security_id": under_security_id,
         "under_exchange_segment": under_exchange_segment,
         "expiry_date": expiry_date,
     }
-    return dh_post("option-chain", payload)
+    return dh_post("option/chain", payload)
 
-# -------------------------------------------------
-# AI sample (placeholder)
-# -------------------------------------------------
-@app.post("/ai/test")
-def ai_test(prompt: Dict[str, Any]):
-    # Keep minimal to avoid background calls if OPENAI_API_KEY missing.
-    return {"ok": True, "echo": prompt, "note": "Wire OpenAI here if needed."}
-
-# -------------------------------------------------
-# Self-test: verifies hyphenated paths & envs
-# -------------------------------------------------
+# ------------------------------------------------------------
+# Self-test (helps debug from browser)
+# ------------------------------------------------------------
 @app.get("/__selftest")
-def selftest(symbol: str = "NIFTY"):
-    status = ok_status()
-    result: Dict[str, Any] = {"ok": True, "status": status}
+def selftest():
+    """
+    Quick sanity: shows env wiring + a sample expiry-list call on NIFTY (13/IDX_I).
+    Change IDs if needed.
+    """
+    status = {
+        "env": True,
+        "mode": MODE,
+        "token_present": bool(ACCESS_TOKEN),
+        "client_id_present": bool(CLIENT_ID),
+        "openai_present": bool(OPENAI_API_KEY),
+    }
+    sample = {}
+    try:
+        sample = dh_post(
+            "option/expiry-list",
+            {"under_security_id": "13", "under_exchange_segment": "IDX_I"},
+        )
+    except HTTPException as e:
+        # Return the exact error payload to help fix quickly
+        sample = e.detail if isinstance(e.detail, dict) else {"error": str(e.detail)}
+    return {"ok": True, "status": status, "sample_expirylist": sample}
 
-    # Pick mapping
-    imap = INDEX_MAP.get(symbol.upper())
-    if not imap:
-        result["sample_expirylist"] = {"status": "skip", "reason": f"Unknown symbol {symbol}"}
-        return result
+# ------------------------------------------------------------
+# Root
+# ------------------------------------------------------------
+@app.get("/")
+def root():
+    return {
+        "app": app.title,
+        "mode": MODE,
+        "env": MODE,
+        "endpoints": [
+            "/health",
+            "/broker_status",
+            "/marketfeed/ltp",
+            "/optionchain/expirylist",
+            "/optionchain",
+            "/__selftest",
+        ],
+    }
 
-    sample = dh_post("option-chain/expiry-list", imap)
-    result["sample_expirylist"] = sample
-    return result
-
-
-# -------------------------------------------------
-# Dev server
-# -------------------------------------------------
+# ------------------------------------------------------------
+# Uvicorn entrypoint (local dev)
+# ------------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "10000")))
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "8000")), reload=True)
