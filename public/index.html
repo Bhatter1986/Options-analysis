@@ -129,4 +129,222 @@
 
         <!-- Option Chain Table -->
         <div class="card mt-4">
-          <div class="card
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span id="oc_title">Option Chain</span>
+            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="autoToggle" checked>
+              <label class="form-check-label" for="autoToggle">Auto refresh (30s)</label></div>
+          </div>
+          <div class="card-body">
+            <div class="table-responsive" style="max-height:420px">
+              <table class="table table-sm table-hover align-middle" id="oc_table">
+                <thead>
+                  <tr><th colspan="6" class="text-center">CALLS</th><th class="text-center">Strike</th><th colspan="6" class="text-center">PUTS</th></tr>
+                  <tr class="text-secondary"><th>OI</th><th>ΔOI</th><th>Vol</th><th>IV</th><th>LTP</th><th>Δ</th><th></th><th>Δ</th><th>LTP</th><th>IV</th><th>Vol</th><th>ΔOI</th><th>OI</th></tr>
+                </thead>
+                <tbody id="oc_body"><tr><td colspan="13" class="text-center text-secondary py-4">No data</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STRATEGY (placeholder UI) -->
+      <div class="tab-pane fade" id="strategy">
+        <div class="card"><div class="card-header">Strategy Builder</div>
+          <div class="card-body">
+            <div class="row g-3">
+              <div class="col-md-4"><label class="form-label">Bias</label>
+                <select id="sb_bias" class="form-select"><option value="neutral" selected>Neutral</option><option value="bullish">Bullish</option><option value="bearish">Bearish</option></select></div>
+              <div class="col-md-4"><label class="form-label">Risk</label>
+                <select id="sb_risk" class="form-select"><option value="low">Low</option><option value="moderate" selected>Moderate</option><option value="high">High</option></select></div>
+              <div class="col-md-4"><label class="form-label">Capital (₹)</label><input id="sb_cap" type="number" class="form-control" value="50000"/></div>
+            </div>
+            <button id="btn_ai_strategy" class="btn btn-primary mt-3"><i class="bi bi-robot"></i> Generate AI Strategy</button>
+            <pre id="sb_out" class="mt-3 small text-secondary">Click “Generate AI Strategy”</pre>
+          </div></div>
+      </div>
+
+      <!-- EXPIRY (placeholder UI) -->
+      <div class="tab-pane fade" id="expiry">
+        <div class="card"><div class="card-header">Expiry Analysis</div>
+          <div class="card-body">
+            <p class="text-secondary m-0">Coming soon: max-pain, OI walls, time-decay modules.</p>
+          </div></div>
+      </div>
+
+      <!-- AI RECO -->
+      <div class="tab-pane fade" id="ai">
+        <div class="card"><div class="card-header">AI Recommendations</div>
+          <div class="card-body">
+            <button id="btn_ai_market" class="btn btn-outline-light"><i class="bi bi-lightbulb"></i> Get AI Market View</button>
+            <pre id="ai_market_out" class="mt-3 small text-secondary">Click for AI market insight…</pre>
+            <hr/>
+            <button id="btn_ai_payoff" class="btn btn-outline-light"><i class="bi bi-graph-up"></i> Get AI Payoff</button>
+            <pre id="ai_payoff_out" class="mt-3 small text-secondary">Click for payoff points…</pre>
+          </div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- === CONFIG + API helpers === -->
+  <script>
+    const RAW_BASE_URL = "https://options-analysis.onrender.com";
+    const DEFAULT_BASE_URL = RAW_BASE_URL.replace(/\/+$/, "");
+    const API_PRESETS = { prod:"https://options-analysis.onrender.com", dev:"http://127.0.0.1:10000" };
+    (function resolveBaseUrl(){
+      const q = new URLSearchParams(location.search);
+      const pick = q.get("api");
+      let chosen = pick ? (API_PRESETS[pick] || pick) : localStorage.getItem("api_base");
+      if (pick) localStorage.setItem("api_base", chosen);
+      window.BASE_URL = (chosen || DEFAULT_BASE_URL).replace(/\/+$/, "");
+      console.log("[CFG] BASE_URL:", window.BASE_URL);
+    })();
+    const withTimeout=(p,ms=15000)=>new Promise((res,rej)=>{const t=setTimeout(()=>rej(new Error("Timeout "+ms+"ms")),ms);p.then(v=>{clearTimeout(t);res(v)}).catch(e=>{clearTimeout(t);rej(e)})});
+    async function api(path,{method="GET",params=null,body=null,headers={}}={}) {
+      const url=new URL(window.BASE_URL+path);
+      if(params) for(const [k,v] of Object.entries(params)) url.searchParams.set(k,v);
+      const opt={method,headers:{Accept:"application/json",...headers}};
+      if(body){opt.headers["Content-Type"]="application/json";opt.body=JSON.stringify(body);}
+      const r=await withTimeout(fetch(url,opt)); if(!r.ok) throw new Error("HTTP "+r.status+" "+r.statusText); return r.json();
+    }
+    const apiGet=(p,params)=>api(p,{method:"GET",params}); const apiPost=(p,body)=>api(p,{method:"POST",body});
+    window.__checkBackend=async ()=>{try{const j=await apiGet("/__selftest");return{ok:true,info:j}}catch(e){return{ok:false,error:e?.message||String(e)}}};
+  </script>
+
+  <!-- === App logic === -->
+  <script>
+    const fmt = n => (n===null||n===undefined||isNaN(+n)) ? "—" : (+n).toLocaleString("en-IN");
+    const byId = id => document.getElementById(id);
+    let oiChart, volChart;
+    function makeBar(el, label, labels, data){
+      const ctx = byId(el).getContext("2d");
+      if (el==="oiChart" && oiChart) oiChart.destroy();
+      if (el==="volChart" && volChart) volChart.destroy();
+      const inst = new Chart(ctx, { type:"bar", data:{labels, datasets:[{label, data}]},
+        options:{plugins:{legend:{display:false}},scales:{x:{ticks:{color:"#9aa1aa"}},y:{ticks:{color:"#9aa1aa"}}}}});
+      if (el==="oiChart") oiChart=inst; else volChart=inst;
+    }
+
+    async function loadExpiries(){
+      const [under_security_id, under_exchange_segment, label] = byId("symbolSelect").value.split("|");
+      byId("oc_title").textContent = `Option Chain — ${label}`;
+      const res = await apiGet("/optionchain/expirylist", { under_security_id, under_exchange_segment });
+      const list = (res?.data?.data) || [];
+      const sel = byId("expirySelect"); sel.innerHTML = "";
+      list.forEach(x => { const o=document.createElement("option"); o.value=x; o.textContent=x; sel.appendChild(o); });
+    }
+
+    async function fetchChain(){
+      const [under_security_id, under_exchange_segment, label] = byId("symbolSelect").value.split("|");
+      const expiry = byId("expirySelect").value; if(!expiry) return;
+      const res = await apiPost("/optionchain", { under_security_id:+under_security_id, under_exchange_segment, expiry });
+      const raw = res?.data?.data || {};
+      const strikes = Object.keys(raw).map(k=>+k).sort((a,b)=>a-b);
+      const win = +byId("strikeWin").value;
+
+      const tbody = byId("oc_body"); tbody.innerHTML="";
+      const ceOiTop=[], peOiTop=[], ceVol=[], peVol=[];
+      const mid = strikes[Math.floor(strikes.length/2)] || 0;
+      const minS = mid - win*50, maxS = mid + win*50;
+
+      strikes.forEach(sp=>{
+        if (sp<minS || sp>maxS) return;
+        const d=raw[sp]||{}, CE=d.CE||d.ce||{}, PE=d.PE||d.pe||{};
+        const tr=document.createElement("tr");
+        tr.innerHTML = `
+          <td class="call">${fmt(CE.oi)}</td>
+          <td class="call">${fmt(CE.previous_oi!=null ? (CE.oi-CE.previous_oi) : null)}</td>
+          <td class="call">${fmt(CE.volume)}</td>
+          <td class="call">${CE.implied_volatility!=null ? (CE.implied_volatility).toFixed(2) : "—"}</td>
+          <td class="call">${CE.last_price!=null ? "₹"+(+CE.last_price).toFixed(2) : "—"}</td>
+          <td class="call">${CE.change!=null ? (+CE.change).toFixed(2) : "—"}</td>
+          <td class="text-center fw-semibold">${fmt(sp)}</td>
+          <td class="put">${PE.change!=null ? (+PE.change).toFixed(2) : "—"}</td>
+          <td class="put">${PE.last_price!=null ? "₹"+(+PE.last_price).toFixed(2) : "—"}</td>
+          <td class="put">${PE.implied_volatility!=null ? (PE.implied_volatility).toFixed(2) : "—"}</td>
+          <td class="put">${fmt(PE.volume)}</td>
+          <td class="put">${fmt(PE.previous_oi!=null ? (PE.oi-PE.previous_oi) : null)}</td>
+          <td class="put">${fmt(PE.oi)}</td>`;
+        tbody.appendChild(tr);
+        ceOiTop.push({sp, v:+CE.oi||0}); peOiTop.push({sp, v:+PE.oi||0});
+        ceVol.push({sp, v:+CE.volume||0});  peVol.push({sp, v:+PE.volume||0});
+      });
+
+      const topN=(arr,n=10)=>arr.sort((a,b)=>b.v-a.v).slice(0,n).sort((a,b)=>a.sp-b.sp);
+      const topCe=topN(ceOiTop), topPe=topN(peOiTop);
+      const topCeV=topN(ceVol),  topPeV=topN(peVol);
+      makeBar("oiChart","OI", topCe.map(x=>x.sp).concat(topPe.map(x=>x.sp)), topCe.map(x=>x.v).concat(topPe.map(x=>x.v)));
+      makeBar("volChart","Volume", topCeV.map(x=>x.sp).concat(topPeV.map(x=>x.sp)), topCeV.map(x=>x.v).concat(topPeV.map(x=>x.v)));
+    }
+
+    async function loadSpot(){
+      const res = await apiGet("/marketfeed/ltp",{exchange_segment:"NSE",security_id:1333});
+      const ltp = res?.data?.data?.NSE_EQ?.[0]?.ltp ?? null;
+      byId("spotPrice").textContent = (ltp!=null) ? "₹"+(+ltp).toFixed(2) : "—";
+      byId("oiChange").textContent = (Math.random()>0.5?"+":"-")+(Math.random()*2).toFixed(1)+"%";
+      byId("pcrValue").textContent = (0.7+Math.random()*0.3).toFixed(2);
+      byId("ivValue").textContent = (16+Math.random()*3).toFixed(1)+"%";
+    }
+
+    async function initStatus(){
+      const st = await __checkBackend();
+      if (!st.ok){
+        byId("br_conn").className="badge text-bg-danger"; byId("br_conn").textContent="Backend error"; return;
+      }
+      const info = st.info?.status || {};
+      byId("chip_env").textContent = info.env || "—";
+      byId("chip_mode").textContent = "MODE: " + (info.mode || "—");
+      const tokenOk = !!info.token_present, cliOk = !!info.client_id_present;
+      byId("br_conn").className = "badge "+(tokenOk&&cliOk ? "text-bg-success":"text-bg-warning");
+      byId("br_conn").textContent = (tokenOk&&cliOk) ? "Connected" : "Partial";
+      byId("br_token").className = "badge "+(tokenOk?"text-bg-success":"text-bg-danger");
+      byId("br_token").textContent = tokenOk ? "present" : "missing";
+      byId("br_client").className = "badge "+(cliOk?"text-bg-success":"text-bg-danger");
+      byId("br_client").textContent = cliOk ? "present" : "missing";
+    }
+
+    let timer=null;
+    function setAuto(){
+      if (timer){ clearInterval(timer); timer=null; }
+      if (byId("autoToggle").checked){
+        timer=setInterval(()=>{ fetchChain().catch(console.error); loadSpot().catch(console.error); }, 30000);
+      }
+    }
+
+    // AI actions
+    byId("btn_ai_market")?.addEventListener("click", async ()=>{
+      const [under_security_id, under_exchange_segment] = byId("symbolSelect").value.split("|");
+      const j = await apiPost("/ai/marketview",{under_security_id:+under_security_id, under_exchange_segment});
+      byId("ai_market_out").textContent = JSON.stringify(j, null, 2);
+    });
+    byId("btn_ai_payoff")?.addEventListener("click", async ()=>{
+      const [under_security_id, under_exchange_segment] = byId("symbolSelect").value.split("|");
+      const j = await apiPost("/ai/payoff",{under_security_id:+under_security_id, under_exchange_segment});
+      byId("ai_payoff_out").textContent = JSON.stringify(j, null, 2);
+    });
+    byId("btn_ai_strategy")?.addEventListener("click", async ()=>{
+      const [under_security_id, under_exchange_segment] = byId("symbolSelect").value.split("|");
+      const bias = byId("sb_bias").value, risk = byId("sb_risk").value, capital=+byId("sb_cap").value;
+      const j = await apiPost("/ai/strategy",{under_security_id:+under_security_id, under_exchange_segment, bias, risk, capital});
+      byId("sb_out").textContent = JSON.stringify(j, null, 2);
+    });
+
+    // Events
+    byId("symbolSelect").addEventListener("change", ()=> loadExpiries().then(fetchChain).catch(console.error));
+    byId("btn_fetch").addEventListener("click", ()=> fetchChain().catch(console.error));
+    byId("btn_clear").addEventListener("click", ()=> { byId("oc_body").innerHTML=`<tr><td colspan="13" class="text-center text-secondary py-4">Cleared</td></tr>`; });
+    byId("btn_refresh").addEventListener("click", ()=> { initStatus(); loadExpiries().then(fetchChain); loadSpot(); });
+    byId("autoToggle").addEventListener("change", setAuto);
+
+    (async function boot(){
+      await initStatus();
+      await loadExpiries();
+      await fetchChain();
+      await loadSpot();
+      setAuto();
+    })();
+  </script>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
