@@ -1,134 +1,153 @@
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse
-from dhanhq import dhanhq
+# main.py
+from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel, Field
+from typing import Optional, Any, Dict
 import os
 
-app = FastAPI(title="DhanHQ Demo API")
+from dhanhq import dhanhq as Dhan
 
-# ----- Env & client -----
-CLIENT_ID = os.getenv("DHAN_LIVE_CLIENT_ID", "")
-ACCESS_TOKEN = os.getenv("DHAN_LIVE_ACCESS_TOKEN", "")
-MODE = os.getenv("MODE", "LIVE")  # LIVE/DRY
+app = FastAPI(title="Options Analysis API", version="2.0")
 
-dhan = None
-if CLIENT_ID and ACCESS_TOKEN:
-    try:
-        dhan = dhanhq(CLIENT_ID, ACCESS_TOKEN)
-    except Exception as e:
-        # SDK init errors (rare)
-        print("Dhan init error:", e)
+# -------- Helpers --------
+def get_env(name: str, default: Optional[str] = None) -> Optional[str]:
+    v = os.getenv(name, default)
+    if v is not None and isinstance(v, str):
+        v = v.strip()
+    return v
 
-# ----- Helpers -----
-def ok(data):
-    return {"status": "success", "remarks": "", "data": data}
+def get_mode() -> str:
+    # DRY = mock safe mode
+    return (get_env("MODE", "LIVE") or "LIVE").upper()
 
-def fail(msg):
-    return {"status": "failure", "remarks": {"error_message": str(msg)}, "data": {}}
+def get_env_tag() -> str:
+    # LIVE vs SANDBOX detection (optional)
+    base = (get_env("DHAN_BASE_URL") or "").lower()
+    if "sandbox" in base:
+        return "SANDBOX"
+    return "LIVE"
 
-# ----- Health / status -----
-@app.get("/")
-def root():
-    return {"hello": "world"}
+def get_dhan_client() -> Dhan:
+    client_id = get_env("DHAN_CLIENT_ID")
+    access_token = get_env("DHAN_ACCESS_TOKEN")
 
-@app.get("/broker_status")
-def broker_status():
+    if not client_id or not access_token:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing DHAN_CLIENT_ID or DHAN_ACCESS_TOKEN env vars."
+        )
+    return Dhan(client_id, access_token)
+
+def ok(payload: Any) -> Dict[str, Any]:
+    return {"status": "success", "remarks": "", "data": payload}
+
+def fail(message: str, code: Optional[str] = None, etype: Optional[str] = None, extra: Any = None):
     return {
-        "mode": MODE,
-        "token_present": bool(ACCESS_TOKEN),
-        "client_id_present": bool(CLIENT_ID),
+        "status": "failure",
+        "remarks": {"error_code": code, "error_type": etype, "error_message": message},
+        "data": extra,
     }
 
-def ensure_client():
-    if not (CLIENT_ID and ACCESS_TOKEN):
-        raise HTTPException(
-            status_code=400,
-            detail="Missing DHAN_LIVE_CLIENT_ID or DHAN_LIVE_ACCESS_TOKEN env vars.",
-        )
-    if dhan is None:
-        raise HTTPException(status_code=500, detail="Dhan client not initialized.")
+# -------- Schemas --------
+class OptionChainReq(BaseModel):
+    under_security_id: int = Field(..., description="e.g., 13 for NIFTY")
+    under_exchange_segment: str = Field(..., description='e.g., "IDX_I" for Index derivatives')
+    expiry: Optional[str] = Field(None, description='YYYY-MM-DD (must be valid as per /expiry_list)')
 
-# ----- Orders -----
+# -------- Endpoints --------
+@app.get("/broker_status")
+def broker_status():
+    mode = get_mode()
+    token_present = bool(get_env("DHAN_ACCESS_TOKEN"))
+    client_present = bool(get_env("DHAN_CLIENT_ID"))
+    return {
+        "mode": mode,
+        "env": get_env_tag(),
+        "token_present": token_present,
+        "client_id_present": client_present,
+    }
+
 @app.get("/orders")
 def orders():
-    ensure_client()
+    if get_mode() == "DRY":
+        # Dry mode: return empty list to keep it safe
+        return ok([])
     try:
-        resp = dhan.get_order_list()
-        return ok(resp)
+        dhan = get_dhan_client()
+        data = dhan.get_order_list()  # returns list/dict as per SDK
+        return ok(data)
     except Exception as e:
-        return JSONResponse(fail(e), status_code=500)
+        # return SDK/raw error in a friendly format
+        raise HTTPException(status_code=502, detail=fail(str(e)))
 
-# ----- Positions -----
 @app.get("/positions")
 def positions():
-    ensure_client()
+    if get_mode() == "DRY":
+        return ok([])
     try:
-        resp = dhan.get_positions()
-        return ok(resp)
+        dhan = get_dhan_client()
+        data = dhan.get_positions()
+        return ok(data)
     except Exception as e:
-        return JSONResponse(fail(e), status_code=500)
+        raise HTTPException(status_code=502, detail=fail(str(e)))
 
-# ----- Expiry list (e.g. NIFTY 13 / IDX_I) -----
-@app.post("/expiry_list")
-async def expiry_list(req: Request):
-    ensure_client()
-    body = await req.json()
-    under_security_id = body.get("under_security_id")
-    under_exchange_segment = body.get("under_exchange_segment")
-
-    if under_security_id is None or not under_exchange_segment:
-        raise HTTPException(
-            status_code=400,
-            detail="Provide 'under_security_id' and 'under_exchange_segment'.",
-        )
+@app.get("/expiry_list")
+def expiry_list(
+    under_security_id: int = Query(..., description="e.g., 13 for NIFTY"),
+    under_exchange_segment: str = Query(..., description='e.g., "IDX_I"'),
+):
+    """
+    Valid expiries nikaalne ke liye. Example:
+    GET /expiry_list?under_security_id=13&under_exchange_segment=IDX_I
+    """
+    if get_mode() == "DRY":
+        # sample mock
+        return ok(["2025-08-28", "2025-09-04", "2025-09-25"])
     try:
-        resp = dhan.expiry_list(
+        dhan = get_dhan_client()
+        exps = dhan.expiry_list(
             under_security_id=under_security_id,
             under_exchange_segment=under_exchange_segment,
         )
-        return ok(resp)
+        return ok(exps)
     except Exception as e:
-        return JSONResponse(fail(e), status_code=500)
+        raise HTTPException(status_code=502, detail=fail(str(e)))
 
-# ----- Option chain -----
 @app.post("/option_chain")
-async def option_chain(req: Request):
+def option_chain(body: OptionChainReq):
     """
-    Body:
+    Body example:
     {
       "under_security_id": 13,
       "under_exchange_segment": "IDX_I",
-      "expiry": "YYYY-MM-DD"   # optional; if missing => latest
+      "expiry": "2025-08-28"
     }
     """
-    ensure_client()
-    body = await req.json()
-    u_sid = body.get("under_security_id")
-    u_seg = body.get("under_exchange_segment")
-    expiry = body.get("expiry")  # optional
-
-    if u_sid is None or not u_seg:
-        raise HTTPException(
-            status_code=400,
-            detail="Provide 'under_security_id' and 'under_exchange_segment'.",
-        )
-
+    if get_mode() == "DRY":
+        # minimal mock shape
+        return ok({"records": {"data": []}, "status": "mock"})
     try:
-        # If expiry not supplied, pick latest from /expiry_list
-        if not expiry:
-            elist = dhan.expiry_list(under_security_id=u_sid, under_exchange_segment=u_seg)
-            # SDK usually returns list of ISO dates; pick the first or max
-            if isinstance(elist, list) and elist:
-                # Many APIs return ascending; choose the nearest (first)
-                expiry = str(elist[0])
-            else:
-                raise ValueError("No expiries returned for given underlying.")
+        dhan = get_dhan_client()
 
-        resp = dhan.option_chain(
-            under_security_id=u_sid,
-            under_exchange_segment=u_seg,
-            expiry=expiry,
+        # If expiry missing, attempt without expiry (SDK may allow),
+        # but Dhan usually needs a valid expiry; better to fail clearly.
+        if not body.expiry:
+            raise HTTPException(
+                status_code=400,
+                detail=fail("Missing expiry. Pehle /expiry_list se valid date lo.")
+            )
+
+        oc = dhan.option_chain(
+            under_security_id=body.under_security_id,
+            under_exchange_segment=body.under_exchange_segment,
+            expiry=body.expiry,
         )
-        return ok({"requested_expiry": expiry, "option_chain": resp})
+        # Dhan invalid expiry par aisa error deta hai:
+        # {"data":{"811":"Invalid Expiry Date"},"status":"failed"}
+        if isinstance(oc, dict) and oc.get("status") == "failed":
+            raise HTTPException(status_code=400, detail=fail("Invalid Expiry Date", extra=oc))
+
+        return ok(oc)
+    except HTTPException:
+        raise
     except Exception as e:
-        # Common server message for invalid date
-        return JSONResponse(fail(e), status_code=400)
+        raise HTTPException(status_code=502, detail=fail(str(e)))
