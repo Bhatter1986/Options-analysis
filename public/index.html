@@ -1,207 +1,447 @@
-<script>
-/* =================== CONFIG =================== */
-const RAW_BASE_URL = "https://options-analysis.onrender.com";                 // your backend
-const DEFAULT_BASE_URL = RAW_BASE_URL.replace(/\/+$/, "");
-const API_PRESETS = { prod: DEFAULT_BASE_URL, dev: "http://127.0.0.1:10000" };
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Options Analysis Platform</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --primary-color: #2c3e50;
+            --secondary-color: #3498db;
+            --accent-color: #e74c3c;
+            --light-color: #ecf0f1;
+            --dark-color: #2c3e50;
+            --success-color: #27ae60;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f8f9fa;
+            color: #333;
+        }
+        
+        .navbar {
+            background: linear-gradient(135deg, var(--primary-color), var(--dark-color));
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        
+        .hero-section {
+            background: linear-gradient(rgba(44, 62, 80, 0.8), rgba(44, 62, 80, 0.9)), url('https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?ixlib=rb-4.0.3&auto=format&fit=crop&w=1500&q=80');
+            background-size: cover;
+            background-position: center;
+            color: white;
+            padding: 80px 0;
+            margin-bottom: 40px;
+        }
+        
+        .dashboard-card {
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+            transition: transform 0.3s ease;
+            background: white;
+            height: 100%;
+            margin-bottom: 20px;
+        }
+        
+        .dashboard-card:hover {
+            transform: translateY(-5px);
+        }
+        
+        .card-header {
+            background: linear-gradient(135deg, var(--secondary-color), var(--primary-color));
+            color: white;
+            border-radius: 10px 10px 0 0 !important;
+        }
+        
+        .market-index {
+            background: linear-gradient(135deg, #27ae60, #2ecc71);
+            color: white;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+        
+        .index-value {
+            font-size: 1.8rem;
+            font-weight: bold;
+        }
+        
+        .index-change {
+            font-size: 1rem;
+            padding: 3px 8px;
+            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        .positive {
+            color: #2ecc71;
+        }
+        
+        .negative {
+            color: #e74c3c;
+        }
+        
+        .btn-primary {
+            background: var(--secondary-color);
+            border: none;
+        }
+        
+        .btn-primary:hover {
+            background: var(--primary-color);
+        }
+        
+        .feature-card {
+            text-align: center;
+            padding: 30px 20px;
+            border-radius: 10px;
+            background: white;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+            transition: all 0.3s ease;
+            height: 100%;
+        }
+        
+        .feature-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+        }
+        
+        .feature-icon {
+            font-size: 3rem;
+            margin-bottom: 20px;
+            color: var(--secondary-color);
+        }
+        
+        footer {
+            background: var(--dark-color);
+            color: white;
+            padding: 40px 0 20px;
+            margin-top: 60px;
+        }
+        
+        .social-links a {
+            color: white;
+            font-size: 1.5rem;
+            margin-right: 15px;
+            transition: color 0.3s;
+        }
+        
+        .social-links a:hover {
+            color: var(--secondary-color);
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark sticky-top">
+        <div class="container">
+            <a class="navbar-brand" href="#">
+                <i class="fas fa-chart-line me-2"></i>
+                Options Analysis Platform
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link active" href="#"><i class="fas fa-home"></i> Home</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="dashboard.html"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#"><i class="fas fa-project-diagram"></i> Strategies</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#"><i class="fas fa-book"></i> Education</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#"><i class="fas fa-user"></i> Login</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
 
-// If you set a WEBHOOK SECRET on backend, put it here so AI endpoints work from browser.
-// If backend has no secret, leave blank ("").
-const WEBHOOK_SECRET = ""; // e.g. "my-secret" (optional)
+    <!-- Hero Section -->
+    <section class="hero-section">
+        <div class="container text-center">
+            <h1 class="display-4 fw-bold mb-4">Advanced Options Trading Analysis</h1>
+            <p class="lead mb-4">AI-powered analytics and insights to maximize your options trading performance</p>
+            <a href="dashboard.html" class="btn btn-primary btn-lg me-3"><i class="fas fa-rocket me-2"></i>Launch Dashboard</a>
+            <a href="#" class="btn btn-outline-light btn-lg"><i class="fas fa-book me-2"></i>Learn More</a>
+        </div>
+    </section>
 
-(function resolveBaseUrl(){
-  const q = new URLSearchParams(location.search);
-  const pick = q.get("api");
-  let chosen = pick ? (API_PRESETS[pick] || pick) : (localStorage.getItem("api_base")||"");
-  if (pick) localStorage.setItem("api_base", chosen);
-  window.BASE_URL = (chosen || DEFAULT_BASE_URL).replace(/\/+$/, "");
-  console.log("[CFG] BASE_URL:", window.BASE_URL);
-})();
+    <!-- Market Indices -->
+    <section class="mb-5">
+        <div class="container">
+            <h2 class="text-center mb-4">Asia Stock Indices</h2>
+            <div class="row">
+                <div class="col-md-3 col-6 mb-4">
+                    <div class="market-index text-center">
+                        <h5>NIFTY 50</h5>
+                        <div class="index-value">24,967.75</div>
+                        <div class="index-change positive">+1.2%</div>
+                        <div class="index-volume mt-2">Volume: 123.4M</div>
+                    </div>
+                </div>
+                <div class="col-md-3 col-6 mb-4">
+                    <div class="market-index text-center" style="background: linear-gradient(135deg, #3498db, #2980b9);">
+                        <h5>SENSEX</h5>
+                        <div class="index-value">73,142.43</div>
+                        <div class="index-change positive">+0.8%</div>
+                        <div class="index-volume mt-2">Volume: 98.7M</div>
+                    </div>
+                </div>
+                <div class="col-md-3 col-6 mb-4">
+                    <div class="market-index text-center" style="background: linear-gradient(135deg, #9b59b6, #8e44ad);">
+                        <h5>Hang Seng</h5>
+                        <div class="index-value">18,234.67</div>
+                        <div class="index-change negative">-0.5%</div>
+                        <div class="index-volume mt-2">Volume: 87.6M</div>
+                    </div>
+                </div>
+                <div class="col-md-3 col-6 mb-4">
+                    <div class="market-index text-center" style="background: linear-gradient(135deg, #e67e22, #d35400);">
+                        <h5>Nikkei 225</h5>
+                        <div class="index-value">38,123.45</div>
+                        <div class="index-change positive">+2.1%</div>
+                        <div class="index-volume mt-2">Volume: 112.3M</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
 
-/* =================== HTTP HELPERS =================== */
-const withTimeout=(p,ms=15000)=>new Promise((res,rej)=>{const t=setTimeout(()=>rej(new Error("Timeout "+ms+"ms")),ms);p.then(v=>{clearTimeout(t);res(v)}).catch(e=>{clearTimeout(t);rej(e)})});
-async function api(path,{method="GET",params=null,body=null,headers={}}={}) {
-  const url=new URL(window.BASE_URL+path);
-  if(params) for(const [k,v] of Object.entries(params)) url.searchParams.set(k,v);
-  const opt={method,headers:{Accept:"application/json",...headers}};
-  if (WEBHOOK_SECRET) opt.headers["X-Webhook-Secret"]=WEBHOOK_SECRET;
-  if(body){opt.headers["Content-Type"]="application/json";opt.body=JSON.stringify(body);}
-  const r=await withTimeout(fetch(url,opt), 20000);
-  if (!r.ok) throw new Error("HTTP "+r.status+" "+r.statusText);
-  return r.json();
-}
-const apiGet=(p,params)=>api(p,{method:"GET",params});
-const apiPost=(p,body)=>api(p,{method:"POST",body});
+    <!-- Features Section -->
+    <section class="mb-5">
+        <div class="container">
+            <h2 class="text-center mb-5">Powerful Options Analysis Tools</h2>
+            <div class="row">
+                <div class="col-md-4 mb-4">
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <i class="fas fa-brain"></i>
+                        </div>
+                        <h3>AI-Powered Analysis</h3>
+                        <p>Get intelligent trade recommendations powered by advanced machine learning algorithms</p>
+                        <a href="#" class="btn btn-outline-primary">Learn More</a>
+                    </div>
+                </div>
+                <div class="col-md-4 mb-4">
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <i class="fas fa-chart-line"></i>
+                        </div>
+                        <h3>Real-time Analytics</h3>
+                        <p>Monitor options chains, volatility, and Greeks in real-time with intuitive visualizations</p>
+                        <a href="#" class="btn btn-outline-primary">Learn More</a>
+                    </div>
+                </div>
+                <div class="col-md-4 mb-4">
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <i class="fas fa-shield-alt"></i>
+                        </div>
+                        <h3>Risk Management</h3>
+                        <p>Calculate and visualize your risk exposure with advanced options strategy analyzers</p>
+                        <a href="#" class="btn btn-outline-primary">Learn More</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
 
-/* =================== SMALL UTILS =================== */
-const byId = id => document.getElementById(id);
-const fmt  = n => (n===null||n===undefined||isNaN(+n)) ? "—" : (+n).toLocaleString("en-IN");
+    <!-- Dashboard Preview -->
+    <section class="mb-5">
+        <div class="container">
+            <h2 class="text-center mb-4">Options Analysis Dashboard</h2>
+            <div class="row">
+                <div class="col-md-6 mb-4">
+                    <div class="dashboard-card card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0"><i class="fas fa-link me-2"></i>Options Chain - NIFTY</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th>Strike</th>
+                                            <th>Calls OI</th>
+                                            <th>Puts OI</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td>24,500</td>
+                                            <td>12,345 <span class="negative">-12%</span></td>
+                                            <td>23,456 <span class="positive">+8%</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td>24,700</td>
+                                            <td>18,901 <span class="positive">+3%</span></td>
+                                            <td>19,876 <span class="positive">+15%</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td>24,900</td>
+                                            <td>25,678 <span class="positive">+12%</span></td>
+                                            <td>15,432 <span class="negative">-4%</span></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="text-center">
+                                <a href="dashboard.html" class="btn btn-primary btn-sm">View Full Dashboard</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6 mb-4">
+                    <div class="dashboard-card card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0"><i class="fas fa-robot me-2"></i>AI Recommendations</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="alert alert-success">
+                                <h6><i class="fas fa-check-circle me-2"></i>Bull Call Spread</h6>
+                                <p class="mb-1">Buy 24,800 CE | Sell 25,000 CE</p>
+                                <small>Max Profit: ₹4,200 | Max Loss: ₹1,800</small>
+                            </div>
+                            <div class="alert alert-info mt-3">
+                                <h6><i class="fas fa-info-circle me-2"></i>Iron Condor</h6>
+                                <p class="mb-1">Sell 24,600 PE | Buy 24,400 PE</p>
+                                <small>Max Profit: ₹3,500 | Max Loss: ₹6,500</small>
+                            </div>
+                            <div class="text-center mt-3">
+                                <a href="#" class="btn btn-primary btn-sm">Get More Recommendations</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
 
-/* =================== STATUS / SELFTEST =================== */
-async function initStatus(){
-  try{
-    const st = await apiGet("/__selftest");
-    const info = st?.status || {};
-    const tokenOk = !!info.status?.token_present;
-    const cliOk   = !!info.status?.client_id_present;
+    <!-- Testimonials -->
+    <section class="mb-5 bg-light py-5">
+        <div class="container">
+            <h2 class="text-center mb-4">What Traders Say</h2>
+            <div class="row">
+                <div class="col-md-4 mb-4">
+                    <div class="card h-100">
+                        <div class="card-body text-center">
+                            <img src="https://randomuser.me/api/portraits/men/32.jpg" class="rounded-circle mb-3" alt="Trader" width="80">
+                            <h5 class="card-title">Rohan S.</h5>
+                            <p class="card-text">"The AI recommendations have improved my options trading returns by 38% in just three months."</p>
+                            <div class="text-warning">
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4 mb-4">
+                    <div class="card h-100">
+                        <div class="card-body text-center">
+                            <img src="https://randomuser.me/api/portraits/women/44.jpg" class="rounded-circle mb-3" alt="Trader" width="80">
+                            <h5 class="card-title">Priya M.</h5>
+                            <p class="card-text">"The volatility analysis tools helped me avoid significant losses during the recent market correction."</p>
+                            <div class="text-warning">
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star-half-alt"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4 mb-4">
+                    <div class="card h-100">
+                        <div class="card-body text-center">
+                            <img src="https://randomuser.me/api/portraits/men/62.jpg" class="rounded-circle mb-3" alt="Trader" width="80">
+                            <h5 class="card-title">Arjun K.</h5>
+                            <p class="card-text">"The options chain visualization is the best I've used. It makes finding opportunities so much easier."</p>
+                            <div class="text-warning">
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
 
-    byId("br_conn")?.classList.add((tokenOk&&cliOk)?"text-bg-success":"text-bg-warning");
-    if (byId("br_conn")) byId("br_conn").textContent = (tokenOk&&cliOk) ? "Connected" : "Partial";
+    <!-- Call to Action -->
+    <section class="py-5 mb-5" style="background: linear-gradient(135deg, var(--secondary-color), var(--primary-color)); color: white;">
+        <div class="container text-center">
+            <h2 class="mb-4">Ready to Transform Your Options Trading?</h2>
+            <p class="lead mb-4">Join thousands of successful traders using our platform</p>
+            <a href="#" class="btn btn-light btn-lg me-3"><i class="fas fa-user-plus me-2"></i>Sign Up Now</a>
+            <a href="dashboard.html" class="btn btn-outline-light btn-lg"><i class="fas fa-eye me-2"></i>View Demo</a>
+        </div>
+    </section>
 
-    if (byId("br_token")) { byId("br_token").className="badge "+(tokenOk?"text-bg-success":"text-bg-danger"); byId("br_token").textContent=tokenOk?"present":"missing";}
-    if (byId("br_client")){ byId("br_client").className="badge "+(cliOk?"text-bg-success":"text-bg-danger"); byId("br_client").textContent=cliOk?"present":"missing";}
-  }catch(e){
-    console.error(e);
-    if (byId("br_conn")) { byId("br_conn").className="badge text-bg-danger"; byId("br_conn").textContent="Backend error"; }
-  }
-}
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="row">
+                <div class="col-md-4 mb-4">
+                    <h5>Options Analysis Platform</h5>
+                    <p>Advanced AI-powered tools for options traders of all experience levels.</p>
+                    <div class="social-links">
+                        <a href="#"><i class="fab fa-twitter"></i></a>
+                        <a href="#"><i class="fab fa-facebook"></i></a>
+                        <a href="#"><i class="fab fa-linkedin"></i></a>
+                        <a href="#"><i class="fab fa-instagram"></i></a>
+                    </div>
+                </div>
+                <div class="col-md-2 mb-4">
+                    <h5>Platform</h5>
+                    <ul class="list-unstyled">
+                        <li><a href="#" class="text-light">Features</a></li>
+                        <li><a href="#" class="text-light">Pricing</a></li>
+                        <li><a href="#" class="text-light">Testimonials</a></li>
+                        <li><a href="#" class="text-light">FAQ</a></li>
+                    </ul>
+                </div>
+                <div class="col-md-2 mb-4">
+                    <h5>Resources</h5>
+                    <ul class="list-unstyled">
+                        <li><a href="#" class="text-light">Blog</a></li>
+                        <li><a href="#" class="text-light">Tutorials</a></li>
+                        <li><a href="#" class="text-light">Webinars</a></li>
+                        <li><a href="#" class="text-light">Documentation</a></li>
+                    </ul>
+                </div>
+                <div class="col-md-4 mb-4">
+                    <h5>Subscribe to Our Newsletter</h5>
+                    <p>Get the latest market insights and trading tips</p>
+                    <div class="input-group">
+                        <input type="email" class="form-control" placeholder="Your email address">
+                        <button class="btn btn-primary" type="button">Subscribe</button>
+                    </div>
+                </div>
+            </div>
+            <hr class="mt-4 mb-4" style="border-color: rgba(255,255,255,0.1);">
+            <div class="text-center">
+                <p class="mb-0">&copy; 2023 Options Analysis Platform. All rights reserved.</p>
+            </div>
+        </div>
+    </footer>
 
-/* =================== INSTRUMENTS (optional search) =================== */
-/* Example use:
-   const matches = await searchInstruments("NIFTY","IDX_I"); */
-async function searchInstruments(q, exchange_segment){
-  const j = await apiGet("/instruments/search",{ q, exchange_segment });
-  return j?.data || [];
-}
-
-/* =================== EXPIRIES + CHAIN =================== */
-async function loadExpiries(){
-  const [under_security_id, under_exchange_segment, label] = byId("symbolSelect").value.split("|");
-  if (byId("oc_title")) byId("oc_title").textContent = `Option Chain — ${label}`;
-  const j = await apiGet("/optionchain/expirylist", { under_security_id, under_exchange_segment });
-  const list = (j?.data?.data) || j?.data || [];
-  const sel = byId("expirySelect"); if (!sel) return;
-  sel.innerHTML="";
-  (list||[]).forEach(x => { const o=document.createElement("option"); o.value=x; o.textContent=x; sel.appendChild(o); });
-}
-
-async function fetchChain(){
-  const [under_security_id, under_exchange_segment] = byId("symbolSelect").value.split("|");
-  const expiry = byId("expirySelect")?.value; if (!expiry) return;
-  const res = await apiPost("/optionchain", { under_security_id:+under_security_id, under_exchange_segment, expiry });
-  const raw = res?.data?.data || res?.data || {};
-  renderOptionChain(raw);
-}
-
-function renderOptionChain(raw){
-  const strikes = Object.keys(raw).map(k=>+k).sort((a,b)=>a-b);
-  const win = +byId("strikeWin")?.value || 10;
-  const tbody = byId("oc_body"); if (!tbody) return;
-  tbody.innerHTML="";
-
-  const ceOiTop=[], peOiTop=[], ceVol=[], peVol=[];
-  const mid = strikes[Math.floor(strikes.length/2)] || 0;
-  const minS = mid - win*50, maxS = mid + win*50;
-
-  strikes.forEach(sp=>{
-    if (sp<minS || sp>maxS) return;
-    const d=raw[sp]||{}, CE=d.CE||d.ce||{}, PE=d.PE||d.pe||{};
-    const tr=document.createElement("tr");
-    tr.innerHTML = `
-      <td class="call">${fmt(CE.oi)}</td>
-      <td class="call">${fmt(CE.previous_oi!=null ? (CE.oi-CE.previous_oi) : null)}</td>
-      <td class="call">${fmt(CE.volume)}</td>
-      <td class="call">${CE.implied_volatility!=null ? (+CE.implied_volatility).toFixed(2) : "—"}</td>
-      <td class="call">${CE.last_price!=null ? "₹"+(+CE.last_price).toFixed(2) : "—"}</td>
-      <td class="call">${CE.change!=null ? (+CE.change).toFixed(2) : "—"}</td>
-      <td class="text-center fw-semibold">${fmt(sp)}</td>
-      <td class="put">${PE.change!=null ? (+PE.change).toFixed(2) : "—"}</td>
-      <td class="put">${PE.last_price!=null ? "₹"+(+PE.last_price).toFixed(2) : "—"}</td>
-      <td class="put">${PE.implied_volatility!=null ? (+PE.implied_volatility).toFixed(2) : "—"}</td>
-      <td class="put">${fmt(PE.volume)}</td>
-      <td class="put">${fmt(PE.previous_oi!=null ? (PE.oi-PE.previous_oi) : null)}</td>
-      <td class="put">${fmt(PE.oi)}</td>`;
-    tbody.appendChild(tr);
-
-    ceOiTop.push({sp, v:+CE.oi||0}); peOiTop.push({sp, v:+PE.oi||0});
-    ceVol.push({sp, v:+CE.volume||0}); peVol.push({sp, v:+PE.volume||0});
-  });
-
-  // charts
-  const topN=(arr,n=10)=>arr.sort((a,b)=>b.v-a.v).slice(0,n).sort((a,b)=>a.sp-b.sp);
-  const topCe=topN(ceOiTop), topPe=topN(peOiTop);
-  const topCeV=topN(ceVol),  topPeV=topN(peVol);
-  drawBar("oiChart","OI",
-    topCe.map(x=>x.sp).concat(topPe.map(x=>x.sp)),
-    topCe.map(x=>x.v).concat(topPe.map(x=>x.v))
-  );
-  drawBar("volChart","Volume",
-    topCeV.map(x=>x.sp).concat(topPeV.map(x=>x.sp)),
-    topCeV.map(x=>x.v).concat(topPeV.map(x=>x.v))
-  );
-}
-
-/* =================== LTP & SMALL STATS =================== */
-async function loadSpot(){
-  // demo: HDFCBANK equity 1333 on NSE
-  const res = await apiGet("/marketfeed/ltp",{exchange_segment:"NSE_EQ",security_id:1333});
-  const ltp = res?.data?.ltp ?? res?.data ?? null;
-  if (byId("spotPrice")) byId("spotPrice").textContent = (ltp!=null) ? "₹"+(+ltp).toFixed(2) : "—";
-  // placeholder stats (replace later with real calc if needed)
-  if (byId("oiChange")) byId("oiChange").textContent = (Math.random()>0.5?"+":"-")+(Math.random()*2).toFixed(1)+"%";
-  if (byId("pcrValue")) byId("pcrValue").textContent = (0.7+Math.random()*0.3).toFixed(2);
-  if (byId("ivValue"))  byId("ivValue").textContent  = (16+Math.random()*3).toFixed(1)+"%";
-}
-
-/* =================== CHARTS =================== */
-let oiChart, volChart;
-function drawBar(el, label, labels, data){
-  const canvas = byId(el); if (!canvas) return;
-  const ctx = canvas.getContext("2d");
-  if (el==="oiChart" && oiChart) oiChart.destroy();
-  if (el==="volChart" && volChart) volChart.destroy();
-  const inst = new Chart(ctx, {
-    type:"bar",
-    data:{ labels, datasets:[{ label, data }] },
-    options:{ plugins:{legend:{display:false}},
-      scales:{x:{ticks:{color:"#9aa1aa"}},y:{ticks:{color:"#9aa1aa"}}}}
-  });
-  if (el==="oiChart") oiChart=inst; else volChart=inst;
-}
-
-/* =================== AI BUTTONS =================== */
-function wireAI(){
-  byId("btn_ai_market")?.addEventListener("click", async ()=>{
-    const [under_security_id, under_exchange_segment] = byId("symbolSelect").value.split("|");
-    const j = await apiPost("/ai/marketview",{under_security_id:+under_security_id, under_exchange_segment});
-    byId("ai_market_out").textContent = (j?.ai_reply||JSON.stringify(j,null,2));
-  });
-  byId("btn_ai_payoff")?.addEventListener("click", async ()=>{
-    const [under_security_id, under_exchange_segment] = byId("symbolSelect").value.split("|");
-    const j = await apiPost("/ai/payoff",{under_security_id:+under_security_id, under_exchange_segment});
-    byId("ai_payoff_out").textContent = (j?.ai_payoff||JSON.stringify(j,null,2));
-  });
-  byId("btn_ai_strategy")?.addEventListener("click", async ()=>{
-    const [under_security_id, under_exchange_segment] = byId("symbolSelect").value.split("|");
-    const bias = byId("sb_bias")?.value || "neutral";
-    const risk = byId("sb_risk")?.value || "moderate";
-    const capital = +(byId("sb_cap")?.value || 50000);
-    const j = await apiPost("/ai/strategy",{under_security_id:+under_security_id, under_exchange_segment, bias, risk, capital});
-    byId("sb_out").textContent = (j?.ai_strategy||JSON.stringify(j,null,2));
-  });
-}
-
-/* =================== AUTOREFRESH =================== */
-let timer=null;
-function setAuto(){
-  if (timer){ clearInterval(timer); timer=null; }
-  if (byId("autoToggle")?.checked){
-    timer=setInterval(()=>{ fetchChain().catch(console.error); loadSpot().catch(console.error); }, 30000);
-  }
-}
-
-/* =================== EVENTS / BOOT =================== */
-byId("symbolSelect")?.addEventListener("change", ()=> loadExpiries().then(fetchChain).catch(console.error));
-byId("btn_fetch")?.addEventListener("click", ()=> fetchChain().catch(console.error));
-byId("btn_clear")?.addEventListener("click", ()=> { byId("oc_body").innerHTML=`<tr><td colspan="13" class="text-center text-secondary py-4">Cleared</td></tr>`; });
-byId("btn_refresh")?.addEventListener("click", ()=> { initStatus(); loadExpiries().then(fetchChain); loadSpot(); });
-byId("autoToggle")?.addEventListener("change", setAuto);
-
-(async function boot(){
-  await initStatus();
-  try{ await loadExpiries(); }catch(e){ console.warn("expiry load failed", e); }
-  try{ await fetchChain(); }catch(e){ console.warn("chain fetch failed", e); }
-  try{ await loadSpot(); }catch(e){ console.warn("spot failed", e); }
-  wireAI();
-  setAuto();
-})();
-</script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
