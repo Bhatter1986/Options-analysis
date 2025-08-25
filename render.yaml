@@ -1,10 +1,19 @@
+# render.yaml
 services:
   - type: web
-    name: options-analysis
+    name: dhan-options-analysis
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.9
+      - key: MODE
+        value: SANDBOX
+      - key: WEBHOOK_SECRET
+        fromSecret: webhook_secret
+      - key: DHAN_CLIENT_ID
+        fromSecret: dhan_client_id
+      - key: DHAN_ACCESS_TOKEN
+        fromSecret: dhan_access_token
+      - key: OPENAI_API_KEY
+        fromSecret: openai_api_key
