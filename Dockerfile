@@ -1,33 +1,13 @@
-# ---- Base ----
+# Dockerfile
 FROM python:3.11-slim
 
-# System deps (faster wheels, SSL, tz)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential curl ca-certificates tzdata && \
-    rm -rf /var/lib/apt/lists/*
-
-# Workdir
 WORKDIR /app
 
-# Copy only requirements first (better cache)
-COPY requirements.txt /app/
-
-# Install Python deps
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy app
-COPY . /app
+COPY . .
 
-# Security: non-root user
-RUN useradd -m appuser
-USER appuser
+EXPOSE 8000
 
-# FastAPI expects PORT (Render sets this automatically)
-ENV PORT=10000 \
-    PYTHONUNBUFFERED=1
-
-# Expose (for local)
-EXPOSE 10000
-
-# Start
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "${PORT}"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
