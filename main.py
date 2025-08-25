@@ -1,186 +1,480 @@
 import os
 import csv
 import json
-from typing import Optional
-from fastapi import FastAPI
-from pydantic import BaseModel
-from dhanhq import dhanhq
+import logging
+from pathlib import Path
+from typing import Optional, Dict, Any, List
 
-# =============================
-# ENV Vars
-# =============================
-DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID")
-DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN")
+import requests
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Request, Depends, Query
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.cors import CORSMiddleware
 
-# Init SDK
-dhan = dhanhq(client_id=DHAN_CLIENT_ID, access_token=DHAN_ACCESS_TOKEN)
+# ---------- Load env ----------
+load_dotenv()
 
-# FastAPI app
-app = FastAPI(title="Options-analysis (Dhan v2 + AI)", version="2.0")
+MODE = os.getenv("MODE", "SANDBOX").upper()  # SANDBOX | LIVE
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 
-# =============================
-# Instrument Lookup (CSV)
-# =============================
-INSTRUMENTS_FILE = "instruments.csv"  # path to uploaded file
+DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID", "")
+DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN", "")
 
-def lookup_instrument(symbol: str):
-    """Auto lookup symbol → security_id + exchange_segment"""
-    with open(INSTRUMENTS_FILE, "r") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if row.get("symbol") == symbol.upper():
-                return {
-                    "security_id": row.get("security_id"),
-                    "exchange_segment": row.get("exchange_segment"),
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+
+# Dhan v2 REST base
+DHAN_BASE = "https://api.dhan.co/v2"
+
+# ---------- Logging ----------
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("options-analysis")
+
+# ---------- FastAPI app ----------
+app = FastAPI(title="Options-analysis (Dhan v2 + AI)")
+
+# serve /public (optional)
+if Path("public").exists():
+    app.mount("/static", StaticFiles(directory="public"), name="static")
+
+
+@app.get("/", include_in_schema=False)
+def serve_index():
+    # serve /public/index.html if present, else 404 guidance
+    idx = Path("public/index.html")
+    if idx.exists():
+        return FileResponse(idx)
+    return JSONResponse(
+        {"ok": True, "msg": "Place your UI at public/index.html or call the JSON APIs."}
+    )
+
+
+# ---------- CORS ----------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # loosen for dev; tighten in prod
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ---------- Security helper ----------
+def verify_secret(req: Request):
+    if not WEBHOOK_SECRET:
+        return True
+    token = req.headers.get("X-Webhook-Secret")
+    if token != WEBHOOK_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid Webhook Secret")
+    return True
+
+
+# ---------- Annexure (from your pasted table) ----------
+ANNEXURE = {
+    "exchange_segment": {
+        "IDX_I": {"exchange": "Index", "segment": "Index Value", "code": 0},
+        "NSE_EQ": {"exchange": "NSE", "segment": "Equity Cash", "code": 1},
+        "NSE_FNO": {"exchange": "NSE", "segment": "Futures & Options", "code": 2},
+        "NSE_CURRENCY": {"exchange": "NSE", "segment": "Currency", "code": 3},
+        "BSE_EQ": {"exchange": "BSE", "segment": "Equity Cash", "code": 4},
+        "MCX_COMM": {"exchange": "MCX", "segment": "Commodity", "code": 5},
+        "BSE_CURRENCY": {"exchange": "BSE", "segment": "Currency", "code": 7},
+        "BSE_FNO": {"exchange": "BSE", "segment": "Futures & Options", "code": 8},
+    },
+    "product_type": ["CNC", "INTRADAY", "MARGIN", "CO", "BO"],
+    "expiry_code": {"0": "Current/Near", "1": "Next", "2": "Far"},
+    "instrument": [
+        "INDEX", "FUTIDX", "OPTIDX", "EQUITY", "FUTSTK", "OPTSTK",
+        "FUTCOM", "OPTFUT", "FUTCUR", "OPTCUR"
+    ],
+    "feed_request": {
+        11: "Connect Feed", 12: "Disconnect Feed", 15: "Sub Ticker", 16: "Unsub Ticker",
+        17: "Sub Quote", 18: "Unsub Quote", 21: "Sub Full", 22: "Unsub Full",
+        23: "Sub 20 Depth", 24: "Unsub 20 Depth"
+    },
+    "feed_response": {
+        1: "Index Packet", 2: "Ticker Packet", 4: "Quote Packet", 5: "OI Packet",
+        6: "Prev Close", 7: "Market Status", 8: "Full Packet", 50: "Feed Disconnect"
+    }
+}
+
+
+@app.get("/annexure")
+def get_annexure():
+    return {"ok": True, "data": ANNEXURE}
+
+
+# ---------- Dhan REST helpers ----------
+def _dhan_headers() -> Dict[str, str]:
+    if not DHAN_CLIENT_ID or not DHAN_ACCESS_TOKEN:
+        raise HTTPException(status_code=400, detail="Broker creds missing (Client ID / Access Token).")
+    return {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Client-Id": DHAN_CLIENT_ID,
+        "Access-Token": DHAN_ACCESS_TOKEN,
+    }
+
+
+def dhan_get(path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    url = f"{DHAN_BASE}{path}"
+    try:
+        r = requests.get(url, headers=_dhan_headers(), params=params, timeout=15)
+        if r.status_code >= 400:
+            raise HTTPException(status_code=r.status_code, detail=_mk_err(r))
+        return r.json()
+    except requests.RequestException as e:
+        log.exception("GET failed")
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+def dhan_post(path: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    url = f"{DHAN_BASE}{path}"
+    try:
+        r = requests.post(url, headers=_dhan_headers(), json=body, timeout=20)
+        if r.status_code >= 400:
+            raise HTTPException(status_code=r.status_code, detail=_mk_err(r))
+        return r.json()
+    except requests.RequestException as e:
+        log.exception("POST failed")
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+def _mk_err(resp: requests.Response) -> str:
+    try:
+        j = resp.json()
+        # Dhan data error codes 800.. etc
+        return f"{resp.status_code} {j}"
+    except Exception:
+        return f"{resp.status_code} {resp.text}"
+
+
+# ---------- Self test ----------
+@app.get("/__selftest")
+def selftest():
+    info = {
+        "env": "Render/Cloud",
+        "mode": MODE,
+        "status": {
+            "client_id_present": bool(DHAN_CLIENT_ID),
+            "token_present": bool(DHAN_ACCESS_TOKEN),
+        },
+    }
+    return {"ok": True, "status": info}
+
+
+# ---------- Instruments (CSV lookup) ----------
+# Expect path: data/instruments.csv (large file from Dhan "Instrument List")
+INSTR_PATHS = [
+    Path("data/instruments.csv"),
+    Path("data/InstrumentList.csv"),
+]
+
+# minimal safe fallback (if CSV not available)
+FALLBACK_INSTR = [
+    # exchange_segment, security_id, trading_symbol, instrument
+    {"exchange_segment": "IDX_I", "security_id": 13, "trading_symbol": "NIFTY 50", "instrument": "INDEX"},
+    {"exchange_segment": "IDX_I", "security_id": 25, "trading_symbol": "BANKNIFTY", "instrument": "INDEX"},
+    {"exchange_segment": "NSE_EQ", "security_id": 1333, "trading_symbol": "HDFCBANK", "instrument": "EQUITY"},
+]
+
+
+def _load_instruments() -> List[Dict[str, Any]]:
+    for p in INSTR_PATHS:
+        if p.exists():
+            rows: List[Dict[str, Any]] = []
+            with p.open("r", newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    # normalize common columns; keep raw as well
+                    row["security_id"] = int(row.get("security_id") or row.get("SecurityId") or 0)
+                    row["exchange_segment"] = (
+                        row.get("exchange_segment") or row.get("ExchangeSegment") or ""
+                    ).strip()
+                    row["trading_symbol"] = (row.get("trading_symbol") or row.get("Symbol") or "").strip()
+                    row["instrument"] = (row.get("instrument") or row.get("Instrument") or "").strip()
+                    rows.append(row)
+            return rows
+    return FALLBACK_INSTR
+
+
+INSTR_CACHE = _load_instruments()
+
+
+@app.get("/instruments/search")
+def instruments_search(
+    q: str = Query(..., description="Symbol/Name contains"),
+    exchange_segment: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=200),
+):
+    ql = q.lower().strip()
+    out = []
+    for r in INSTR_CACHE:
+        if ql in str(r.get("trading_symbol", "")).lower() or ql in str(r).lower():
+            if exchange_segment and r.get("exchange_segment") != exchange_segment:
+                continue
+            out.append(
+                {
+                    "exchange_segment": r.get("exchange_segment"),
+                    "security_id": r.get("security_id"),
+                    "trading_symbol": r.get("trading_symbol"),
+                    "instrument": r.get("instrument"),
                 }
-    return None
+            )
+        if len(out) >= limit:
+            break
+    return {"ok": True, "count": len(out), "data": out}
 
-# =============================
-# MODELS
-# =============================
-class OptionChainRequest(BaseModel):
-    symbol: Optional[str] = None
-    under_security_id: Optional[str] = None
-    under_exchange_segment: Optional[str] = None
-    expiry: str
 
-class OrderRequest(BaseModel):
-    security_id: str
-    exchange_segment: str
-    transaction_type: str
-    quantity: int
-    order_type: str
-    product_type: str
-    price: Optional[float] = 0.0
+# ---------- Data APIs ----------
 
-# =============================
-# ROUTES
-# =============================
+@app.get("/marketquote")
+def market_quote(
+    exchange_segment: str = Query(..., description="e.g. NSE_EQ / NSE_FNO / IDX_I"),
+    security_id: int = Query(..., description="numeric security id"),
+    mode: str = Query("full", description="ticker|quote|full (per docs)"),
+):
+    """
+    Snapshot quote (REST). For real-time streaming, use Live Market Feed (WebSocket) from frontend.
+    """
+    # docs for v2: /market-quote? (Dhan has POST with list or GET by params; here use a common GET path)
+    # Many implementations use /market-quote?securityId=...&exchangeSegment=...&mode=...
+    # We stick to the doc style query.
+    j = dhan_get(
+        "/market-quote",
+        params={
+            "securityId": security_id,
+            "exchangeSegment": exchange_segment,
+            "mode": mode,
+        },
+    )
+    return {"ok": True, "data": j}
 
-@app.get("/")
-def root():
-    return {"status": "success", "data": {"message": "Options-analysis (Dhan v2 + AI) running", "docs": "/docs"}}
 
-@app.get("/health")
-def health():
-    return {"status": "ok", "mode": "LIVE"}
-
-@app.get("/broker_status")
-def broker_status():
-    return {"status": "success", "data": dhan.get_broker_status()}
-
-# ---------- OPTION ----------
-@app.get("/option/expirylist")
-def option_expirylist(symbol: Optional[str] = None, under_security_id: Optional[str] = None, under_exchange_segment: Optional[str] = None):
+@app.get("/marketfeed/ltp")
+def market_ltp(exchange_segment: str = "NSE_EQ", security_id: int = 1333):
+    """
+    Convenience LTP endpoint (pulls ticker/quote and returns last traded price).
+    """
+    j = dhan_get(
+        "/market-quote",
+        params={
+            "securityId": security_id,
+            "exchangeSegment": exchange_segment,
+            "mode": "ticker",
+        },
+    )
+    # Normalize LTP from response (structure differs; map common ones)
+    ltp = None
     try:
-        if symbol:
-            inst = lookup_instrument(symbol)
-            if not inst:
-                return {"status": "error", "error": f"Symbol {symbol} not found"}
-            under_security_id = inst["security_id"]
-            under_exchange_segment = inst["exchange_segment"]
-
-        res = dhan.expiry_list(under_security_id, under_exchange_segment)
-        return {"status": "success", "data": res}
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
-
-@app.post("/option/chain")
-def option_chain(req: OptionChainRequest):
-    try:
-        under_security_id = req.under_security_id
-        under_exchange_segment = req.under_exchange_segment
-        if req.symbol:
-            inst = lookup_instrument(req.symbol)
-            if not inst:
-                return {"status": "error", "error": f"Symbol {req.symbol} not found"}
-            under_security_id = inst["security_id"]
-            under_exchange_segment = inst["exchange_segment"]
-
-        res = dhan.option_chain(under_security_id, under_exchange_segment, req.expiry)
-        return {"status": "success", "data": res}
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
-
-# ---------- MARKET ----------
-@app.get("/market/quote")
-def market_quote(symbol: str):
-    try:
-        inst = lookup_instrument(symbol)
-        if not inst:
-            return {"status": "error", "error": f"Symbol {symbol} not found"}
-        res = dhan.market_quote(inst["exchange_segment"], inst["security_id"])
-        return {"status": "success", "data": res}
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
-
-# ---------- ORDERS ----------
-@app.post("/orders/place")
-def orders_place(req: OrderRequest):
-    try:
-        res = dhan.place_order(
-            security_id=req.security_id,
-            exchange_segment=req.exchange_segment,
-            transaction_type=req.transaction_type,
-            quantity=req.quantity,
-            order_type=req.order_type,
-            product_type=req.product_type,
-            price=req.price,
+        # Dhan returns list sometimes; handle both
+        if isinstance(j, dict) and "data" in j:
+            payload = j["data"]
+        else:
+            payload = j
+        # make a best effort guess:
+        ltp = (
+            payload.get("ltp")
+            or payload.get("LTP")
+            or payload.get("last_price")
+            or payload.get("lastTradedPrice")
         )
-        return {"status": "success", "data": res}
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
+    except Exception:
+        pass
+    return {"ok": True, "data": {"ltp": ltp, "raw": j}}
+
+
+@app.get("/optionchain/expirylist")
+def optionchain_expirylist(
+    under_security_id: int = Query(...),
+    under_exchange_segment: str = Query(...),
+):
+    """
+    Returns available expiries (as per Dhan v2 Option Chain API).
+    """
+    j = dhan_get(
+        "/option-chain/expiries",
+        params={
+            "underSecurityId": under_security_id,
+            "underExchangeSegment": under_exchange_segment,
+        },
+    )
+    return {"ok": True, "data": j}
+
+
+@app.post("/optionchain")
+def optionchain(body: Dict[str, Any]):
+    """
+    Request body:
+    {
+      "under_security_id": 25,
+      "under_exchange_segment": "IDX_I",
+      "expiry": "2025-09-25"
+    }
+    """
+    under_security_id = int(body.get("under_security_id"))
+    under_exchange_segment = body.get("under_exchange_segment")
+    expiry = body.get("expiry")
+
+    j = dhan_post(
+        "/option-chain",
+        {
+            "underSecurityId": under_security_id,
+            "underExchangeSegment": under_exchange_segment,
+            "expiry": expiry,
+        },
+    )
+    return {"ok": True, "data": j}
+
+
+@app.get("/historical")
+def historical(
+    exchange_segment: str = Query(...),
+    security_id: int = Query(...),
+    interval: str = Query("1", description="minutes (1/3/5/15/30), or 'D' for daily"),
+    from_date: str = Query(..., description="YYYY-MM-DD"),
+    to_date: str = Query(..., description="YYYY-MM-DD"),
+):
+    """
+    Historical OHLC
+    """
+    j = dhan_get(
+        "/historical",
+        params={
+            "securityId": security_id,
+            "exchangeSegment": exchange_segment,
+            "interval": interval,
+            "fromDate": from_date,
+            "toDate": to_date,
+        },
+    )
+    return {"ok": True, "data": j}
+
+
+@app.get("/marketdepth20")
+def market_depth_20(
+    exchange_segment: str = Query(...),
+    security_id: int = Query(...),
+):
+    """
+    20-Level Market Depth (snapshot pull)
+    """
+    j = dhan_get(
+        "/market-depth",
+        params={
+            "securityId": security_id,
+            "exchangeSegment": exchange_segment,
+            "levels": 20,
+        },
+    )
+    return {"ok": True, "data": j}
+
+
+# ---------- Orders / Portfolio (stubs you can extend) ----------
+@app.post("/orders/place")
+def place_order(body: Dict[str, Any], auth: bool = Depends(verify_secret)):
+    """
+    Minimal pass-through. You MUST validate required fields on your UI.
+    """
+    j = dhan_post("/orders", body)
+    return {"ok": True, "data": j}
+
 
 @app.get("/orders")
-def get_orders():
-    return {"status": "success", "data": dhan.get_order_list()}
+def order_book():
+    j = dhan_get("/orders")
+    return {"ok": True, "data": j}
 
-@app.get("/orders/{order_id}")
-def get_order(order_id: str):
-    return {"status": "success", "data": dhan.get_order_by_id(order_id)}
 
-@app.get("/tradebook/{order_id}")
-def get_tradebook(order_id: str):
-    return {"status": "success", "data": dhan.get_trade_book(order_id)}
+@app.get("/trades")
+def trade_book():
+    j = dhan_get("/trades")
+    return {"ok": True, "data": j}
 
-@app.get("/tradehistory")
-def get_tradehistory(from_date: str, to_date: str, page: int = 0):
-    return {"status": "success", "data": dhan.get_trade_history(from_date, to_date, page)}
 
-# ---------- PORTFOLIO ----------
 @app.get("/positions")
 def positions():
-    return {"status": "success", "data": dhan.get_positions()}
+    j = dhan_get("/positions")
+    return {"ok": True, "data": j}
+
 
 @app.get("/holdings")
 def holdings():
-    return {"status": "success", "data": dhan.get_holdings()}
+    j = dhan_get("/holdings")
+    return {"ok": True, "data": j}
 
-@app.get("/funds")
-def funds():
-    return {"status": "success", "data": dhan.get_fund_limits()}
 
-# ---------- HISTORICAL ----------
-@app.get("/charts/intraday")
-def charts_intraday(symbol: str):
-    inst = lookup_instrument(symbol)
-    return {"status": "success", "data": dhan.intraday_minute_data(inst["security_id"], inst["exchange_segment"], "IDX_I")}
+# ---------- AI endpoints ----------
+# Uses official OpenAI client >= 1.0
+# If OPENAI_API_KEY missing, we return 400
+def _openai():
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=400, detail="OPENAI_API_KEY missing")
+    # lazy import to avoid startup crash if lib missing
+    from openai import OpenAI
+    return OpenAI(api_key=OPENAI_API_KEY)
 
-@app.get("/charts/historical")
-def charts_historical(symbol: str, expiry_code: str, from_date: str, to_date: str):
-    inst = lookup_instrument(symbol)
-    return {"status": "success", "data": dhan.historical_daily_data(inst["security_id"], inst["exchange_segment"], "IDX_I", expiry_code, from_date, to_date)}
 
-# ---------- FOREVER ORDERS ----------
-@app.post("/forever/place")
-def forever_place(req: OrderRequest):
-    return {"status": "success", "data": dhan.place_forever(**req.dict())}
+@app.post("/ai/marketview")
+def ai_marketview(req: Dict[str, Any], auth: bool = Depends(verify_secret)):
+    client = _openai()
+    prompt = (
+        "You are an options market analyst. Using the following inputs, give a crisp intraday/positional view, "
+        "key levels, and risk notes. Keep it structured with bullets.\n\n"
+        f"INPUT:\n{json.dumps(req, indent=2)}"
+    )
+    r = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3,
+    )
+    return {"ok": True, "ai_reply": r.choices[0].message.content}
 
-# ---------- EDIS ----------
-@app.post("/edis/generate_tpin")
-def generate_tpin():
-    return {"status": "success", "data": dhan.generate_tpin()}
 
-@app.get("/edis/inquiry")
-def edis_inquiry():
-    return {"status": "success", "data": dhan.edis_inquiry()}
+@app.post("/ai/strategy")
+def ai_strategy(req: Dict[str, Any], auth: bool = Depends(verify_secret)):
+    client = _openai()
+    prompt = (
+        "Suggest 1-2 options strategies (with strikes, qty lot, max loss, risk:reward, payoff notes) "
+        "that match bias/risk/capital. Assume Indian F&O.\n\n"
+        f"INPUT:\n{json.dumps(req, indent=2)}"
+    )
+    r = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2,
+    )
+    return {"ok": True, "ai_strategy": r.choices[0].message.content}
+
+
+@app.post("/ai/payoff")
+def ai_payoff(req: Dict[str, Any], auth: bool = Depends(verify_secret)):
+    client = _openai()
+    prompt = (
+        "Given this option position set, compute key payoff points (break-evens, max profit/loss) "
+        "and a short explanation of Greeks exposure. Keep it concise.\n\n"
+        f"INPUT:\n{json.dumps(req, indent=2)}"
+    )
+    r = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2,
+    )
+    return {"ok": True, "ai_payoff": r.choices[0].message.content}
+
+
+@app.post("/ai/test")
+def ai_test():
+    client = _openai()
+    r = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": "Reply 'pong' only."}],
+        temperature=0,
+    )
+    return {"ok": True, "ai_test_reply": r.choices[0].message.content}
+
+
+# ---------- Error handler ----------
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    log.exception("Unhandled error")
+    return JSONResponse(status_code=500, content={"error": str(exc)})
