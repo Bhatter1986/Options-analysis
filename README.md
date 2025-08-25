@@ -1,18 +1,35 @@
-# Options Analysis (DhanHQ v2 SDK)
+# README.md
+# Dhan Options Analysis API
 
-FastAPI service exposing simple endpoints for Orders, Positions, Holdings, Option Chain, and OHLC quotes using the official `dhanhq` Python SDK (v2.0.2).
+A FastAPI application that integrates Dhan's trading API with OpenAI for options analysis.
 
-## Endpoints
-- `GET /broker_status` — checks env vars present
-- `GET /orders` — order list
-- `GET /positions` — positions
-- `GET /holdings` — holdings
-- `POST /option_chain` — body: `{"under_security_id":13, "under_exchange_segment":"IDX_I", "expiry":"YYYY-MM-DD"}`
-- `GET /ohlc?security_id=1333&segment=NSE_EQ` — quick OHLC snapshot
+## Features
 
-## Local run
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env   # fill your DHAN_CLIENT_ID & DHAN_ACCESS_TOKEN
-uvicorn main:app --reload
+- Dhan API integration for market data, orders, and portfolio
+- OpenAI-powered options analysis and strategy recommendations
+- Instrument database with CSV fallback
+- Secure webhook verification
+- CORS enabled for frontend integration
+
+## Setup
+
+1. Clone the repository
+2. Install dependencies: `pip install -r requirements.txt`
+3. Copy `.env.example` to `.env` and fill in your credentials
+4. Run the application: `uvicorn main:app --reload`
+
+## Environment Variables
+
+- `MODE`: SANDBOX or LIVE
+- `WEBHOOK_SECRET`: Secret for webhook verification
+- `DHAN_CLIENT_ID`: Your Dhan client ID
+- `DHAN_ACCESS_TOKEN`: Your Dhan access token
+- `OPENAI_API_KEY`: Your OpenAI API key
+
+## API Endpoints
+
+See the interactive documentation at `/docs` when the server is running.
+
+## Deployment
+
+The application can be deployed to Render using the provided `render.yaml` file.
