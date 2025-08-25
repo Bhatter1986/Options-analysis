@@ -10,7 +10,7 @@ from datetime import datetime
 import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Depends, Query, Body
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -47,6 +47,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve static files
+app.mount("/static", StaticFiles(directory="public"), name="static")
 
 # Security dependency
 def verify_webhook_secret(request: Request):
@@ -199,9 +202,21 @@ def load_instruments():
 INSTRUMENTS = load_instruments()
 
 # Routes
-@app.get("/")
-async def root():
-    return {"message": "Dhan Options Analysis API", "status": "active", "mode": MODE}
+@app.get("/", response_class=HTMLResponse)
+async def serve_index():
+    index_path = Path("public/index.html")
+    if index_path.exists():
+        return FileResponse(index_path)
+    return JSONResponse(
+        {"ok": True, "msg": "Place your UI at public/index.html or call the JSON APIs."}
+    )
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def serve_dashboard():
+    dashboard_path = Path("public/dashboard.html")
+    if dashboard_path.exists():
+        return FileResponse(dashboard_path)
+    raise HTTPException(status_code=404, detail="Dashboard not found")
 
 @app.get("/health")
 async def health_check():
