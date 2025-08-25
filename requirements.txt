@@ -1,6 +1,5 @@
 fastapi
 uvicorn
 python-dotenv
-requests
-dhanhq
-openai==1.101.0
+dhanhq==2.0.2
+openai
