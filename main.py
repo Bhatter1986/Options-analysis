@@ -1,556 +1,632 @@
 # main.py
 import os
-import json
 import time
-import threading
-from typing import Any, Dict, List, Optional
+import json
+from typing import Optional, List, Dict, Any
 
-import requests
-from fastapi import FastAPI, HTTPException, Query, Body, Request
+from fastapi import FastAPI, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-from openai import OpenAI
+from pydantic import BaseModel
+from functools import lru_cache
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
-ai_client = OpenAI(api_key=OPENAI_API_KEY)
+# --- ENV ---------------------------------------------------------------------
+from dotenv import load_dotenv
+load_dotenv()
 
-def need_ai():
-    if not OPENAI_API_KEY:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY missing.")
-# ---- DhanHQ SDK ----
-# pip install dhanhq==2.0.2  (requirements.txt me "dhanhq" likha ho)
-from dhanhq import dhanhq, marketfeed
+# DhanHQ SDK (v2.0.2)
+try:
+    from dhanhq import dhanhq, marketfeed
+    DHAN_SDK_OK = True
+except Exception as e:
+    DHAN_SDK_OK = False
 
-APP_NAME = "Options-analysis (Dhan v2 + AI)"
-MODE = "LIVE"
+# OpenAI (v1)
+try:
+    import openai
+    OPENAI_KEY = os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_KEY")
+    if OPENAI_KEY:
+        openai.api_key = OPENAI_KEY
+    OPENAI_OK = bool(OPENAI_KEY)
+except Exception:
+    OPENAI_OK = False
 
-# ---------- ENV & SDK CLIENT ----------
-DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID", "").strip()
-DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN", "").strip()
+APP_MODE = os.getenv("MODE", "LIVE").upper()
+CLIENT_ID = os.getenv("DHAN_CLIENT_ID", os.getenv("CLIENT_ID"))
+ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN", os.getenv("ACCESS_TOKEN"))
 
-if not DHAN_CLIENT_ID or not DHAN_ACCESS_TOKEN:
-    # We won't crash import; we'll error only at runtime calls.
-    dhan_client = None
-else:
-    dhan_client = dhanhq(DHAN_CLIENT_ID, DHAN_ACCESS_TOKEN)
+# --- APP ---------------------------------------------------------------------
+app = FastAPI(
+    title="Options-analysis (Dhan v2 + AI)",
+    version="2.0",
+    swagger_ui_parameters={"docExpansion": "list"},
+)
 
-# ---------- FASTAPI ----------
-app = FastAPI(title=APP_NAME)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_credentials=True,
     allow_methods=["*"], allow_headers=["*"],
 )
 
-# ---------- Helpers ----------
-def need_client():
-    if dhan_client is None:
-        raise HTTPException(status_code=500, detail="Dhan credentials missing. Set DHAN_CLIENT_ID & DHAN_ACCESS_TOKEN.")
-
+# --- Helpers -----------------------------------------------------------------
 def ok(data: Any) -> Dict[str, Any]:
     return {"status": "success", "data": data}
 
-def fail(remarks: Dict[str, Any]) -> Dict[str, Any]:
-    return {"status": "failure", "data": {"status": "failed", "remarks": remarks}}
+def fail(msg: str, data: Any = None) -> Dict[str, Any]:
+    return {"status": "failure", "data": {"status": "failed", "remarks": {"814": msg}, "data": data}}
 
-def catch_exc(fn):
+def _bool(x): return True if x in (True, "1", 1, "true", "TRUE", "yes") else False
+
+# --- Dhan Client -------------------------------------------------------------
+dhan = None
+if DHAN_SDK_OK and CLIENT_ID and ACCESS_TOKEN:
     try:
-        return fn()
-    except HTTPException:
-        raise
+        dhan = dhanhq(CLIENT_ID, ACCESS_TOKEN)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"{type(e).__name__}: {e}")
+        dhan = None
 
-# Basic symbol→underlying mapping for INDEX options (expand later if needed)
-INDEX_UNDER = {
-    "NIFTY":  {"under_security_id": 13, "under_exchange_segment": "IDX_I"},
-    "BANKNIFTY": {"under_security_id": 25, "under_exchange_segment": "IDX_I"},
-    # "FINNIFTY": {"under_security_id": <fill>, "under_exchange_segment": "IDX_I"},
+# --- Instrument Resolver (auto symbol -> underlying) -------------------------
+_INSTR_CACHE = {"rows": None, "at": 0.0, "ttl": 300.0}  # 5 minutes
+
+INDEX_FALLBACK = {
+    # Fast path (आप चाहें तो BANKNIFTY/FINNIFTY सही IDs बाद में fill कर दें)
+    "NIFTY": ("13", "IDX_I"),
+    # "BANKNIFTY": ("25", "IDX_I"),
+    # "FINNIFTY": ("???", "IDX_I"),
 }
 
-# ---------- MODELS ----------
-class PlaceOrder(BaseModel):
-    security_id: str
-    exchange_segment: str = Field(..., description="e.g. 'NSE', 'NSE_FNO', 'IDX_I'")
-    transaction_type: str = Field(..., description="dhan.BUY / dhan.SELL (string ok)")
-    quantity: int
-    order_type: str = Field(..., description="dhan.MARKET / LIMIT etc. (string ok)")
-    product_type: str = Field(..., description="dhan.INTRA / CNC / NRML etc. (string ok)")
-    price: float = 0
-    trigger_price: Optional[float] = None
-    validity: Optional[str] = None
-    disclosed_quantity: Optional[int] = None
-    amo: Optional[bool] = False
-    # any other kwargs supported by SDK
+def _clean_sym(s: str) -> str:
+    s = (s or "").strip().upper()
+    aliases = {
+        "NIFTY 50": "NIFTY",
+        "BANK NIFTY": "BANKNIFTY",
+        "NIFTY BANK": "BANKNIFTY",
+        "FIN NIFTY": "FINNIFTY",
+        "MIDCAP NIFTY": "MIDCPNIFTY",
+    }
+    return aliases.get(s, s)
 
-class ModifyOrder(BaseModel):
-    order_id: str
-    order_type: Optional[str] = None
-    leg_name: Optional[str] = None
-    quantity: Optional[int] = None
-    price: Optional[float] = None
-    trigger_price: Optional[float] = None
+def _load_instruments(force: bool = False) -> List[Dict[str, Any]]:
+    now = time.time()
+    if (not force) and _INSTR_CACHE["rows"] and (now - _INSTR_CACHE["at"] < _INSTR_CACHE["ttl"]):
+        return _INSTR_CACHE["rows"]
 
-class ForeverOrder(BaseModel):
-    security_id: str
-    exchange_segment: str
-    transaction_type: str
-    product_type: str
-    quantity: int
-    price: float
-    trigger_price: float
+    if not dhan:
+        # SDK नहीं है/initialise नहीं हुआ — सिर्फ fallback से काम चलेगा
+        _INSTR_CACHE["rows"] = []
+        _INSTR_CACHE["at"] = now
+        return _INSTR_CACHE["rows"]
 
-class RawREST(BaseModel):
-    method: str = Field("POST", description="POST/GET")
-    path: str = Field(..., description="e.g. '/v2/option/expiry-list'")
-    payload: Optional[Dict[str, Any]] = None
-    params: Optional[Dict[str, Any]] = None
+    # SDK से compact list
+    try:
+        data = dhan.fetch_security_list("compact")
+    except Exception:
+        data = None
 
-class SDKExec(BaseModel):
-    fn: str = Field(..., description="SDK function name, e.g. 'expiry_list'")
-    kwargs: Dict[str, Any] = Field(default_factory=dict)
+    rows: List[Dict[str, Any]] = []
+    if hasattr(data, "to_dict"):  # pandas DF
+        rows = data.to_dict(orient="records")  # type: ignore
+    elif isinstance(data, list):
+        rows = [dict(r) for r in data]
+    elif data is None:
+        rows = []
+    else:
+        try:
+            rows = list(data)  # best effort
+        except Exception:
+            rows = []
 
-# ---------- HEALTH ----------
-@app.get("/health")
+    # normalize: lower keys
+    norm = []
+    for r in rows:
+        try:
+            norm.append({str(k).lower(): v for k, v in dict(r).items()})
+        except Exception:
+            continue
+
+    _INSTR_CACHE["rows"] = norm
+    _INSTR_CACHE["at"] = now
+    return norm
+
+def _pick(d: Dict[str, Any], keys: List[str]):
+    for k in keys:
+        if k in d and d[k] not in (None, ""):
+            return d[k]
+    return None
+
+def resolve_underlying(symbol: str):
+    """
+    Returns (under_security_id, under_exchange_segment) using SDK instrument list.
+    Falls back to INDEX_FALLBACK for fast known indices.
+    """
+    sym = _clean_sym(symbol)
+    if sym in INDEX_FALLBACK:
+        return INDEX_FALLBACK[sym]
+
+    instruments = _load_instruments()
+    C_SYM = ["symbol", "tradingsymbol", "name", "security_symbol"]
+    C_SEG = ["exchange_segment", "segment"]
+    C_ID  = ["security_id", "id", "instrument_token"]
+
+    preferred_segments = ["IDX_I"] if sym in {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"} else []
+
+    matches = []
+    for row in instruments:
+        rsym = str(_pick(row, C_SYM) or "").strip().upper()
+        rseg = str(_pick(row, C_SEG) or "").strip().upper()
+        rid  = _pick(row, C_ID)
+        if rsym == sym:
+            matches.append((str(rid) if rid is not None else None, rseg, row))
+
+    if not matches:
+        for row in instruments:
+            rsym = str(_pick(row, C_SYM) or "").strip().upper()
+            if sym and sym in rsym:
+                rseg = str(_pick(row, C_SEG) or "").strip().upper()
+                rid  = _pick(row, C_ID)
+                matches.append((str(rid) if rid is not None else None, rseg, row))
+
+    if not matches:
+        raise ValueError(f"Symbol '{symbol}' not found in instrument list. Pass under_security_id & under_exchange_segment.")
+
+    if preferred_segments:
+        pr = [m for m in matches if m[1] in preferred_segments and m[0]]
+        if pr:
+            return pr[0][0], pr[0][1]
+
+    rid, rseg, _ = next((m for m in matches if m[0] and m[1]), matches[0])
+    if not rid or not rseg:
+        raise ValueError(f"Instrument mapping incomplete for '{symbol}'.")
+    return rid, rseg
+
+# --- Models (AI) -------------------------------------------------------------
+class AiMarketIn(BaseModel):
+    symbol: Optional[str] = "NIFTY"
+    horizon: Optional[str] = "intraday"
+    bias: Optional[str] = "neutral"
+
+class AiStrategyIn(BaseModel):
+    under_security_id: Optional[str] = None
+    under_exchange_segment: Optional[str] = None
+    bias: Optional[str] = "neutral"
+    risk: Optional[str] = "moderate"
+    capital: Optional[float] = 50000
+    constraints: Optional[Dict[str, Any]] = None
+    context: Optional[Dict[str, Any]] = None
+    symbol: Optional[str] = None
+    expiry: Optional[str] = None
+
+class AiPayoffIn(BaseModel):
+    legs: List[Dict[str, Any]]
+    spot: float
+
+# --- Root/Health -------------------------------------------------------------
+@app.get("/", summary="Root")
+def root():
+    return ok({"message": "Options-analysis (Dhan v2 + AI) up", "docs": "/docs"})
+
+@app.get("/health", summary="Health")
 def health():
-    return ok({"app": APP_NAME, "mode": MODE})
+    return ok({"live": True})
 
-@app.get("/broker_status")
+@app.get("/broker_status", summary="Broker Status")
 def broker_status():
     return ok({
-        "mode": MODE,
-        "token_present": bool(DHAN_ACCESS_TOKEN),
-        "client_id_present": bool(DHAN_CLIENT_ID),
-        "openai_present": bool(os.getenv("OPENAI_API_KEY", "")),
+        "mode": APP_MODE,
+        "env": True,
+        "token_present": bool(ACCESS_TOKEN),
+        "client_id_present": bool(CLIENT_ID),
+        "openai_present": OPENAI_OK,
     })
 
-@app.get("/__selftest")
+@app.get("/__selftest", summary="Selftest")
 def selftest():
-    status = {
-        "env": True,
-        "mode": MODE,
-        "token_present": bool(DHAN_ACCESS_TOKEN),
-        "client_id_present": bool(DHAN_CLIENT_ID),
-        "openai_present": bool(os.getenv("OPENAI_API_KEY", "")),
+    data = {
+        "status": {
+            "env": True,
+            "mode": APP_MODE,
+            "token_present": bool(ACCESS_TOKEN),
+            "client_id_present": bool(CLIENT_ID),
+            "openai_present": OPENAI_OK,
+        }
     }
-    sample: Dict[str, Any] = {}
-    def _do():
-        need_client()
-        # lightweight call to verify auth; fund limits is cheap
-        fl = dhan_client.get_fund_limits()
-        sample["funds_ok"] = True if fl is not None else False
+    # Quick funds check if possible
     try:
-        if DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN:
-            _do()
-    except Exception as e:
-        sample["funds_ok"] = False
-        sample["error"] = f"{type(e).__name__}: {e}"
-    return ok({"status": status, "sample": sample})
-
-# ---------- OPTION: EXPIRY LIST ----------
-@app.get("/option/expirylist")
-def option_expirylist(
-    symbol: Optional[str] = Query(None, description="NIFTY / BANKNIFTY (optional helper)"),
-    under_security_id: Optional[str] = None,
-    under_exchange_segment: Optional[str] = None,
-):
-    """
-    Wrapper over DhanHQ v2 expiry_list
-    - pass either (symbol) OR (under_security_id + under_exchange_segment)
-    """
-    def _run():
-        need_client()
-        uid = under_security_id
-        seg = under_exchange_segment
-        if symbol:
-            s = symbol.upper()
-            if s in INDEX_UNDER:
-                uid = str(INDEX_UNDER[s]["under_security_id"])
-                seg = INDEX_UNDER[s]["under_exchange_segment"]
-            else:
-                return fail({"814": f"Unsupported symbol '{symbol}'. Provide under_security_id & under_exchange_segment."})
-
-        if not uid or not seg:
-            return fail({"814": "Invalid Request: need symbol OR under_security_id & under_exchange_segment"})
-
-        # SDK call
-        data = dhan_client.expiry_list(
-            under_security_id=uid,
-            under_exchange_segment=seg
-        )
-        return ok(data)
-    return catch_exc(_run)
-
-# ---------- OPTION: FULL CHAIN ----------
-@app.get("/option/chain")
-def option_chain(
-    under_security_id: str = Query(...),
-    under_exchange_segment: str = Query(..., description="IDX_I for index options, NSE_FNO for stock options"),
-    expiry_date: Optional[str] = Query(None, description="YYYY-MM-DD (optional; if omitted, SDK may default to nearest)")
-):
-    def _run():
-        need_client()
-        # Most SDKs accept either only underlying+segment or also expiry; keep both safe:
-        if expiry_date:
-            data = dhan_client.option_chain(
-                under_security_id=under_security_id,
-                under_exchange_segment=under_exchange_segment,
-                expiry_date=expiry_date
-            )
+        if dhan:
+            f = dhan.get_fund_limits()
+            data["sample"] = {"funds_ok": True}
         else:
-            data = dhan_client.option_chain(
-                under_security_id=under_security_id,
-                under_exchange_segment=under_exchange_segment
-            )
-        return ok(data)
-    return catch_exc(_run)
+            data["sample"] = {"funds_ok": False}
+    except Exception:
+        data["sample"] = {"funds_ok": False}
+    return ok(data)
 
-# ---------- MARKET QUOTE (snapshot) ----------
-@app.get("/market/quote")
-def market_quote(
-    exchange_segment: str = Query(..., description="e.g. NSE, NSE_FNO, IDX_I"),
-    security_id: str = Query(..., description="e.g. '1333' for HDFCBANK"),
-    mode: str = Query("full", description="ticker | quote | full"),
+# --- Option APIs -------------------------------------------------------------
+@app.get("/option/expirylist", summary="Option Expirylist")
+def option_expirylist(
+    symbol: Optional[str] = Query(None, description="NIFTY/BANKNIFTY/FINNIFTY or stock"),
+    under_security_id: Optional[str] = Query(None),
+    under_exchange_segment: Optional[str] = Query(None),
 ):
-    def _run():
-        need_client()
-        # Many SDKs expose quote via: dhan_client.quote(...) or market_quote(...)
-        # Dhan v2 SDK offers 'market_quote' with (exchange_segment, security_id, mode)
-        data = dhan_client.market_quote(
-            exchange_segment=exchange_segment,
-            security_id=security_id,
-            mode=mode
+    try:
+        if symbol and not (under_security_id and under_exchange_segment):
+            under_security_id, under_exchange_segment = resolve_underlying(symbol)
+
+        if not (under_security_id and under_exchange_segment):
+            return fail("Provide either symbol OR under_security_id + under_exchange_segment")
+
+        if not dhan:
+            return fail("Dhan SDK/client not initialised")
+
+        res = dhan.expiry_list(
+            under_security_id=under_security_id,
+            under_exchange_segment=under_exchange_segment
         )
-        return ok(data)
-    return catch_exc(_run)
+        return ok(res)
+    except Exception as e:
+        return fail(str(e))
 
-# ---------- HISTORICAL / INTRADAY ----------
-@app.get("/charts/intraday")
-def charts_intraday(
-    security_id: str,
-    exchange_segment: str,
-    instrument_type: str = Query(..., description="e.g. 'EQUITY', 'INDEX', 'FUTIDX', etc."),
-    interval: str = Query("1m", description="Supported by SDK internally"),
+@app.get("/option/chain", summary="Option Chain")
+def option_chain(
+    symbol: Optional[str] = Query(None),
+    under_security_id: Optional[str] = Query(None),
+    under_exchange_segment: Optional[str] = Query(None),
+    expiry: Optional[str] = Query(None, description="yyyy-mm-dd"),
 ):
-    def _run():
-        need_client()
-        data = dhan_client.intraday_minute_data(
+    try:
+        if symbol and not (under_security_id and under_exchange_segment):
+            under_security_id, under_exchange_segment = resolve_underlying(symbol)
+
+        if not (under_security_id and under_exchange_segment):
+            return fail("Provide either symbol OR under_security_id + under_exchange_segment")
+
+        if not dhan:
+            return fail("Dhan SDK/client not initialised")
+
+        args = {
+            "under_security_id": under_security_id,
+            "under_exchange_segment": under_exchange_segment
+        }
+        if expiry:
+            args["expiry"] = expiry
+
+        res = dhan.option_chain(**args)
+        return ok(res)
+    except Exception as e:
+        return fail(str(e))
+
+# --- Quotes/Charts ------------------------------------------------------------
+@app.get("/market/quote", summary="Market Quote")
+def market_quote(
+    security_id: str = Query(...),
+    exchange_segment: str = Query(...),
+    mode: str = Query("quote")  # ticker/quote/full
+):
+    try:
+        if not dhan:
+            return fail("Dhan SDK/client not initialised")
+        res = dhan.get_quote(
+            security_id=security_id,
+            exchange_segment=exchange_segment,
+            type=mode
+        )
+        return ok(res)
+    except Exception as e:
+        return fail(str(e))
+
+@app.get("/charts/intraday", summary="Charts Intraday")
+def charts_intraday(
+    security_id: str = Query(...),
+    exchange_segment: str = Query(...),
+    instrument_type: str = Query(...),   # Equity/Futures/Options/Index etc. as per SDK
+):
+    try:
+        if not dhan:
+            return fail("Dhan SDK/client not initialised")
+        res = dhan.intraday_minute_data(
             security_id=security_id,
             exchange_segment=exchange_segment,
             instrument_type=instrument_type
         )
-        return ok({"interval": interval, "data": data})
-    return catch_exc(_run)
+        return ok(res)
+    except Exception as e:
+        return fail(str(e))
 
-@app.get("/charts/historical")
+@app.get("/charts/historical", summary="Charts Historical")
 def charts_historical(
-    security_id: str,
-    exchange_segment: str,
-    instrument_type: str,
-    expiry_code: Optional[str] = None,
-    from_date: str = Query(..., description="YYYY-MM-DD"),
-    to_date: str = Query(..., description="YYYY-MM-DD"),
+    security_id: str = Query(...),
+    exchange_segment: str = Query(...),
+    instrument_type: str = Query(...),
+    expiry_code: Optional[str] = Query(None),
+    from_date: Optional[str] = Query(None),
+    to_date: Optional[str] = Query(None),
 ):
-    def _run():
-        need_client()
-        data = dhan_client.historical_daily_data(
+    try:
+        if not dhan:
+            return fail("Dhan SDK/client not initialised")
+        res = dhan.historical_daily_data(
             security_id=security_id,
             exchange_segment=exchange_segment,
             instrument_type=instrument_type,
             expiry_code=expiry_code,
             from_date=from_date,
-            to_date=to_date
+            to_date=to_date,
         )
-        return ok(data)
-    return catch_exc(_run)
-
-# ---------- ORDERS ----------
-@app.post("/orders/place")
-def orders_place(body: PlaceOrder):
-    def _run():
-        need_client()
-        payload = body.dict(exclude_none=True)
-        data = dhan_client.place_order(**payload)
-        return ok(data)
-    return catch_exc(_run)
-
-@app.post("/orders/modify")
-def orders_modify(body: ModifyOrder):
-    def _run():
-        need_client()
-        data = dhan_client.modify_order(
-            order_id=body.order_id,
-            order_type=body.order_type,
-            leg_name=body.leg_name,
-            quantity=body.quantity,
-            price=body.price,
-            trigger_price=body.trigger_price
-        )
-        return ok(data)
-    return catch_exc(_run)
-
-@app.post("/orders/cancel")
-def orders_cancel(order_id: str = Body(..., embed=True)):
-    def _run():
-        need_client()
-        data = dhan_client.cancel_order(order_id)
-        return ok(data)
-    return catch_exc(_run)
-
-@app.get("/orders/{order_id}")
-def orders_get(order_id: str):
-    def _run():
-        need_client()
-        data = dhan_client.get_order_by_id(order_id)
-        return ok(data)
-    return catch_exc(_run)
-
-@app.get("/tradebook/{order_id}")
-def trade_book(order_id: str):
-    def _run():
-        need_client()
-        data = dhan_client.get_trade_book(order_id)
-        return ok(data)
-    return catch_exc(_run)
-
-@app.get("/tradehistory")
-def trade_history(from_date: str, to_date: str, page_number: int = 0):
-    def _run():
-        need_client()
-        data = dhan_client.get_trade_history(from_date, to_date, page_number=page_number)
-        return ok(data)
-    return catch_exc(_run)
-
-# ---------- PORTFOLIO / FUNDS ----------
-@app.get("/positions")
-def positions():
-    return catch_exc(lambda: ok(dhan_client.get_positions()) if need_client() is None else None)
-
-@app.get("/holdings")
-def holdings():
-    return catch_exc(lambda: ok(dhan_client.get_holdings()) if need_client() is None else None)
-
-@app.get("/funds")
-def funds():
-    return catch_exc(lambda: ok(dhan_client.get_fund_limits()) if need_client() is None else None)
-
-# ---------- FOREVER ORDERS ----------
-@app.post("/forever/place")
-def forever_place(body: ForeverOrder):
-    def _run():
-        need_client()
-        data = dhan_client.place_forever(
-            security_id=body.security_id,
-            exchange_segment=body.exchange_segment,
-            transaction_type=body.transaction_type,
-            product_type=body.product_type,
-            quantity=body.quantity,
-            price=body.price,
-            trigger_price=body.trigger_price
-        )
-        return ok(data)
-    return catch_exc(_run)
-
-@app.post("/forever/modify")
-def forever_modify(order_id: str = Body(...), price: Optional[float] = Body(None), trigger_price: Optional[float] = Body(None)):
-    def _run():
-        need_client()
-        data = dhan_client.modify_forever(order_id, price=price, trigger_price=trigger_price)
-        return ok(data)
-    return catch_exc(_run)
-
-@app.post("/forever/cancel")
-def forever_cancel(order_id: str = Body(..., embed=True)):
-    def _run():
-        need_client()
-        data = dhan_client.cancel_forever(order_id)
-        return ok(data)
-    return catch_exc(_run)
-
-# ---------- eDIS ----------
-@app.post("/edis/generate_tpin")
-def edis_generate_tpin():
-    return catch_exc(lambda: ok(dhan_client.generate_tpin()) if need_client() is None else None)
-
-@app.post("/edis/open_browser_for_tpin")
-def edis_open_browser_for_tpin(isin: str = Body(...), qty: int = Body(1), exchange: str = Body("NSE")):
-    def _run():
-        need_client()
-        data = dhan_client.open_browser_for_tpin(isin=isin, qty=qty, exchange=exchange)
-        return ok(data)
-    return catch_exc(_run)
-
-@app.get("/edis/inquiry")
-def edis_inquiry():
-    return catch_exc(lambda: ok(dhan_client.edis_inquiry()) if need_client() is None else None)
-
-# ---------- MARKETFEED (utility) ----------
-# NOTE: True realtime websocket run karna server pe background thread me kiya ja sakta hai.
-# Yahan simple ping & last cache structure diya hai.
-_feed_thread = None
-_feed_running = False
-_last_ticks: Dict[str, Any] = {}
-_feed_lock = threading.Lock()
-
-def _feed_callback(msg):
-    try:
-        # message structure depends on SDK; store by (segment|id|type)
-        with _feed_lock:
-            _last_ticks[str(msg.get("security_id", ""))] = msg
-    except Exception:
-        pass
-
-def _start_feed(instruments: List[List[Any]]):
-    global _feed_thread, _feed_running
-    if _feed_running:  # already running
-        return
-    need_client()
-    def run():
-        global _feed_running
-        _feed_running = True
-        client = marketfeed.DhanFeed(DHAN_CLIENT_ID, DHAN_ACCESS_TOKEN)
-        try:
-            client.run_socket(instruments, on_data=_feed_callback)
-        except Exception:
-            _feed_running = False
-    _feed_thread = threading.Thread(target=run, daemon=True)
-    _feed_thread.start()
-
-@app.post("/marketfeed/ping")
-def marketfeed_ping(instruments: List[List[Any]] = Body(default=[["NSE", "1333", "Ticker"]])):
-    """
-    instruments = [[exchange_segment, security_id, subscription_type], ...]
-    Example: [["NSE","1333","Ticker"], ["NSE","1333","Quote"]]
-    """
-    def _run():
-        _start_feed(instruments)
-        return ok({"running": True, "subscribed": instruments})
-    return catch_exc(_run)
-
-@app.get("/marketfeed/last")
-def marketfeed_last(security_id: str):
-    with _feed_lock:
-        return ok(_last_ticks.get(security_id) or {})
-
-# ---------- RAW REST (escape hatch) ----------
-@app.post("/dhan/raw")
-def dhanhq_raw(body: RawREST):
-    """
-    Directly call Dhan REST, signed with your headers.
-    Example: {"method":"POST","path":"/v2/option/expiry-list","payload":{"under_security_id":"13","under_exchange_segment":"IDX_I"}}
-    """
-    def _run():
-        need_client()
-        url = "https://api.dhan.co" + body.path
-        headers = {
-            "accept": "application/json",
-            "Content-Type": "application/json",
-            "client-id": DHAN_CLIENT_ID,
-            "access-token": DHAN_ACCESS_TOKEN,
-        }
-        method = body.method.upper()
-        if method == "POST":
-            r = requests.post(url, headers=headers, json=body.payload or {}, params=body.params)
-        elif method == "GET":
-            r = requests.get(url, headers=headers, params=body.params)
-        else:
-            raise HTTPException(400, f"Unsupported method {method}")
-        try:
-            data = r.json()
-        except Exception:
-            data = {"raw": r.text}
-        if r.status_code >= 400:
-            return fail({"code": r.status_code, "data": data})
-        return ok(data)
-    return catch_exc(_run)
-
-# ---------- SDK EXECUTOR (escape hatch) ----------
-@app.post("/dhan/exec")
-def dhanhq_exec(body: SDKExec):
-    """
-    Call any dhanhq SDK function by name:
-    { "fn": "expiry_list", "kwargs": {"under_security_id":"13","under_exchange_segment":"IDX_I"} }
-    """
-    def _run():
-        need_client()
-        fn = getattr(dhan_client, body.fn, None)
-        if not fn or not callable(fn):
-            raise HTTPException(400, f"SDK method '{body.fn}' not found.")
-        data = fn(**body.kwargs)
-        return ok(data)
-    return catch_exc(_run)
-
-# ---------- ROOT ----------
-@app.get("/")
-def root():
-    return ok({"message": f"{APP_NAME} up", "docs": "/docs"})
-
-
-# ---------- AI MODELS ----------
-AI_MODEL_MARKET = "gpt-4o-mini"       # fast + cheap
-AI_MODEL_STRATEGY = "gpt-4o-mini"     # you can switch to gpt-4.1 if needed
-AI_MODEL_PAYOFF = "gpt-4o-mini"
-
-def _chat(model: str, sys: str, user: str) -> str:
-    need_ai()
-    try:
-        resp = ai_client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role":"system","content":sys},
-                {"role":"user","content":user}
-            ],
-            temperature=0.3,
-        )
-        return resp.choices[0].message.content
+        return ok(res)
     except Exception as e:
-        raise HTTPException(500, f"AI error: {type(e).__name__}: {e}")
+        return fail(str(e))
 
-class AiMarketIn(BaseModel):
-    under_security_id: Optional[str] = None
-    under_exchange_segment: Optional[str] = None
-    snapshot: Optional[Dict[str, Any]] = None  # e.g. recent OI/IV/PCR
+# --- Orders -------------------------------------------------------------------
+@app.post("/orders/place", summary="Orders Place")
+def orders_place(body: Dict[str, Any] = Body(...)):
+    try:
+        if not dhan:
+            return fail("Dhan SDK/client not initialised")
+        res = dhan.place_order(**body)
+        return ok(res)
+    except Exception as e:
+        return fail(str(e), data=body)
 
-class AiStrategyIn(BaseModel):
-    under_security_id: Optional[str] = None
-    under_exchange_segment: Optional[str] = None
-    bias: Optional[str] = "neutral"   # bullish/bearish/neutral
-    risk: Optional[str] = "moderate"  # low/moderate/high
-    capital: Optional[float] = 50000
-    constraints: Optional[Dict[str, Any]] = None  # max legs, rr, etc.
-    context: Optional[Dict[str, Any]] = None      # pcr/iv/oi walls
+@app.post("/orders/modify", summary="Orders Modify")
+def orders_modify(body: Dict[str, Any] = Body(...)):
+    try:
+        if not dhan:
+            return fail("Dhan SDK/client not initialised")
+        res = dhan.modify_order(**body)
+        return ok(res)
+    except Exception as e:
+        return fail(str(e), data=body)
 
-class AiPayoffIn(BaseModel):
-    legs: List[Dict[str, Any]]  # [{side:"BUY/SELL", type:"CE/PE", strike:..., qty:..., premium:..., expiry:"YYYY-MM-DD"}]
-    spot: float
+@app.post("/orders/cancel", summary="Orders Cancel")
+def orders_cancel(body: Dict[str, Any] = Body(...)):
+    try:
+        if not dhan:
+            return fail("Dhan SDK/client not initialised")
+        res = dhan.cancel_order(**body)
+        return ok(res)
+    except Exception as e:
+        return fail(str(e), data=body)
 
-@app.post("/ai/marketview")
+@app.get("/orders/{order_id}", summary="Orders Get")
+def orders_get(order_id: str):
+    try:
+        if not dhan:
+            return fail("Dhan SDK/client not initialised")
+        res = dhan.get_order_by_id(order_id)
+        return ok(res)
+    except Exception as e:
+        return fail(str(e))
+
+@app.get("/tradebook/{order_id}", summary="Trade Book")
+def tradebook(order_id: str):
+    try:
+        if not dhan:
+            return fail("Dhan SDK/client not initialised")
+        res = dhan.get_trade_book(order_id)
+        return ok(res)
+    except Exception as e:
+        return fail(str(e))
+
+@app.get("/tradehistory", summary="Trade History")
+def tradehistory(from_date: Optional[str] = None, to_date: Optional[str] = None, page_number: int = 0):
+    try:
+        if not dhan:
+            return fail("Dhan SDK/client not initialised")
+        res = dhan.get_trade_history(from_date, to_date, page_number)
+        return ok(res)
+    except Exception as e:
+        return fail(str(e))
+
+# --- Portfolio/Funds ----------------------------------------------------------
+@app.get("/positions", summary="Positions")
+def positions():
+    try:
+        if not dhan:
+            return fail("Dhan SDK/client not initialised")
+        res = dhan.get_positions()
+        return ok(res)
+    except Exception as e:
+        return fail(str(e))
+
+@app.get("/holdings", summary="Holdings")
+def holdings():
+    try:
+        if not dhan:
+            return fail("Dhan SDK/client not initialised")
+        res = dhan.get_holdings()
+        return ok(res)
+    except Exception as e:
+        return fail(str(e))
+
+@app.get("/funds", summary="Funds")
+def funds():
+    try:
+        if not dhan:
+            return fail("Dhan SDK/client not initialised")
+        res = dhan.get_fund_limits()
+        return ok(res)
+    except Exception as e:
+        return fail(str(e))
+
+# --- Forever Orders -----------------------------------------------------------
+@app.post("/forever/place", summary="Forever Place")
+def forever_place(body: Dict[str, Any] = Body(...)):
+    try:
+        if not dhan:
+            return fail("Dhan SDK/client not initialised")
+        res = dhan.place_forever(**body)
+        return ok(res)
+    except Exception as e:
+        return fail(str(e), data=body)
+
+@app.post("/forever/modify", summary="Forever Modify")
+def forever_modify(body: Dict[str, Any] = Body(...)):
+    try:
+        if not dhan:
+            return fail("Dhan SDK/client not initialised")
+        # Some SDKs have modify_forever; if not, return explicit message
+        if hasattr(dhan, "modify_forever"):
+            res = dhan.modify_forever(**body)  # type: ignore
+        else:
+            raise RuntimeError("modify_forever not available in current SDK")
+        return ok(res)
+    except Exception as e:
+        return fail(str(e), data=body)
+
+@app.post("/forever/cancel", summary="Forever Cancel")
+def forever_cancel(body: Dict[str, Any] = Body(...)):
+    try:
+        if not dhan:
+            return fail("Dhan SDK/client not initialised")
+        res = dhan.cancel_forever(**body)
+        return ok(res)
+    except Exception as e:
+        return fail(str(e), data=body)
+
+# --- eDIS ---------------------------------------------------------------------
+@app.post("/edis/generate_tpin", summary="Edis Generate Tpin")
+def edis_generate_tpin():
+    try:
+        if not dhan:
+            return fail("Dhan SDK/client not initialised")
+        res = dhan.generate_tpin()
+        return ok(res)
+    except Exception as e:
+        return fail(str(e))
+
+@app.post("/edis/open_browser_for_tpin", summary="Edis Open Browser For Tpin")
+def edis_open_browser_for_tpin(isin: str = Body(...), qty: int = Body(...), exchange: str = Body("NSE")):
+    try:
+        if not dhan:
+            return fail("Dhan SDK/client not initialised")
+        res = dhan.open_browser_for_tpin(isin=isin, qty=qty, exchange=exchange)
+        return ok(res)
+    except Exception as e:
+        return fail(str(e))
+
+@app.get("/edis/inquiry", summary="Edis Inquiry")
+def edis_inquiry():
+    try:
+        if not dhan:
+            return fail("Dhan SDK/client not initialised")
+        res = dhan.edis_inquiry()
+        return ok(res)
+    except Exception as e:
+        return fail(str(e))
+
+# --- Marketfeed (ping/last placeholders) -------------------------------------
+_LAST_MF = {"at": None, "payload": None}
+
+@app.post("/marketfeed/ping", summary="Marketfeed Ping")
+def marketfeed_ping(payload: Dict[str, Any] = Body(...)):
+    # यहां आप websocket subscribe client जोड़ सकते हैं; अभी के लिए payload store
+    _LAST_MF["at"] = time.time()
+    _LAST_MF["payload"] = payload
+    return ok({"stored": True})
+
+@app.get("/marketfeed/last", summary="Marketfeed Last")
+def marketfeed_last():
+    return ok(_LAST_MF)
+
+# --- Raw/Exec (advanced) ------------------------------------------------------
+@app.post("/dhan/raw", summary="Dhanhq Raw")
+def dhanhq_raw(body: Dict[str, Any] = Body(...)):
+    """
+    body = {"method":"expiry_list","kwargs":{"under_security_id":"13","under_exchange_segment":"IDX_I"}}
+    """
+    try:
+        if not dhan:
+            return fail("Dhan SDK/client not initialised")
+        m = getattr(dhan, body.get("method"))
+        res = m(**(body.get("kwargs") or {}))
+        return ok(res)
+    except Exception as e:
+        return fail(str(e), data=body)
+
+@app.post("/dhan/exec", summary="Dhanhq Exec")
+def dhanhq_exec(code: str = Body(..., embed=True)):
+    """
+    Execute small snippets that return 'res' variable.
+    """
+    try:
+        if not dhan:
+            return fail("Dhan SDK/client not initialised")
+        # Very restricted exec environment
+        loc = {"dhan": dhan, "res": None}
+        exec(code, {}, loc)
+        return ok(loc.get("res"))
+    except Exception as e:
+        return fail(str(e))
+
+# --- AI Endpoints -------------------------------------------------------------
+def _chat(model: str, system: str, user: str) -> str:
+    if not OPENAI_OK:
+        raise RuntimeError("OpenAI key missing")
+    # Using legacy Completion-like messages with Chat Completions
+    from openai import OpenAI
+    client = OpenAI(api_key=openai.api_key)
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[{"role":"system","content":system},{"role":"user","content":user}],
+        temperature=0.2,
+    )
+    return resp.choices[0].message.content or ""
+
+AI_MODEL_MARKET  = os.getenv("AI_MODEL_MARKET",  "gpt-4o-mini")
+AI_MODEL_STRATEGY= os.getenv("AI_MODEL_STRATEGY","gpt-4o-mini")
+AI_MODEL_PAYOFF  = os.getenv("AI_MODEL_PAYOFF",  "gpt-4o-mini")
+
+@app.post("/ai/marketview", summary="Ai Marketview")
 def ai_marketview(body: AiMarketIn):
-    sys = ("You are an options market analyst for Indian markets. "
-           "Give crisp view (3-6 bullets): direction/bias, key OI walls, IV trend, PCR context, risks. "
-           "No financial advice disclaimer needed.")
-    user = json.dumps(body.dict(exclude_none=True))
-    txt = _chat(AI_MODEL_MARKET, sys, f"Market snapshot JSON:\n{user}")
-    return ok({"ai_text": txt})
+    try:
+        sys = ("You are an options market analyst for Indian markets. "
+               "Give crisp view (3-6 bullets): direction, key levels, IV/volatility, OI hints. "
+               "No financial advice disclaimer needed.")
+        user = json.dumps(body.dict(exclude_none=True))
+        txt = _chat(AI_MODEL_MARKET, sys, f"Market snapshot request: {user}")
+        return ok({"ai_text": txt})
+    except Exception as e:
+        return fail(str(e))
 
-@app.post("/ai/strategy")
+@app.post("/ai/strategy", summary="Ai Strategy")
 def ai_strategy(body: AiStrategyIn):
-    sys = ("You are an options strategist. Propose 1-2 strategies (with strikes, qty, entry, max loss, max profit, breakevens). "
-           "Prefer risk-defined spreads; include management notes. Output in bullet points.")
-    user = json.dumps(body.dict(exclude_none=True))
-    txt = _chat(AI_MODEL_STRATEGY, sys, f"Inputs JSON:\n{user}")
-    return ok({"ai_text": txt})
+    try:
+        # Auto map if symbol given
+        if body.symbol and not (body.under_security_id and body.under_exchange_segment):
+            uid, seg = resolve_underlying(body.symbol)
+            body.under_security_id = uid
+            body.under_exchange_segment = seg
 
-@app.post("/ai/payoff")
+        sys = ("You are an options strategist. Propose 1-2 strategies with entry, SL, target, "
+               "max loss, Greeks idea, rationale; risk-aware; "
+               "present in neat bullet JSON.")
+        user = json.dumps(body.dict(exclude_none=True))
+        txt = _chat(AI_MODEL_STRATEGY, sys, f"Inputs JSON: {user}")
+        return ok({"ai_text": txt})
+    except Exception as e:
+        return fail(str(e))
+
+@app.post("/ai/payoff", summary="Ai Payoff")
 def ai_payoff(body: AiPayoffIn):
-    sys = ("You are a payoff analyst. From given legs and spot, compute high-level commentary: "
-           "directional exposure, approximate max loss/profit and important breakeven hints. "
-           "If inputs insufficient, say exactly what's missing.")
-    user = json.dumps(body.dict(exclude_none=True))
-    txt = _chat(AI_MODEL_PAYOFF, sys, f"Strategy legs + spot:\n{user}")
-    return ok({"ai_text": txt})
+    try:
+        sys = ("You compute option strategy payoff and summarize P&L profile, BE points, "
+               "greeks intuition, and risk notes for retail trader.")
+        user = json.dumps(body.dict(exclude_none=True))
+        txt = _chat(AI_MODEL_PAYOFF, sys, f"Compute payoff for: {user}")
+        return ok({"ai_text": txt})
+    except Exception as e:
+        return fail(str(e))
 
-@app.post("/ai/test")
-def ai_test():
-    txt = _chat("gpt-4o-mini", "Be concise.", "Say 'AI OK' and nothing else.")
-    return ok({"ai_text": txt})
+@app.post("/ai/test", summary="Ai Test")
+def ai_test(prompt: str = Body("Say hello", embed=True)):
+    try:
+        sys = "Be concise."
+        txt = _chat(AI_MODEL_MARKET, sys, prompt)
+        return ok({"ai_text": txt})
+    except Exception as e:
+        return fail(str(e))
+
+
+# --- Uvicorn entry (local dev) -----------------------------------------------
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
