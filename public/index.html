@@ -21,6 +21,7 @@
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background-color: #f8f9fa;
             color: #333;
+            padding-top: 76px;
         }
         
         .navbar {
@@ -35,107 +36,177 @@
             color: white;
             padding: 80px 0;
             margin-bottom: 40px;
-        }
-        
-        .dashboard-card {
-            border-radius: 10px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
-            transition: transform 0.3s ease;
-            background: white;
-            height: 100%;
-            margin-bottom: 20px;
-        }
-        
-        .dashboard-card:hover {
-            transform: translateY(-5px);
-        }
-        
-        .card-header {
-            background: linear-gradient(135deg, var(--secondary-color), var(--primary-color));
-            color: white;
-            border-radius: 10px 10px 0 0 !important;
+            text-align: center;
         }
         
         .market-index {
             background: linear-gradient(135deg, #27ae60, #2ecc71);
             color: white;
             border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+            text-align: center;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            transition: transform 0.3s ease;
+        }
+        
+        .market-index:hover {
+            transform: translateY(-5px);
         }
         
         .index-value {
-            font-size: 1.8rem;
+            font-size: 2rem;
             font-weight: bold;
+            margin: 10px 0;
         }
         
         .index-change {
             font-size: 1rem;
-            padding: 3px 8px;
-            border-radius: 4px;
+            padding: 5px 12px;
+            border-radius: 20px;
             background: rgba(255, 255, 255, 0.2);
+            display: inline-block;
+            margin-bottom: 10px;
         }
         
         .positive {
-            color: #2ecc71;
+            background-color: rgba(39, 174, 96, 0.3);
         }
         
         .negative {
-            color: #e74c3c;
+            background-color: rgba(231, 76, 60, 0.3);
         }
         
         .btn-primary {
             background: var(--secondary-color);
             border: none;
+            padding: 12px 24px;
+            border-radius: 30px;
+            font-weight: 600;
+            transition: all 0.3s ease;
         }
         
         .btn-primary:hover {
             background: var(--primary-color);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+        }
+        
+        .btn-outline-light {
+            border-radius: 30px;
+            padding: 12px 24px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-outline-light:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
         }
         
         .feature-card {
             text-align: center;
-            padding: 30px 20px;
-            border-radius: 10px;
+            padding: 40px 30px;
+            border-radius: 15px;
             background: white;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.08);
             transition: all 0.3s ease;
             height: 100%;
+            border: 1px solid rgba(0, 0, 0, 0.05);
         }
         
         .feature-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+            transform: translateY(-10px);
+            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.15);
         }
         
         .feature-icon {
-            font-size: 3rem;
+            font-size: 3.5rem;
+            margin-bottom: 25px;
+            color: var(--secondary-color);
+        }
+        
+        .feature-card h3 {
             margin-bottom: 20px;
-            color: var(--secondary-color);
+            color: var(--primary-color);
         }
         
-        footer {
-            background: var(--dark-color);
-            color: white;
-            padding: 40px 0 20px;
-            margin-top: 60px;
+        .feature-card p {
+            color: #666;
+            margin-bottom: 25px;
+            line-height: 1.6;
         }
         
-        .social-links a {
-            color: white;
+        .section-title {
+            text-align: center;
+            margin-bottom: 50px;
+            color: var(--primary-color);
+            position: relative;
+            padding-bottom: 15px;
+        }
+        
+        .section-title:after {
+            content: '';
+            display: block;
+            width: 80px;
+            height: 4px;
+            background: var(--secondary-color);
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            border-radius: 2px;
+        }
+        
+        .navbar-brand {
+            font-weight: 700;
             font-size: 1.5rem;
-            margin-right: 15px;
-            transition: color 0.3s;
         }
         
-        .social-links a:hover {
-            color: var(--secondary-color);
+        .nav-link {
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        
+        .nav-link:hover {
+            color: var(--secondary-color) !important;
+        }
+        
+        .hero-content {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        .hero-content h1 {
+            font-size: 3.5rem;
+            font-weight: 700;
+            margin-bottom: 20px;
+        }
+        
+        .hero-content p {
+            font-size: 1.25rem;
+            margin-bottom: 40px;
+            opacity: 0.9;
+        }
+        
+        @media (max-width: 768px) {
+            .hero-content h1 {
+                font-size: 2.5rem;
+            }
+            
+            .hero-content p {
+                font-size: 1.1rem;
+            }
+            
+            .index-value {
+                font-size: 1.5rem;
+            }
         }
     </style>
 </head>
 <body>
     <!-- Navigation -->
-    <nav class="navbar navbar-expand-lg navbar-dark sticky-top">
+    <nav class="navbar navbar-expand-lg navbar-dark fixed-top">
         <div class="container">
             <a class="navbar-brand" href="#">
                 <i class="fas fa-chart-line me-2"></i>
@@ -147,19 +218,19 @@
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav ms-auto">
                     <li class="nav-item">
-                        <a class="nav-link active" href="#"><i class="fas fa-home"></i> Home</a>
+                        <a class="nav-link active" href="#">Home</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="dashboard.html"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+                        <a class="nav-link" href="dashboard.html">Dashboard</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="#"><i class="fas fa-project-diagram"></i> Strategies</a>
+                        <a class="nav-link" href="#">Strategies</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="#"><i class="fas fa-book"></i> Education</a>
+                        <a class="nav-link" href="#">Education</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="#"><i class="fas fa-user"></i> Login</a>
+                        <a class="nav-link" href="#">Login</a>
                     </li>
                 </ul>
             </div>
@@ -168,49 +239,53 @@
 
     <!-- Hero Section -->
     <section class="hero-section">
-        <div class="container text-center">
-            <h1 class="display-4 fw-bold mb-4">Advanced Options Trading Analysis</h1>
-            <p class="lead mb-4">AI-powered analytics and insights to maximize your options trading performance</p>
-            <a href="dashboard.html" class="btn btn-primary btn-lg me-3"><i class="fas fa-rocket me-2"></i>Launch Dashboard</a>
-            <a href="#" class="btn btn-outline-light btn-lg"><i class="fas fa-book me-2"></i>Learn More</a>
+        <div class="container">
+            <div class="hero-content">
+                <h1>Advanced Options Trading Analysis</h1>
+                <p>AI-powered analytics and insights to maximize your options trading performance</p>
+                <div class="hero-buttons">
+                    <a href="dashboard.html" class="btn btn-primary me-3"><i class="fas fa-rocket me-2"></i>Launch Dashboard</a>
+                    <a href="#" class="btn btn-outline-light"><i class="fas fa-book me-2"></i>Learn More</a>
+                </div>
+            </div>
         </div>
     </section>
 
-    <!-- Market Indices -->
-    <section class="mb-5">
+    <!-- Market Indices Section -->
+    <section class="py-5">
         <div class="container">
-            <h2 class="text-center mb-4">Asia Stock Indices</h2>
+            <h2 class="section-title">Asia Stock Indices</h2>
             <div class="row">
                 <div class="col-md-3 col-6 mb-4">
-                    <div class="market-index text-center">
+                    <div class="market-index">
                         <h5>NIFTY 50</h5>
                         <div class="index-value">24,967.75</div>
                         <div class="index-change positive">+1.2%</div>
-                        <div class="index-volume mt-2">Volume: 123.4M</div>
+                        <div class="index-volume">Volume: 123.4M</div>
                     </div>
                 </div>
                 <div class="col-md-3 col-6 mb-4">
-                    <div class="market-index text-center" style="background: linear-gradient(135deg, #3498db, #2980b9);">
+                    <div class="market-index" style="background: linear-gradient(135deg, #3498db, #2980b9);">
                         <h5>SENSEX</h5>
                         <div class="index-value">73,142.43</div>
                         <div class="index-change positive">+0.8%</div>
-                        <div class="index-volume mt-2">Volume: 98.7M</div>
+                        <div class="index-volume">Volume: 98.7M</div>
                     </div>
                 </div>
                 <div class="col-md-3 col-6 mb-4">
-                    <div class="market-index text-center" style="background: linear-gradient(135deg, #9b59b6, #8e44ad);">
+                    <div class="market-index" style="background: linear-gradient(135deg, #9b59b6, #8e44ad);">
                         <h5>Hang Seng</h5>
                         <div class="index-value">18,234.67</div>
                         <div class="index-change negative">-0.5%</div>
-                        <div class="index-volume mt-2">Volume: 87.6M</div>
+                        <div class="index-volume">Volume: 87.6M</div>
                     </div>
                 </div>
                 <div class="col-md-3 col-6 mb-4">
-                    <div class="market-index text-center" style="background: linear-gradient(135deg, #e67e22, #d35400);">
+                    <div class="market-index" style="background: linear-gradient(135deg, #e67e22, #d35400);">
                         <h5>Nikkei 225</h5>
                         <div class="index-value">38,123.45</div>
                         <div class="index-change positive">+2.1%</div>
-                        <div class="index-volume mt-2">Volume: 112.3M</div>
+                        <div class="index-volume">Volume: 112.3M</div>
                     </div>
                 </div>
             </div>
@@ -218,9 +293,9 @@
     </section>
 
     <!-- Features Section -->
-    <section class="mb-5">
+    <section class="py-5 bg-light">
         <div class="container">
-            <h2 class="text-center mb-5">Powerful Options Analysis Tools</h2>
+            <h2 class="section-title">Powerful Options Analysis Tools</h2>
             <div class="row">
                 <div class="col-md-4 mb-4">
                     <div class="feature-card">
@@ -256,136 +331,8 @@
         </div>
     </section>
 
-    <!-- Dashboard Preview -->
-    <section class="mb-5">
-        <div class="container">
-            <h2 class="text-center mb-4">Options Analysis Dashboard</h2>
-            <div class="row">
-                <div class="col-md-6 mb-4">
-                    <div class="dashboard-card card">
-                        <div class="card-header">
-                            <h5 class="card-title mb-0"><i class="fas fa-link me-2"></i>Options Chain - NIFTY</h5>
-                        </div>
-                        <div class="card-body">
-                            <div class="table-responsive">
-                                <table class="table table-sm">
-                                    <thead>
-                                        <tr>
-                                            <th>Strike</th>
-                                            <th>Calls OI</th>
-                                            <th>Puts OI</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <tr>
-                                            <td>24,500</td>
-                                            <td>12,345 <span class="negative">-12%</span></td>
-                                            <td>23,456 <span class="positive">+8%</span></td>
-                                        </tr>
-                                        <tr>
-                                            <td>24,700</td>
-                                            <td>18,901 <span class="positive">+3%</span></td>
-                                            <td>19,876 <span class="positive">+15%</span></td>
-                                        </tr>
-                                        <tr>
-                                            <td>24,900</td>
-                                            <td>25,678 <span class="positive">+12%</span></td>
-                                            <td>15,432 <span class="negative">-4%</span></td>
-                                        </tr>
-                                    </tbody>
-                                </table>
-                            </div>
-                            <div class="text-center">
-                                <a href="dashboard.html" class="btn btn-primary btn-sm">View Full Dashboard</a>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-6 mb-4">
-                    <div class="dashboard-card card">
-                        <div class="card-header">
-                            <h5 class="card-title mb-0"><i class="fas fa-robot me-2"></i>AI Recommendations</h5>
-                        </div>
-                        <div class="card-body">
-                            <div class="alert alert-success">
-                                <h6><i class="fas fa-check-circle me-2"></i>Bull Call Spread</h6>
-                                <p class="mb-1">Buy 24,800 CE | Sell 25,000 CE</p>
-                                <small>Max Profit: ₹4,200 | Max Loss: ₹1,800</small>
-                            </div>
-                            <div class="alert alert-info mt-3">
-                                <h6><i class="fas fa-info-circle me-2"></i>Iron Condor</h6>
-                                <p class="mb-1">Sell 24,600 PE | Buy 24,400 PE</p>
-                                <small>Max Profit: ₹3,500 | Max Loss: ₹6,500</small>
-                            </div>
-                            <div class="text-center mt-3">
-                                <a href="#" class="btn btn-primary btn-sm">Get More Recommendations</a>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- Testimonials -->
-    <section class="mb-5 bg-light py-5">
-        <div class="container">
-            <h2 class="text-center mb-4">What Traders Say</h2>
-            <div class="row">
-                <div class="col-md-4 mb-4">
-                    <div class="card h-100">
-                        <div class="card-body text-center">
-                            <img src="https://randomuser.me/api/portraits/men/32.jpg" class="rounded-circle mb-3" alt="Trader" width="80">
-                            <h5 class="card-title">Rohan S.</h5>
-                            <p class="card-text">"The AI recommendations have improved my options trading returns by 38% in just three months."</p>
-                            <div class="text-warning">
-                                <i class="fas fa-star"></i>
-                                <i class="fas fa-star"></i>
-                                <i class="fas fa-star"></i>
-                                <i class="fas fa-star"></i>
-                                <i class="fas fa-star"></i>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-4 mb-4">
-                    <div class="card h-100">
-                        <div class="card-body text-center">
-                            <img src="https://randomuser.me/api/portraits/women/44.jpg" class="rounded-circle mb-3" alt="Trader" width="80">
-                            <h5 class="card-title">Priya M.</h5>
-                            <p class="card-text">"The volatility analysis tools helped me avoid significant losses during the recent market correction."</p>
-                            <div class="text-warning">
-                                <i class="fas fa-star"></i>
-                                <i class="fas fa-star"></i>
-                                <i class="fas fa-star"></i>
-                                <i class="fas fa-star"></i>
-                                <i class="fas fa-star-half-alt"></i>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-4 mb-4">
-                    <div class="card h-100">
-                        <div class="card-body text-center">
-                            <img src="https://randomuser.me/api/portraits/men/62.jpg" class="rounded-circle mb-3" alt="Trader" width="80">
-                            <h5 class="card-title">Arjun K.</h5>
-                            <p class="card-text">"The options chain visualization is the best I've used. It makes finding opportunities so much easier."</p>
-                            <div class="text-warning">
-                                <i class="fas fa-star"></i>
-                                <i class="fas fa-star"></i>
-                                <i class="fas fa-star"></i>
-                                <i class="fas fa-star"></i>
-                                <i class="fas fa-star"></i>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </section>
-
     <!-- Call to Action -->
-    <section class="py-5 mb-5" style="background: linear-gradient(135deg, var(--secondary-color), var(--primary-color)); color: white;">
+    <section class="py-5" style="background: linear-gradient(135deg, var(--secondary-color), var(--primary-color)); color: white;">
         <div class="container text-center">
             <h2 class="mb-4">Ready to Transform Your Options Trading?</h2>
             <p class="lead mb-4">Join thousands of successful traders using our platform</p>
@@ -395,16 +342,16 @@
     </section>
 
     <!-- Footer -->
-    <footer>
+    <footer class="bg-dark text-white py-5">
         <div class="container">
             <div class="row">
                 <div class="col-md-4 mb-4">
                     <h5>Options Analysis Platform</h5>
                     <p>Advanced AI-powered tools for options traders of all experience levels.</p>
                     <div class="social-links">
-                        <a href="#"><i class="fab fa-twitter"></i></a>
-                        <a href="#"><i class="fab fa-facebook"></i></a>
-                        <a href="#"><i class="fab fa-linkedin"></i></a>
+                        <a href="#"><i class="fab fa-twitter me-2"></i></a>
+                        <a href="#"><i class="fab fa-facebook me-2"></i></a>
+                        <a href="#"><i class="fab fa-linkedin me-2"></i></a>
                         <a href="#"><i class="fab fa-instagram"></i></a>
                     </div>
                 </div>
@@ -435,7 +382,7 @@
                     </div>
                 </div>
             </div>
-            <hr class="mt-4 mb-4" style="border-color: rgba(255,255,255,0.1);">
+            <hr class="my-4">
             <div class="text-center">
                 <p class="mb-0">&copy; 2023 Options Analysis Platform. All rights reserved.</p>
             </div>
@@ -443,5 +390,27 @@
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Simple script to update market data (would be replaced with real API calls)
+        document.addEventListener('DOMContentLoaded', function() {
+            // Simulate live data updates
+            setInterval(() => {
+                const changes = document.querySelectorAll('.index-change');
+                changes.forEach(change => {
+                    const isPositive = change.classList.contains('positive');
+                    const currentValue = parseFloat(change.textContent.replace(/[+-]/g, ''));
+                    const randomChange = (Math.random() * 0.5).toFixed(2);
+                    
+                    if (Math.random() > 0.5) {
+                        change.textContent = '+' + randomChange + '%';
+                        change.className = 'index-change positive';
+                    } else {
+                        change.textContent = '-' + randomChange + '%';
+                        change.className = 'index-change negative';
+                    }
+                });
+            }, 5000);
+        });
+    </script>
 </body>
 </html>
