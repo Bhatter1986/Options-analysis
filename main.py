@@ -1,10 +1,11 @@
+# main.py
 import os
 import csv
 import json
 import logging
 from pathlib import Path
 from typing import Optional, Dict, Any, List
-from datetime import datetime, date
+from datetime import datetime
 
 import requests
 from dotenv import load_dotenv
@@ -12,8 +13,6 @@ from fastapi import FastAPI, HTTPException, Request, Depends, Query, Body
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-import pandas as pd
-import numpy as np
 
 # Load environment variables
 load_dotenv()
