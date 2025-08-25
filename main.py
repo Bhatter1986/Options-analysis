@@ -9,7 +9,14 @@ import requests
 from fastapi import FastAPI, HTTPException, Query, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from openai import OpenAI
 
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+ai_client = OpenAI(api_key=OPENAI_API_KEY)
+
+def need_ai():
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY missing.")
 # ---- DhanHQ SDK ----
 # pip install dhanhq==2.0.2  (requirements.txt me "dhanhq" likha ho)
 from dhanhq import dhanhq, marketfeed
@@ -477,3 +484,73 @@ def dhanhq_exec(body: SDKExec):
 @app.get("/")
 def root():
     return ok({"message": f"{APP_NAME} up", "docs": "/docs"})
+
+
+# ---------- AI MODELS ----------
+AI_MODEL_MARKET = "gpt-4o-mini"       # fast + cheap
+AI_MODEL_STRATEGY = "gpt-4o-mini"     # you can switch to gpt-4.1 if needed
+AI_MODEL_PAYOFF = "gpt-4o-mini"
+
+def _chat(model: str, sys: str, user: str) -> str:
+    need_ai()
+    try:
+        resp = ai_client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role":"system","content":sys},
+                {"role":"user","content":user}
+            ],
+            temperature=0.3,
+        )
+        return resp.choices[0].message.content
+    except Exception as e:
+        raise HTTPException(500, f"AI error: {type(e).__name__}: {e}")
+
+class AiMarketIn(BaseModel):
+    under_security_id: Optional[str] = None
+    under_exchange_segment: Optional[str] = None
+    snapshot: Optional[Dict[str, Any]] = None  # e.g. recent OI/IV/PCR
+
+class AiStrategyIn(BaseModel):
+    under_security_id: Optional[str] = None
+    under_exchange_segment: Optional[str] = None
+    bias: Optional[str] = "neutral"   # bullish/bearish/neutral
+    risk: Optional[str] = "moderate"  # low/moderate/high
+    capital: Optional[float] = 50000
+    constraints: Optional[Dict[str, Any]] = None  # max legs, rr, etc.
+    context: Optional[Dict[str, Any]] = None      # pcr/iv/oi walls
+
+class AiPayoffIn(BaseModel):
+    legs: List[Dict[str, Any]]  # [{side:"BUY/SELL", type:"CE/PE", strike:..., qty:..., premium:..., expiry:"YYYY-MM-DD"}]
+    spot: float
+
+@app.post("/ai/marketview")
+def ai_marketview(body: AiMarketIn):
+    sys = ("You are an options market analyst for Indian markets. "
+           "Give crisp view (3-6 bullets): direction/bias, key OI walls, IV trend, PCR context, risks. "
+           "No financial advice disclaimer needed.")
+    user = json.dumps(body.dict(exclude_none=True))
+    txt = _chat(AI_MODEL_MARKET, sys, f"Market snapshot JSON:\n{user}")
+    return ok({"ai_text": txt})
+
+@app.post("/ai/strategy")
+def ai_strategy(body: AiStrategyIn):
+    sys = ("You are an options strategist. Propose 1-2 strategies (with strikes, qty, entry, max loss, max profit, breakevens). "
+           "Prefer risk-defined spreads; include management notes. Output in bullet points.")
+    user = json.dumps(body.dict(exclude_none=True))
+    txt = _chat(AI_MODEL_STRATEGY, sys, f"Inputs JSON:\n{user}")
+    return ok({"ai_text": txt})
+
+@app.post("/ai/payoff")
+def ai_payoff(body: AiPayoffIn):
+    sys = ("You are a payoff analyst. From given legs and spot, compute high-level commentary: "
+           "directional exposure, approximate max loss/profit and important breakeven hints. "
+           "If inputs insufficient, say exactly what's missing.")
+    user = json.dumps(body.dict(exclude_none=True))
+    txt = _chat(AI_MODEL_PAYOFF, sys, f"Strategy legs + spot:\n{user}")
+    return ok({"ai_text": txt})
+
+@app.post("/ai/test")
+def ai_test():
+    txt = _chat("gpt-4o-mini", "Be concise.", "Say 'AI OK' and nothing else.")
+    return ok({"ai_text": txt})
