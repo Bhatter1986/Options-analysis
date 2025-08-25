@@ -19,31 +19,38 @@
         
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #f8f9fa;
-            color: #333;
+            background-color: #1a1a2e;
+            color: #e6e6e6;
+            padding-top: 20px;
+        }
+        
+        .dashboard-container {
+            max-width: 1800px;
+            margin: 0 auto;
+            padding: 20px;
         }
         
         .navbar {
             background: linear-gradient(135deg, var(--primary-color), var(--dark-color));
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        }
-        
-        .dashboard-card {
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
             border-radius: 10px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
-            transition: transform 0.3s ease;
-            background: white;
-            height: 100%;
+            margin-bottom: 20px;
         }
         
-        .dashboard-card:hover {
-            transform: translateY(-5px);
+        .card {
+            background: #2d3047;
+            border: none;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            margin-bottom: 20px;
+            color: #e6e6e6;
         }
         
         .card-header {
             background: linear-gradient(135deg, var(--secondary-color), var(--primary-color));
             color: white;
             border-radius: 10px 10px 0 0 !important;
+            font-weight: 600;
         }
         
         .market-index {
@@ -52,6 +59,7 @@
             border-radius: 8px;
             padding: 15px;
             margin-bottom: 15px;
+            text-align: center;
         }
         
         .index-value {
@@ -83,387 +91,346 @@
             background: var(--primary-color);
         }
         
-        .analytics-section {
-            background: white;
+        .table-dark {
+            background: #2d3047;
+            color: #e6e6e6;
+        }
+        
+        .table-hover tbody tr:hover {
+            background-color: rgba(52, 152, 219, 0.2);
+            color: #fff;
+        }
+        
+        .sudarshan-chakra {
+            width: 100%;
+            height: 300px;
+            background: conic-gradient(
+                from 0deg,
+                #2ecc71 0% 10%,
+                #3498db 10% 20%,
+                #9b59b6 20% 30%,
+                #e74c3c 30% 40%,
+                #f39c12 40% 50%,
+                #1abc9c 50% 60%,
+                #34495e 60% 70%,
+                #e67e22 70% 80%,
+                #16a085 80% 90%,
+                #8e44ad 90% 100%
+            );
+            border-radius: 50%;
+            margin: 0 auto;
+            position: relative;
+            box-shadow: 0 0 25px rgba(46, 204, 113, 0.5);
+        }
+        
+        .chakra-center {
+            position: absolute;
+            width: 80px;
+            height: 80px;
+            background: var(--primary-color);
+            border-radius: 50%;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
+        }
+        
+        .tradingview-widget {
+            width: 100%;
+            height: 400px;
+            background: #2d3047;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #e6e6e6;
+            font-weight: bold;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+        
+        .expiry-selector {
+            background: #2d3047;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+        
+        .ai-analysis {
+            background: linear-gradient(135deg, #9b59b6, #8e44ad);
             border-radius: 10px;
             padding: 20px;
-            margin-top: 20px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+            margin-bottom: 20px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
         }
         
-        .sidebar {
-            background: var(--primary-color);
-            color: white;
-            height: 100vh;
-            position: sticky;
-            top: 0;
+        .section-title {
+            color: var(--secondary-color);
+            border-bottom: 2px solid var(--secondary-color);
+            padding-bottom: 10px;
+            margin-bottom: 20px;
         }
         
-        .sidebar .nav-link {
-            color: rgba(255, 255, 255, 0.8);
-            padding: 12px 20px;
-            margin: 5px 0;
-            border-radius: 5px;
+        .strike-price {
+            font-weight: bold;
+            color: var(--secondary-color);
         }
         
-        .sidebar .nav-link:hover, .sidebar .nav-link.active {
-            background: rgba(255, 255, 255, 0.1);
-            color: white;
+        .call-oi {
+            color: #2ecc71;
         }
         
-        .sidebar .nav-link i {
-            margin-right: 10px;
-            width: 20px;
-            text-align: center;
+        .put-oi {
+            color: #e74c3c;
         }
         
-        @media (max-width: 768px) {
-            .sidebar {
-                height: auto;
-                position: relative;
-            }
+        .highlight {
+            background: rgba(52, 152, 219, 0.3) !important;
         }
     </style>
 </head>
 <body>
-    <!-- Navigation -->
-    <nav class="navbar navbar-expand-lg navbar-dark">
-        <div class="container-fluid">
-            <a class="navbar-brand" href="#">
-                <i class="fas fa-chart-line me-2"></i>
-                Options Analysis Platform
-            </a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav ms-auto">
-                    <li class="nav-item">
-                        <a class="nav-link" href="#"><i class="fas fa-home"></i> Home</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="#"><i class="fas fa-bell"></i> Alerts</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="#"><i class="fas fa-cog"></i> Settings</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="#"><i class="fas fa-user"></i> Login</a>
-                    </li>
-                </ul>
-            </div>
-        </div>
-    </nav>
-
-    <div class="container-fluid">
-        <div class="row">
-            <!-- Sidebar -->
-            <div class="col-lg-2 col-md-3 p-0 sidebar">
-                <div class="d-flex flex-column p-3">
-                    <ul class="nav nav-pills flex-column mb-auto">
+    <div class="dashboard-container">
+        <!-- Header -->
+        <nav class="navbar navbar-expand-lg navbar-dark">
+            <div class="container-fluid">
+                <a class="navbar-brand" href="#">
+                    <i class="fas fa-chart-line me-2"></i>
+                    Advanced Options Analysis Dashboard
+                </a>
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <div class="collapse navbar-collapse" id="navbarNav">
+                    <ul class="navbar-nav ms-auto">
                         <li class="nav-item">
-                            <a href="#" class="nav-link active">
-                                <i class="fas fa-tachometer-alt"></i>
-                                Dashboard
-                            </a>
+                            <a class="nav-link active" href="#"><i class="fas fa-home"></i> Home</a>
                         </li>
-                        <li>
-                            <a href="#" class="nav-link">
-                                <i class="fas fa-search"></i>
-                                Market Analysis
-                            </a>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#"><i class="fas fa-bell"></i> Alerts</a>
                         </li>
-                        <li>
-                            <a href="#" class="nav-link">
-                                <i class="fas fa-project-diagram"></i>
-                                Options Strategies
-                            </a>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#"><i class="fas fa-cog"></i> Settings</a>
                         </li>
-                        <li>
-                            <a href="#" class="nav-link">
-                                <i class="fas fa-chart-bar"></i>
-                                Analytics
-                            </a>
-                        </li>
-                        <li>
-                            <a href="#" class="nav-link">
-                                <i class="fas fa-wallet"></i>
-                                Portfolio
-                            </a>
-                        </li>
-                        <li>
-                            <a href="#" class="nav-link">
-                                <i class="fas fa-cog"></i>
-                                Settings
-                            </a>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#"><i class="fas fa-user"></i> Login</a>
                         </li>
                     </ul>
                 </div>
             </div>
+        </nav>
+
+        <div class="row">
+            <!-- Left Sidebar -->
+            <div class="col-lg-3">
+                <!-- Market Indices -->
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fas fa-chart-bar me-2"></i>Market Indices
+                    </div>
+                    <div class="card-body">
+                        <div class="market-index">
+                            <h5>NIFTY 50</h5>
+                            <div class="index-value">24,967.75</div>
+                            <div class="index-change positive">+1.2%</div>
+                            <div class="index-volume">Volume: 123.4M</div>
+                        </div>
+                        <div class="market-index" style="background: linear-gradient(135deg, #3498db, #2980b9);">
+                            <h5>BANKNIFTY</h5>
+                            <div class="index-value">52,345.67</div>
+                            <div class="index-change positive">+0.8%</div>
+                            <div class="index-volume">Volume: 87.6M</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Expiry Selector -->
+                <div class="expiry-selector">
+                    <h5 class="section-title"><i class="fas fa-calendar-alt me-2"></i>Select Expiry</h5>
+                    <div class="list-group">
+                        <a href="#" class="list-group-item list-group-item-action active">29 Jun 2023 (Weekly)</a>
+                        <a href="#" class="list-group-item list-group-item-action">6 Jul 2023 (Weekly)</a>
+                        <a href="#" class="list-group-item list-group-item-action">13 Jul 2023 (Weekly)</a>
+                        <a href="#" class="list-group-item list-group-item-action">27 Jul 2023 (Monthly)</a>
+                    </div>
+                </div>
+
+                <!-- AI Analysis -->
+                <div class="ai-analysis">
+                    <h5 class="section-title"><i class="fas fa-robot me-2"></i>AI Analysis</h5>
+                    <div class="alert alert-info">
+                        <h6><i class="fas fa-lightbulb me-2"></i>Market Outlook: Bullish</h6>
+                        <p>NIFTY shows strength with support at 24,800. Consider bull call spreads for next week.</p>
+                    </div>
+                    <button class="btn btn-light w-100"><i class="fas fa-brain me-2"></i>Generate Analysis</button>
+                </div>
+            </div>
 
             <!-- Main Content -->
-            <div class="col-lg-10 col-md-9 p-4">
-                <!-- Market Indices -->
-                <div class="row mb-4">
-                    <div class="col-12">
-                        <h2 class="mb-4">Asia Stock Indices</h2>
-                        <div class="row">
-                            <div class="col-md-3 mb-3">
-                                <div class="market-index">
-                                    <div class="d-flex justify-content-between">
-                                        <h5>NIFTY 50</h5>
-                                        <span class="index-change positive">+1.2%</span>
-                                    </div>
-                                    <div class="index-value">24,967.75</div>
-                                    <div class="index-volume">Volume: 123.4M</div>
+            <div class="col-lg-6">
+                <!-- TradingView Widget -->
+                <div class="tradingview-widget">
+                    <div class="text-center">
+                        <i class="fas fa-chart-line fa-3x mb-3"></i>
+                        <h4>TradingView Chart</h4>
+                        <p>NIFTY 50 - Real-time Chart</p>
+                        <button class="btn btn-primary mt-2">Load Chart</button>
+                    </div>
+                </div>
+
+                <!-- Options Chain -->
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fas fa-link me-2"></i>NIFTY Options Chain - 29 Jun 2023
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-dark table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>CALLS</th>
+                                        <th>OI</th>
+                                        <th>CHNG OI</th>
+                                        <th>IV</th>
+                                        <th class="strike-price">STRIKE</th>
+                                        <th>IV</th>
+                                        <th>CHNG OI</th>
+                                        <th>OI</th>
+                                        <th>PUTS</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td>1,234.45</td>
+                                        <td class="call-oi">12,345</td>
+                                        <td class="positive">+234</td>
+                                        <td>18.2%</td>
+                                        <td class="strike-price highlight">24,800</td>
+                                        <td>16.7%</td>
+                                        <td class="negative">-123</td>
+                                        <td class="put-oi">23,456</td>
+                                        <td>45.65</td>
+                                    </tr>
+                                    <tr>
+                                        <td>1,123.90</td>
+                                        <td class="call-oi">15,678</td>
+                                        <td class="positive">+189</td>
+                                        <td>17.8%</td>
+                                        <td class="strike-price">24,900</td>
+                                        <td>17.2%</td>
+                                        <td class="positive">+56</td>
+                                        <td class="put-oi">21,234</td>
+                                        <td>89.10</td>
+                                    </tr>
+                                    <tr>
+                                        <td>987.65</td>
+                                        <td class="call-oi">18,901</td>
+                                        <td class="negative">-45</td>
+                                        <td>17.5%</td>
+                                        <td class="strike-price">25,000</td>
+                                        <td>17.8%</td>
+                                        <td class="positive">+167</td>
+                                        <td class="put-oi">19,876</td>
+                                        <td>123.40</td>
+                                    </tr>
+                                    <tr>
+                                        <td>876.50</td>
+                                        <td class="call-oi">22,345</td>
+                                        <td class="positive">+321</td>
+                                        <td>17.2%</td>
+                                        <td class="strike-price">25,100</td>
+                                        <td>18.3%</td>
+                                        <td class="positive">+234</td>
+                                        <td class="put-oi">17,654</td>
+                                        <td>167.85</td>
+                                    </tr>
+                                    <tr>
+                                        <td>765.40</td>
+                                        <td class="call-oi">25,678</td>
+                                        <td class="positive">+432</td>
+                                        <td>16.9%</td>
+                                        <td class="strike-price">25,200</td>
+                                        <td>18.7%</td>
+                                        <td class="negative">-78</td>
+                                        <td class="put-oi">15,432</td>
+                                        <td>210.90</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Sidebar -->
+            <div class="col-lg-3">
+                <!-- Sudarshan Chakra -->
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fas fa-dharmachakra me-2"></i>Sudarshan Chakra
+                    </div>
+                    <div class="card-body text-center">
+                        <div class="sudarshan-chakra">
+                            <div class="chakra-center">NIFTY</div>
+                        </div>
+                        <p class="mt-3">Options Risk Visualization</p>
+                        <div class="row mt-3">
+                            <div class="col-6">
+                                <div class="alert alert-success p-2">
+                                    <small>Calls: 65%</small>
                                 </div>
                             </div>
-                            <div class="col-md-3 mb-3">
-                                <div class="market-index" style="background: linear-gradient(135deg, #3498db, #2980b9);">
-                                    <div class="d-flex justify-content-between">
-                                        <h5>SENSEX</h5>
-                                        <span class="index-change positive">+0.8%</span>
-                                    </div>
-                                    <div class="index-value">73,142.43</div>
-                                    <div class="index-volume">Volume: 98.7M</div>
-                                </div>
-                            </div>
-                            <div class="col-md-3 mb-3">
-                                <div class="market-index" style="background: linear-gradient(135deg, #9b59b6, #8e44ad);">
-                                    <div class="d-flex justify-content-between">
-                                        <h5>Hang Seng</h5>
-                                        <span class="index-change negative">-0.5%</span>
-                                    </div>
-                                    <div class="index-value">18,234.67</div>
-                                    <div class="index-volume">Volume: 87.6M</div>
-                                </div>
-                            </div>
-                            <div class="col-md-3 mb-3">
-                                <div class="market-index" style="background: linear-gradient(135deg, #e67e22, #d35400);">
-                                    <div class="d-flex justify-content-between">
-                                        <h5>Nikkei 225</h5>
-                                        <span class="index-change positive">+2.1%</span>
-                                    </div>
-                                    <div class="index-value">38,123.45</div>
-                                    <div class="index-volume">Volume: 112.3M</div>
+                            <div class="col-6">
+                                <div class="alert alert-danger p-2">
+                                    <small>Puts: 35%</small>
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Options Analysis Dashboard -->
-                <div class="row">
-                    <div class="col-12">
-                        <h2 class="mb-4">Options Analysis Dashboard</h2>
+                <!-- Open Interest Analysis -->
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fas fa-chart-pie me-2"></i>Open Interest Analysis
                     </div>
-                </div>
-
-                <div class="row">
-                    <!-- Options Chain -->
-                    <div class="col-md-6 mb-4">
-                        <div class="dashboard-card card">
-                            <div class="card-header">
-                                <h5 class="card-title mb-0"><i class="fas fa-link me-2"></i>Options Chain - NIFTY</h5>
-                            </div>
-                            <div class="card-body">
-                                <div class="table-responsive">
-                                    <table class="table table-hover">
-                                        <thead>
-                                            <tr>
-                                                <th>Strike</th>
-                                                <th>Calls OI</th>
-                                                <th>Calls IV</th>
-                                                <th>Puts OI</th>
-                                                <th>Puts IV</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <tr>
-                                                <td>24,500</td>
-                                                <td>12,345 <span class="negative">-12%</span></td>
-                                                <td>18.2%</td>
-                                                <td>23,456 <span class="positive">+8%</span></td>
-                                                <td>16.7%</td>
-                                            </tr>
-                                            <tr>
-                                                <td>24,600</td>
-                                                <td>15,678 <span class="negative">-5%</span></td>
-                                                <td>17.8%</td>
-                                                <td>21,234 <span class="positive">+12%</span></td>
-                                                <td>17.2%</td>
-                                            </tr>
-                                            <tr>
-                                                <td>24,700</td>
-                                                <td>18,901 <span class="positive">+3%</span></td>
-                                                <td>17.5%</td>
-                                                <td>19,876 <span class="positive">+15%</span></td>
-                                                <td>17.8%</td>
-                                            </tr>
-                                            <tr>
-                                                <td>24,800</td>
-                                                <td>22,345 <span class="positive">+8%</span></td>
-                                                <td>17.2%</td>
-                                                <td>17,654 <span class="positive">+9%</span></td>
-                                                <td>18.3%</td>
-                                            </tr>
-                                            <tr>
-                                                <td>24,900</td>
-                                                <td>25,678 <span class="positive">+12%</span></td>
-                                                <td>16.9%</td>
-                                                <td>15,432 <span class="negative">-4%</span></td>
-                                                <td>18.7%</td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
-                                <button class="btn btn-primary btn-sm">View Full Chain</button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Volatility Analysis -->
-                    <div class="col-md-6 mb-4">
-                        <div class="dashboard-card card">
-                            <div class="card-header">
-                                <h5 class="card-title mb-0"><i class="fas fa-wave-square me-2"></i>Volatility Analysis</h5>
-                            </div>
-                            <div class="card-body">
-                                <canvas id="volatilityChart" height="250"></canvas>
-                                <div class="mt-3">
-                                    <div class="d-flex justify-content-between">
-                                        <span>Current IV: <strong>17.2%</strong></span>
-                                        <span class="positive">+2.3% from yesterday</span>
-                                    </div>
-                                    <div class="progress mt-2" style="height: 10px;">
-                                        <div class="progress-bar bg-success" role="progressbar" style="width: 65%;" aria-valuenow="65" aria-valuemin="0" aria-valuemax="100"></div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- AI Recommendations -->
-                    <div class="col-md-6 mb-4">
-                        <div class="dashboard-card card">
-                            <div class="card-header">
-                                <h5 class="card-title mb-0"><i class="fas fa-robot me-2"></i>AI Recommendations</h5>
-                            </div>
-                            <div class="card-body">
-                                <div class="alert alert-success">
-                                    <h6><i class="fas fa-check-circle me-2"></i>Bull Call Spread</h6>
-                                    <p class="mb-1">Buy 24,800 CE | Sell 25,000 CE</p>
-                                    <small>Max Profit: ₹4,200 | Max Loss: ₹1,800</small>
-                                </div>
-                                <div class="alert alert-info mt-3">
-                                    <h6><i class="fas fa-info-circle me-2"></i>Iron Condor</h6>
-                                    <p class="mb-1">Sell 24,600 PE | Buy 24,400 PE | Sell 25,200 CE | Buy 25,400 CE</p>
-                                    <small>Max Profit: ₹3,500 | Max Loss: ₹6,500</small>
-                                </div>
-                                <div class="alert alert-warning mt-3">
-                                    <h6><i class="fas fa-exclamation-triangle me-2"></i>Risk Level: Medium</h6>
-                                    <p class="mb-1">Market expected to trade in range with slight bullish bias</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Market Sentiment -->
-                    <div class="col-md-6 mb-4">
-                        <div class="dashboard-card card">
-                            <div class="card-header">
-                                <h5 class="card-title mb-0"><i class="fas fa-comments me-2"></i>Market Sentiment</h5>
-                            </div>
-                            <div class="card-body">
-                                <canvas id="sentimentChart" height="250"></canvas>
-                                <div class="mt-3">
-                                    <div class="row text-center">
-                                        <div class="col-4">
-                                            <div class="positive">Bullish: 45%</div>
-                                        </div>
-                                        <div class="col-4">
-                                            <div>Neutral: 30%</div>
-                                        </div>
-                                        <div class="col-4">
-                                            <div class="negative">Bearish: 25%</div>
-                                        </div>
-                                    </div>
-                                </div>
+                    <div class="card-body">
+                        <canvas id="oiChart" height="200"></canvas>
+                        <div class="mt-3">
+                            <div class="d-flex justify-content-between">
+                                <span>Max Pain: <strong>24,800</strong></span>
+                                <span>PCR: <strong>0.82</strong></span>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Analytics Section -->
-                <div class="analytics-section">
-                    <div class="row">
-                        <div class="col-12">
-                            <h3 class="mb-4">Advanced Analytics</h3>
-                        </div>
+                <!-- Dhan API Connection -->
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fas fa-plug me-2"></i>Dhan API Connection
                     </div>
-                    <div class="row">
-                        <div class="col-md-8">
-                            <div class="card">
-                                <div class="card-header">
-                                    <h5 class="card-title mb-0">NIFTY Price Movement with OI Analysis</h5>
-                                </div>
-                                <div class="card-body">
-                                    <canvas id="priceOiChart" height="300"></canvas>
-                                </div>
-                            </div>
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <span>Status:</span>
+                            <span class="badge bg-success">Connected</span>
                         </div>
-                        <div class="col-md-4">
-                            <div class="card mb-4">
-                                <div class="card-header">
-                                    <h5 class="card-title mb-0">Top Gainers</h5>
-                                </div>
-                                <div class="card-body">
-                                    <ul class="list-group list-group-flush">
-                                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                                            RELIANCE
-                                            <span class="positive">+3.2%</span>
-                                        </li>
-                                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                                            HDFCBANK
-                                            <span class="positive">+2.8%</span>
-                                        </li>
-                                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                                            INFY
-                                            <span class="positive">+2.5%</span>
-                                        </li>
-                                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                                            ICICIBANK
-                                            <span class="positive">+2.1%</span>
-                                        </li>
-                                    </ul>
-                                </div>
-                            </div>
-                            <div class="card">
-                                <div class="card-header">
-                                    <h5 class="card-title mb-0">Top Losers</h5>
-                                </div>
-                                <div class="card-body">
-                                    <ul class="list-group list-group-flush">
-                                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                                            TATASTEEL
-                                            <span class="negative">-2.3%</span>
-                                        </li>
-                                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                                            ONGC
-                                            <span class="negative">-1.8%</span>
-                                        </li>
-                                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                                            ITC
-                                            <span class="negative">-1.5%</span>
-                                        </li>
-                                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                                            SBIN
-                                            <span class="negative">-1.2%</span>
-                                        </li>
-                                    </ul>
-                                </div>
-                            </div>
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <span>Last Update:</span>
+                            <span>12:45:23 PM</span>
                         </div>
+                        <button class="btn btn-outline-light w-100 mb-2">
+                            <i class="fas fa-sync-alt me-2"></i>Refresh Data
+                        </button>
+                        <button class="btn btn-outline-primary w-100">
+                            <i class="fas fa-cog me-2"></i>API Settings
+                        </button>
                     </div>
                 </div>
             </div>
@@ -474,119 +441,77 @@
     <script>
         // Initialize charts
         document.addEventListener('DOMContentLoaded', function() {
-            // Volatility Chart
-            const volatilityCtx = document.getElementById('volatilityChart').getContext('2d');
-            new Chart(volatilityCtx, {
-                type: 'line',
+            // Open Interest Chart
+            const oiCtx = document.getElementById('oiChart').getContext('2d');
+            new Chart(oiCtx, {
+                type: 'bar',
                 data: {
-                    labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Today'],
-                    datasets: [{
-                        label: 'Implied Volatility',
-                        data: [16.2, 15.8, 16.5, 16.9, 17.5, 17.2],
-                        borderColor: '#3498db',
-                        backgroundColor: 'rgba(52, 152, 219, 0.1)',
-                        tension: 0.4,
-                        fill: true
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    plugins: {
-                        legend: {
-                            display: false
-                        }
-                    },
-                    scales: {
-                        y: {
-                            beginAtZero: false,
-                            title: {
-                                display: true,
-                                text: 'IV (%)'
-                            }
-                        }
-                    }
-                }
-            });
-
-            // Sentiment Chart
-            const sentimentCtx = document.getElementById('sentimentChart').getContext('2d');
-            new Chart(sentimentCtx, {
-                type: 'doughnut',
-                data: {
-                    labels: ['Bullish', 'Neutral', 'Bearish'],
-                    datasets: [{
-                        data: [45, 30, 25],
-                        backgroundColor: [
-                            '#27ae60',
-                            '#f39c12',
-                            '#e74c3c'
-                        ]
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    plugins: {
-                        legend: {
-                            position: 'bottom'
-                        }
-                    }
-                }
-            });
-
-            // Price and OI Chart
-            const priceOiCtx = document.getElementById('priceOiChart').getContext('2d');
-            new Chart(priceOiCtx, {
-                type: 'line',
-                data: {
-                    labels: ['9:30', '10:00', '10:30', '11:00', '11:30', '12:00', '12:30', '1:00', '1:30', '2:00', '2:30', '3:00', '3:30'],
+                    labels: ['24,600', '24,700', '24,800', '24,900', '25,000'],
                     datasets: [
                         {
-                            label: 'NIFTY Price',
-                            data: [24650, 24720, 24780, 24840, 24920, 24970, 24950, 24980, 24960, 24990, 24970, 24980, 24967],
-                            borderColor: '#3498db',
-                            yAxisID: 'y',
-                            tension: 0.3
+                            label: 'Call OI',
+                            data: [12000, 15000, 18000, 22000, 25000],
+                            backgroundColor: '#2ecc71'
                         },
                         {
-                            label: 'Open Interest',
-                            data: [124000, 125500, 127200, 128500, 129800, 131200, 130500, 129800, 128900, 128200, 127500, 127800, 127200],
-                            borderColor: '#e74c3c',
-                            yAxisID: 'y1',
-                            tension: 0.3
+                            label: 'Put OI',
+                            data: [18000, 16000, 23000, 21000, 15000],
+                            backgroundColor: '#e74c3c'
                         }
                     ]
                 },
                 options: {
                     responsive: true,
-                    interaction: {
-                        mode: 'index',
-                        intersect: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        }
                     },
                     scales: {
                         y: {
-                            type: 'linear',
-                            display: true,
-                            position: 'left',
-                            title: {
-                                display: true,
-                                text: 'NIFTY Price'
+                            beginAtZero: true,
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.1)'
                             }
                         },
-                        y1: {
-                            type: 'linear',
-                            display: true,
-                            position: 'right',
+                        x: {
                             grid: {
-                                drawOnChartArea: false,
-                            },
-                            title: {
-                                display: true,
-                                text: 'Open Interest'
+                                display: false
                             }
                         }
                     }
                 }
             });
+
+            // Simulate live data updates
+            setInterval(() => {
+                // Update market indices
+                const niftyValue = document.querySelector('.market-index:first-child .index-value');
+                const niftyChange = document.querySelector('.market-index:first-child .index-change');
+                const bankniftyValue = document.querySelector('.market-index:nth-child(2) .index-value');
+                const bankniftyChange = document.querySelector('.market-index:nth-child(2) .index-change');
+                
+                // Generate random changes
+                const niftyChangeVal = (Math.random() * 0.4).toFixed(2);
+                const bankniftyChangeVal = (Math.random() * 0.6).toFixed(2);
+                
+                // Update values with random changes
+                if (Math.random() > 0.5) {
+                    niftyChange.textContent = '+' + niftyChangeVal + '%';
+                    niftyChange.className = 'index-change positive';
+                } else {
+                    niftyChange.textContent = '-' + niftyChangeVal + '%';
+                    niftyChange.className = 'index-change negative';
+                }
+                
+                if (Math.random() > 0.5) {
+                    bankniftyChange.textContent = '+' + bankniftyChangeVal + '%';
+                    bankniftyChange.className = 'index-change positive';
+                } else {
+                    bankniftyChange.textContent = '-' + bankniftyChangeVal + '%';
+                    bankniftyChange.className = 'index-change negative';
+                }
+            }, 3000);
         });
     </script>
 </body>
