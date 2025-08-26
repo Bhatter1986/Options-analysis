@@ -10,7 +10,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-
+from App.Routers import healthapp.include_router(health.router)
 <<<<<<< HEAD
 from App.Routers import health, instruments, optionchain, marketfeed, ai
 
