@@ -1,53 +1,81 @@
+# App/Routers/instruments.py
 from fastapi import APIRouter, Query
-from typing import Optional, Dict, Any, List
-from pathlib import Path
-import csv, time, requests, os, logging
+from typing import List, Optional
+import os, time, io, csv, requests
 
-router = APIRouter(prefix="", tags=["instruments"])
-log = logging.getLogger("instruments")
+router = APIRouter(prefix="/instruments", tags=["instruments"])
 
-INSTRUMENTS_URL      = os.getenv("INSTRUMENTS_URL", "https://images.dhan.co/api-data/api-script-master-detailed.csv")
-INSTRUMENTS_CACHE    = Path("/tmp/instruments.csv")
-INSTRUMENTS_CACHE_TT = int(os.getenv("INSTRUMENTS_TTL_SEC", "86400"))
+INSTRUMENTS_URL = os.getenv(
+    "INSTRUMENTS_URL",
+    "https://images.dhan.co/api-data/api-scrip-master-detailed.csv",
+)
 
-def _download_if_stale() -> Path:
-    if INSTRUMENTS_CACHE.exists():
-        age = time.time() - INSTRUMENTS_CACHE.stat().st_mtime
-        if age < INSTRUMENTS_CACHE_TT:
-            return INSTRUMENTS_CACHE
-    log.info(f"Downloading instruments: {INSTRUMENTS_URL}")
-    r = requests.get(INSTRUMENTS_URL, timeout=30)
-    r.raise_for_status()
-    INSTRUMENTS_CACHE.write_bytes(r.content)
-    return INSTRUMENTS_CACHE
+# --- simple in-memory cache (CSV 5 min ke liye) ---
+_CACHE: dict = {"ts": 0.0, "text": ""}          # ts = epoch seconds
+_CACHE_TTL = 300.0                               # 5 minutes
 
-@router.get("/instruments")
-def instruments(q: str = Query("", description="search symbol/name"),
-                exchange_segment: Optional[str] = Query(None),
-                security_id: Optional[str] = Query(None),
-                limit: int = Query(50, ge=1, le=500)):
-    path = _download_if_stale()
-    out: List[Dict[str, Any]] = []
-    qq = q.strip().lower()
-    with path.open("r", encoding="utf-8", newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if exchange_segment and str(row.get("exchange_segment","")).upper() != exchange_segment.upper():
+def _download_master_csv() -> str:
+    now = time.time()
+    if _CACHE["text"] and (now - _CACHE["ts"] < _CACHE_TTL):
+        return _CACHE["text"]
+    resp = requests.get(INSTRUMENTS_URL, timeout=20)
+    resp.raise_for_status()
+    text = resp.content.decode("utf-8", errors="ignore")
+    _CACHE["text"] = text
+    _CACHE["ts"] = now
+    return text
+
+def _row_is_index(row: dict) -> bool:
+    seg = (row.get("exchange_segment") or row.get("segment") or "").upper()
+    inst = (row.get("instrument") or row.get("instrument_type") or "").upper()
+    sym = (row.get("symbol") or row.get("trading_symbol") or "").upper()
+    name = (row.get("security_name") or row.get("name") or "").upper()
+
+    # Dhan CSV: indices usually in NSE index segment "IDX_I"
+    if seg in {"IDX_I", "NSE_IDX", "BSE_IDX"}:
+        return True
+    if "INDEX" in inst:
+        return True
+    # Fallback: common index names
+    for key in ("NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "MIDCPNIFTY"):
+        if key in sym or key in name:
+            return True
+    return False
+
+def _pick_fields(row: dict) -> dict:
+    return {
+        "security_id": row.get("security_id") or row.get("token") or row.get("id"),
+        "trading_symbol": row.get("trading_symbol") or row.get("symbol"),
+        "security_name": row.get("security_name") or row.get("name"),
+        "exchange_segment": row.get("exchange_segment") or row.get("segment"),
+        "isin": row.get("isin"),
+        "instrument": row.get("instrument") or row.get("instrument_type"),
+    }
+
+@router.get("/indices")
+def get_indices(
+    q: Optional[str] = Query(None, description="search text"),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """
+    Return list of all indices (NIFTY, BANKNIFTY, FINNIFTY, SENSEX, etc.)
+    Optional `q` filters by symbol/name. `limit` caps results.
+    """
+    text = _download_master_csv()
+    reader = csv.DictReader(io.StringIO(text))
+    ql = (q or "").strip().lower()
+
+    out: List[dict] = []
+    for row in reader:
+        if not _row_is_index(row):
+            continue
+        picked = _pick_fields(row)
+        if ql:
+            hay = " ".join([str(v or "") for v in picked.values()]).lower()
+            if ql not in hay:
                 continue
-            if security_id and str(row.get("security_id","")) != str(security_id):
-                continue
-            if qq:
-                hay = " ".join([str(row.get("symbol","")), str(row.get("trading_symbol","")), str(row.get("name",""))]).lower()
-                if qq not in hay:
-                    continue
-            out.append({
-                "security_id": row.get("security_id"),
-                "symbol": row.get("symbol"),
-                "trading_symbol": row.get("trading_symbol"),
-                "exchange_segment": row.get("exchange_segment"),
-                "instrument_type": row.get("instrument_type"),
-                "lot_size": row.get("lot_size"),
-                "tick_size": row.get("tick_size"),
-            })
-            if len(out) >= limit: break
-    return {"data": out, "count": len(out)}
+        out.append(picked)
+        if len(out) >= limit:
+            break
+
+    return {"count": len(out), "data": out}
