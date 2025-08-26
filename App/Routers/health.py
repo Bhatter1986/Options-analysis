@@ -4,12 +4,11 @@ from fastapi import APIRouter
 
 router = APIRouter()
 
-@router.get("/health")
+@router.get("/health", tags=["default"])
 def health():
     return {"status": "ok"}
 
-@router.get("/__selftest")
-def selftest():
+def _selftest_payload():
     return {
         "ok": True,
         "status": {
@@ -21,3 +20,12 @@ def selftest():
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
         }
     }
+
+@router.get("/__selftest", tags=["default"])
+def selftest():
+    return _selftest_payload()
+
+# alias to avoid any underscore/caching weirdness
+@router.get("/selftest", tags=["default"])
+def selftest_alias():
+    return _selftest_payload()
