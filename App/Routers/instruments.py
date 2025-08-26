@@ -1,108 +1,65 @@
-import os
-import csv
-import io
-import logging
-from typing import List, Optional
-
-import requests
+import pandas as pd
 from fastapi import APIRouter, Query
+from pathlib import Path
 
-logger = logging.getLogger("instruments")
 router = APIRouter(prefix="/instruments", tags=["Instruments"])
 
-# ------------------------------------------------------------
-# CSV Source (env override → local fallback)
-# ------------------------------------------------------------
-CSV_URL = os.getenv("INSTRUMENTS_URL")
+CSV_PATH = Path("data/instruments.csv")
 
-if not CSV_URL or CSV_URL.strip() == "":
-    CSV_URL = "data/instruments.csv"   # default local file
-
-# Cache in memory
-_cache: List[dict] = []
-
-
-# ------------------------------------------------------------
-# Load CSV (from URL or local file)
-# ------------------------------------------------------------
-def _load_csv_rows() -> List[dict]:
-    rows: List[dict] = []
-    try:
-        if CSV_URL.startswith("http://") or CSV_URL.startswith("https://"):
-            r = requests.get(CSV_URL, timeout=30)
-            r.raise_for_status()
-            text = r.text
-            reader = csv.DictReader(io.StringIO(text))
-            rows = [row for row in reader]
+# Cache load
+_df_cache = None
+def load_csv():
+    global _df_cache
+    if _df_cache is None:
+        if CSV_PATH.exists():
+            _df_cache = pd.read_csv(CSV_PATH)
         else:
-            with open(CSV_URL, "r", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                rows = [row for row in reader]
-    except Exception as e:
-        logger.exception("Failed loading instruments from %s", CSV_URL)
-    return rows
+            _df_cache = pd.DataFrame()
+    return _df_cache
 
-
-def _ensure_cache():
-    global _cache
-    if not _cache:
-        _cache = _load_csv_rows()
-
-
-# ------------------------------------------------------------
-# Routes
-# ------------------------------------------------------------
-
-# 1) All indices
 @router.get("/indices")
-def list_indices(q: Optional[str] = None, limit: int = 50):
-    _ensure_cache()
-    results = []
-    for row in _cache:
-        # indices usually have instrument_type = INDEX or FUTIDX/OPTIDX
-        inst_type = (row.get("instrument_type") or "").upper()
-        if "INDEX" in inst_type:
-            if q and q.lower() not in (row.get("trading_symbol") or "").lower():
-                continue
-            results.append(row)
-        if len(results) >= limit:
-            break
-    return {"count": len(results), "data": results}
+def list_indices(q: str = Query(None), limit: int = 50):
+    """
+    List all indices (from instruments.csv).
+    Filter by query `q` if provided.
+    """
+    df = load_csv()
+    if df.empty:
+        return {"count": 0, "data": []}
 
+    # Filter only indices
+    indices_df = df[df["instrument_type"].str.contains("INDEX", na=False)]
 
-# 2) Generic search
+    if q:
+        indices_df = indices_df[indices_df["symbol"].str.contains(q, case=False, na=False)]
+
+    result = indices_df.head(limit).to_dict(orient="records")
+    return {"count": len(result), "data": result}
+
 @router.get("/search")
-def search_instruments(
-    q: str,
-    exchange_segment: Optional[str] = None,
-    limit: int = 50
-):
-    _ensure_cache()
-    results = []
-    for row in _cache:
-        if q.lower() not in (row.get("trading_symbol") or "").lower():
-            continue
-        if exchange_segment and exchange_segment.upper() != (row.get("segment") or "").upper():
-            continue
-        results.append(row)
-        if len(results) >= limit:
-            break
-    return {"count": len(results), "data": results}
+def search_instruments(q: str, limit: int = 50):
+    """
+    Generic search on instruments.csv (name/symbol match).
+    """
+    df = load_csv()
+    if df.empty:
+        return {"count": 0, "data": []}
 
+    filtered = df[df["symbol"].str.contains(q, case=False, na=False)]
+    result = filtered.head(limit).to_dict(orient="records")
+    return {"count": len(result), "data": result}
 
-# 3) By ID
 @router.get("/by-id")
-def get_by_id(security_id: str):
-    _ensure_cache()
-    for row in _cache:
-        if row.get("security_id") == str(security_id):
-            return {"data": row}
-    return {"detail": "Not Found"}
+def get_by_id(security_id: int):
+    """
+    Get instrument by security_id.
+    """
+    df = load_csv()
+    if df.empty:
+        return {"detail": "Not Found"}
 
+    row = df[df["security_id"] == security_id]
+    if row.empty:
+        return {"detail": "Not Found"}
 
-# 4) Cache refresh
-@router.post("/_refresh")
-def refresh_cache():
-    global _cache
-    _cache = _load_csv_rows()
-    return {"status": "refreshed", "count": len(_cache)}
+    return row.iloc[0].to_dict()
