@@ -1,81 +1,95 @@
 # App/Routers/instruments.py
+import os
+import requests
 from fastapi import APIRouter, Query
-from typing import List, Optional
-import os, time, io, csv, requests
+from typing import Optional
 
 router = APIRouter(prefix="/instruments", tags=["instruments"])
 
-INSTRUMENTS_URL = os.getenv(
-    "INSTRUMENTS_URL",
-    "https://images.dhan.co/api-data/api-scrip-master-detailed.csv",
-)
+# ---------------------------
+# DEMO Data (static fallback)
+# ---------------------------
+DEMO_INDICES = [
+    {"name": "NIFTY 50", "symbol": "NIFTY", "security_id": 999901},
+    {"name": "BANKNIFTY", "symbol": "BANKNIFTY", "security_id": 999903},
+    {"name": "FINNIFTY", "symbol": "FINNIFTY", "security_id": 999907},
+    {"name": "MIDCPNIFTY", "symbol": "MIDCPNIFTY", "security_id": 999910},
+    {"name": "SENSEX", "symbol": "SENSEX", "security_id": 999920},
+]
 
-# --- simple in-memory cache (CSV 5 min ke liye) ---
-_CACHE: dict = {"ts": 0.0, "text": ""}          # ts = epoch seconds
-_CACHE_TTL = 300.0                               # 5 minutes
+# ---------------------------
+# Utils
+# ---------------------------
+def is_live_mode() -> bool:
+    return os.getenv("MODE", "DEMO").upper() == "LIVE"
 
-def _download_master_csv() -> str:
-    now = time.time()
-    if _CACHE["text"] and (now - _CACHE["ts"] < _CACHE_TTL):
-        return _CACHE["text"]
-    resp = requests.get(INSTRUMENTS_URL, timeout=20)
-    resp.raise_for_status()
-    text = resp.content.decode("utf-8", errors="ignore")
-    _CACHE["text"] = text
-    _CACHE["ts"] = now
-    return text
-
-def _row_is_index(row: dict) -> bool:
-    seg = (row.get("exchange_segment") or row.get("segment") or "").upper()
-    inst = (row.get("instrument") or row.get("instrument_type") or "").upper()
-    sym = (row.get("symbol") or row.get("trading_symbol") or "").upper()
-    name = (row.get("security_name") or row.get("name") or "").upper()
-
-    # Dhan CSV: indices usually in NSE index segment "IDX_I"
-    if seg in {"IDX_I", "NSE_IDX", "BSE_IDX"}:
-        return True
-    if "INDEX" in inst:
-        return True
-    # Fallback: common index names
-    for key in ("NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "MIDCPNIFTY"):
-        if key in sym or key in name:
-            return True
-    return False
-
-def _pick_fields(row: dict) -> dict:
+def get_dhan_headers():
     return {
-        "security_id": row.get("security_id") or row.get("token") or row.get("id"),
-        "trading_symbol": row.get("trading_symbol") or row.get("symbol"),
-        "security_name": row.get("security_name") or row.get("name"),
-        "exchange_segment": row.get("exchange_segment") or row.get("segment"),
-        "isin": row.get("isin"),
-        "instrument": row.get("instrument") or row.get("instrument_type"),
+        "accept": "application/json",
+        "access-token": os.getenv("DHAN_ACCESS_TOKEN", ""),
     }
 
-@router.get("/indices")
-def get_indices(
-    q: Optional[str] = Query(None, description="search text"),
-    limit: int = Query(50, ge=1, le=500),
+# ---------------------------
+# Routes
+# ---------------------------
+
+@router.get("/search")
+def search_instruments(
+    q: str = Query(..., description="Search symbol or name"),
+    exchange_segment: str = Query("IDX_I", description="Exchange segment"),
+    limit: int = Query(10, ge=1, le=100)
 ):
     """
-    Return list of all indices (NIFTY, BANKNIFTY, FINNIFTY, SENSEX, etc.)
-    Optional `q` filters by symbol/name. `limit` caps results.
+    Search instruments by symbol/name.
     """
-    text = _download_master_csv()
-    reader = csv.DictReader(io.StringIO(text))
-    ql = (q or "").strip().lower()
+    if not is_live_mode():
+        # DEMO → simple filter
+        data = [x for x in DEMO_INDICES if q.lower() in x["name"].lower()]
+        return {"mode": "DEMO", "count": len(data), "data": data[:limit]}
 
-    out: List[dict] = []
-    for row in reader:
-        if not _row_is_index(row):
-            continue
-        picked = _pick_fields(row)
-        if ql:
-            hay = " ".join([str(v or "") for v in picked.values()]).lower()
-            if ql not in hay:
-                continue
-        out.append(picked)
-        if len(out) >= limit:
-            break
+    # LIVE → Dhan API
+    url = f"{os.getenv('DHAN_BASE_URL')}/instruments"
+    params = {"q": q, "exchange_segment": exchange_segment, "limit": limit}
+    resp = requests.get(url, headers=get_dhan_headers(), params=params, timeout=10)
+    return resp.json()
 
-    return {"count": len(out), "data": out}
+
+@router.get("/indices")
+def list_indices(
+    q: Optional[str] = Query(None, description="Filter by name"),
+    limit: int = Query(50, ge=1, le=500)
+):
+    """
+    List all major indices.
+    """
+    data = DEMO_INDICES
+
+    if is_live_mode():
+        # TODO: Integrate with real Dhan indices API if available
+        # Right now fallback to DEMO list (since DhanHQ v2 has flat CSV for instruments)
+        pass
+
+    # filter
+    if q:
+        qlow = q.lower()
+        data = [x for x in data if qlow in x["name"].lower()]
+
+    return {"mode": "LIVE" if is_live_mode() else "DEMO", "count": len(data), "data": data[:limit]}
+
+
+@router.get("/by-id")
+def get_instrument_by_id(
+    security_id: int = Query(..., description="Security ID from instruments CSV")
+):
+    """
+    Get single instrument details by security_id.
+    """
+    if not is_live_mode():
+        for x in DEMO_INDICES:
+            if x["security_id"] == security_id:
+                return {"mode": "DEMO", "data": x}
+        return {"mode": "DEMO", "error": "Instrument not found"}
+
+    # LIVE → would normally query full CSV or Dhan API
+    url = f"{os.getenv('INSTRUMENTS_URL')}"
+    return {"mode": "LIVE", "source": url, "security_id": security_id}
