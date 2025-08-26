@@ -469,40 +469,23 @@
                 document.getElementById('nifty-value').innerHTML = '<div class="loader sm"></div>';
                 document.getElementById('banknifty-value').innerHTML = '<div class="loader sm"></div>';
                 
-                // In a real implementation, you would fetch from your backend API
-                // const response = await fetch('/api/market-data');
-                // const data = await response.json();
+                const response = await fetch('/api/market-data');
+                const data = await response.json();
                 
-                // Simulate API response with mock data
-                setTimeout(() => {
-                    const mockData = {
-                        nifty: {
-                            value: (24800 + Math.random() * 200).toFixed(2),
-                            change: (Math.random() * 2 - 1).toFixed(2),
-                            volume: (100 + Math.random() * 50).toFixed(1) + 'M'
-                        },
-                        banknifty: {
-                            value: (52000 + Math.random() * 500).toFixed(2),
-                            change: (Math.random() * 2 - 1).toFixed(2),
-                            volume: (80 + Math.random() * 40).toFixed(1) + 'M'
-                        }
-                    };
-                    
-                    // Update NIFTY data
-                    document.getElementById('nifty-value').textContent = mockData.nifty.value;
-                    document.getElementById('nifty-change').textContent = `${mockData.nifty.change >= 0 ? '+' : ''}${mockData.nifty.change}%`;
-                    document.getElementById('nifty-change').className = `index-change ${mockData.nifty.change >= 0 ? 'positive' : 'negative'}`;
-                    document.getElementById('nifty-volume').textContent = mockData.nifty.volume;
-                    
-                    // Update BANKNIFTY data
-                    document.getElementById('banknifty-value').textContent = mockData.banknifty.value;
-                    document.getElementById('banknifty-change').textContent = `${mockData.banknifty.change >= 0 ? '+' : ''}${mockData.banknifty.change}%`;
-                    document.getElementById('banknifty-change').className = `index-change ${mockData.banknifty.change >= 0 ? 'positive' : 'negative'}`;
-                    document.getElementById('banknifty-volume').textContent = mockData.banknifty.volume;
-                    
-                    // Update last update time
-                    document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
-                }, 1000);
+                // Update NIFTY data
+                document.getElementById('nifty-value').textContent = data.nifty.value.toFixed(2);
+                document.getElementById('nifty-change').textContent = `${data.nifty.change >= 0 ? '+' : ''}${data.nifty.change.toFixed(2)}%`;
+                document.getElementById('nifty-change').className = `index-change ${data.nifty.change >= 0 ? 'positive' : 'negative'}`;
+                document.getElementById('nifty-volume').textContent = `${(data.nifty.volume / 1000000).toFixed(1)}M`;
+                
+                // Update BANKNIFTY data
+                document.getElementById('banknifty-value').textContent = data.banknifty.value.toFixed(2);
+                document.getElementById('banknifty-change').textContent = `${data.banknifty.change >= 0 ? '+' : ''}${data.banknifty.change.toFixed(2)}%`;
+                document.getElementById('banknifty-change').className = `index-change ${data.banknifty.change >= 0 ? 'positive' : 'negative'}`;
+                document.getElementById('banknifty-volume').textContent = `${(data.banknifty.volume / 1000000).toFixed(1)}M`;
+                
+                // Update last update time
+                document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
             } catch (error) {
                 console.error('Error fetching market data:', error);
                 alert('Failed to fetch market data. Please try again.');
@@ -512,39 +495,31 @@
         // Fetch expiry dates from Dhan API
         async function fetchExpiryDates() {
             try {
-                // In a real implementation, you would fetch from your backend API
-                // const response = await fetch('/api/expiry-dates');
-                // const data = await response.json();
+                const response = await fetch('/api/expiry-dates');
+                const expiryDates = await response.json();
                 
-                // Simulate API response with mock data
-                setTimeout(() => {
-                    const expiryDates = [
-                        '29 Jun 2023',
-                        '6 Jul 2023',
-                        '13 Jul 2023',
-                        '27 Jul 2023',
-                        '31 Aug 2023'
-                    ];
-                    
-                    const expiryList = document.getElementById('expiry-list');
-                    expiryList.innerHTML = '';
-                    
-                    expiryDates.forEach((date, index) => {
-                        const isActive = index === 0;
-                        const item = document.createElement('a');
-                        item.href = '#';
-                        item.className = `list-group-item list-group-item-action ${isActive ? 'active' : ''}`;
-                        item.textContent = date;
-                        item.onclick = () => selectExpiry(date);
-                        
-                        expiryList.appendChild(item);
+                const expiryList = document.getElementById('expiry-list');
+                expiryList.innerHTML = '';
+                
+                expiryDates.forEach((date, index) => {
+                    const isActive = index === 0;
+                    const item = document.createElement('a');
+                    item.href = '#';
+                    item.className = `list-group-item list-group-item-action ${isActive ? 'active' : ''}`;
+                    item.textContent = new Date(date).toLocaleDateString('en-IN', {
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric'
                     });
+                    item.onclick = () => selectExpiry(date);
                     
-                    // Select first expiry by default
-                    if (expiryDates.length > 0) {
-                        selectExpiry(expiryDates[0]);
-                    }
-                }, 1500);
+                    expiryList.appendChild(item);
+                });
+                
+                // Select first expiry by default
+                if (expiryDates.length > 0) {
+                    selectExpiry(expiryDates[0]);
+                }
             } catch (error) {
                 console.error('Error fetching expiry dates:', error);
             }
@@ -553,12 +528,20 @@
         // Select expiry date
         function selectExpiry(expiry) {
             currentExpiry = expiry;
-            document.getElementById('current-expiry').textContent = expiry;
+            document.getElementById('current-expiry').textContent = new Date(expiry).toLocaleDateString('en-IN', {
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric'
+            });
             
             // Update active class in expiry list
             const items = document.querySelectorAll('#expiry-list a');
             items.forEach(item => {
-                if (item.textContent === expiry) {
+                if (item.textContent === new Date(expiry).toLocaleDateString('en-IN', {
+                    day: '2-digit',
+                    month: 'short',
+                    year: 'numeric'
+                })) {
                     item.classList.add('active');
                 } else {
                     item.classList.remove('active');
@@ -582,53 +565,19 @@
                     </tr>
                 `;
                 
-                // In a real implementation, you would fetch from your backend API
-                // const response = await fetch('/api/option-chain?expiry=' + encodeURIComponent(currentExpiry));
-                // const data = await response.json();
+                const response = await fetch(`/api/option-chain?expiry=${encodeURIComponent(currentExpiry)}`);
+                const chainData = await response.json();
                 
-                // Simulate API response with mock data
-                setTimeout(() => {
-                    const mockData = generateMockOptionChain();
-                    renderOptionChain(mockData);
-                    updateOIAnalysis(mockData);
-                    updateSudarshanChakra(mockData);
-                    
-                    // Update last update time
-                    document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
-                }, 2000);
+                renderOptionChain(chainData);
+                updateOIAnalysis(chainData);
+                updateSudarshanChakra(chainData);
+                
+                // Update last update time
+                document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
             } catch (error) {
                 console.error('Error fetching option chain:', error);
                 alert('Failed to fetch option chain data. Please try again.');
             }
-        }
-
-        // Generate mock option chain data
-        function generateMockOptionChain() {
-            const strikes = [24800, 24900, 25000, 25100, 25200];
-            const chain = [];
-            
-            strikes.forEach(strike => {
-                const callPrice = (100 + Math.random() * 50).toFixed(2);
-                const putPrice = (100 + Math.random() * 50).toFixed(2);
-                
-                chain.push({
-                    strike: strike,
-                    call: {
-                        price: callPrice,
-                        oi: Math.floor(10000 + Math.random() * 15000),
-                        changeOi: Math.floor(Math.random() * 500 - 250),
-                        iv: (15 + Math.random() * 5).toFixed(1) + '%'
-                    },
-                    put: {
-                        price: putPrice,
-                        oi: Math.floor(10000 + Math.random() * 15000),
-                        changeOi: Math.floor(Math.random() * 500 - 250),
-                        iv: (15 + Math.random() * 5).toFixed(1) + '%'
-                    }
-                });
-            });
-            
-            return chain;
         }
 
         // Render option chain table
@@ -639,21 +588,22 @@
             chainData.forEach(option => {
                 const row = document.createElement('tr');
                 
-                // Highlight ATM strike (closest to 25000 for this example)
-                if (Math.abs(option.strike - 25000) <= 50) {
+                // Highlight ATM strike (closest to current price)
+                const niftyValue = parseFloat(document.getElementById('nifty-value').textContent);
+                if (Math.abs(option.strike - niftyValue) <= 50) {
                     row.classList.add('highlight');
                 }
                 
                 row.innerHTML = `
-                    <td>${option.call.price}</td>
-                    <td class="call-oi">${option.call.oi.toLocaleString()}</td>
-                    <td class="${option.call.changeOi >= 0 ? 'positive' : 'negative'}">${option.call.changeOi >= 0 ? '+' : ''}${option.call.changeOi}</td>
-                    <td>${option.call.iv}</td>
+                    <td>${option.call.price || '0.00'}</td>
+                    <td class="call-oi">${option.call.oi ? option.call.oi.toLocaleString() : '0'}</td>
+                    <td class="${option.call.changeOi >= 0 ? 'positive' : 'negative'}">${option.call.changeOi >= 0 ? '+' : ''}${option.call.changeOi || '0'}</td>
+                    <td>${option.call.iv || '0.0%'}</td>
                     <td class="strike-price">${option.strike}</td>
-                    <td>${option.put.iv}</td>
-                    <td class="${option.put.changeOi >= 0 ? 'positive' : 'negative'}">${option.put.changeOi >= 0 ? '+' : ''}${option.put.changeOi}</td>
-                    <td class="put-oi">${option.put.oi.toLocaleString()}</td>
-                    <td>${option.put.price}</td>
+                    <td>${option.put.iv || '0.0%'}</td>
+                    <td class="${option.put.changeOi >= 0 ? 'positive' : 'negative'}">${option.put.changeOi >= 0 ? '+' : ''}${option.put.changeOi || '0'}</td>
+                    <td class="put-oi">${option.put.oi ? option.put.oi.toLocaleString() : '0'}</td>
+                    <td>${option.put.price || '0.00'}</td>
                 `;
                 
                 tbody.appendChild(row);
@@ -667,8 +617,8 @@
             let totalPutOI = 0;
             
             chainData.forEach(option => {
-                totalCallOI += option.call.oi;
-                totalPutOI += option.put.oi;
+                totalCallOI += option.call.oi || 0;
+                totalPutOI += option.put.oi || 0;
             });
             
             const pcr = totalPutOI / totalCallOI;
@@ -682,7 +632,7 @@
             let minPain = Infinity;
             
             chainData.forEach(option => {
-                const pain = Math.abs(option.call.oi - option.put.oi);
+                const pain = Math.abs((option.call.oi || 0) - (option.put.oi || 0));
                 if (pain < minPain) {
                     minPain = pain;
                     maxPainStrike = option.strike;
@@ -706,8 +656,8 @@
             
             // Prepare data
             const strikes = chainData.map(option => option.strike);
-            const callOI = chainData.map(option => option.call.oi);
-            const putOI = chainData.map(option => option.put.oi);
+            const callOI = chainData.map(option => option.call.oi || 0);
+            const putOI = chainData.map(option => option.put.oi || 0);
             
             // Create new chart
             oiChart = new Chart(ctx, {
@@ -758,8 +708,8 @@
             let totalPutOI = 0;
             
             chainData.forEach(option => {
-                totalCallOI += option.call.oi;
-                totalPutOI += option.put.oi;
+                totalCallOI += option.call.oi || 0;
+                totalPutOI += option.put.oi || 0;
             });
             
             const totalOI = totalCallOI + totalPutOI;
