@@ -1,4 +1,3 @@
-# main.py
 import os
 import csv
 import json
@@ -10,7 +9,7 @@ from datetime import datetime
 import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Depends, Query, Body
-from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -83,31 +82,6 @@ def handle_dhan_response(response):
     except Exception as e:
         logger.error(f"Error processing Dhan response: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-# OpenAI helper
-def get_openai_analysis(prompt: str, context: Dict = None):
-    if not OPENAI_API_KEY:
-        raise HTTPException(status_code=400, detail="OpenAI API key not configured")
-    
-    try:
-        # This would be replaced with actual OpenAI API call
-        # For now, we'll simulate a response
-        import random
-        analyses = [
-            "Based on current market conditions, a bull call spread might be profitable with strikes at 18000 and 18200.",
-            "The put-call ratio indicates bearish sentiment. Consider buying puts or implementing a bear put spread.",
-            "IV is elevated suggesting potential for selling options. Iron condor strategy could capture premium.",
-            "Technical analysis shows strong support at 17800. Consider buying calls or implementing a bull put spread."
-        ]
-        
-        return {
-            "analysis": random.choice(analyses),
-            "confidence": round(random.uniform(0.6, 0.95), 2),
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        logger.error(f"OpenAI analysis error: {e}")
-        raise HTTPException(status_code=500, detail=f"OpenAI analysis failed: {str(e)}")
 
 # Load instruments data
 def load_instruments():
@@ -227,6 +201,87 @@ async def health_check():
         "openai_configured": bool(OPENAI_API_KEY)
     }
 
+# Dhan API Integration Endpoints
+@app.get("/api/market-data")
+async def get_market_data():
+    try:
+        # Fetch NIFTY data
+        nifty_response = requests.get(
+            f"{DHAN_API_BASE}/market-quote",
+            headers=get_dhan_headers(),
+            params={
+                'securityId': 25,  # NIFTY
+                'exchangeSegment': 'IDX_I'
+            }
+        )
+        
+        # Fetch BANKNIFTY data
+        banknifty_response = requests.get(
+            f"{DHAN_API_BASE}/market-quote",
+            headers=get_dhan_headers(),
+            params={
+                'securityId': 26,  # BANKNIFTY
+                'exchangeSegment': 'IDX_I'
+            }
+        )
+        
+        nifty_data = handle_dhan_response(nifty_response)
+        banknifty_data = handle_dhan_response(banknifty_response)
+        
+        return {
+            "nifty": {
+                "value": nifty_data.get("lastPrice", 0),
+                "change": nifty_data.get("change", 0),
+                "volume": nifty_data.get("totalTradedVolume", 0)
+            },
+            "banknifty": {
+                "value": banknifty_data.get("lastPrice", 0),
+                "change": banknifty_data.get("change", 0),
+                "volume": banknifty_data.get("totalTradedVolume", 0)
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error fetching market data: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch market data: {str(e)}")
+
+@app.get("/api/expiry-dates")
+async def get_expiry_dates():
+    try:
+        response = requests.post(
+            f"{DHAN_API_BASE}/option-chain/expiries",
+            headers=get_dhan_headers(),
+            json={
+                'underlyingSecurityId': 25,  # NIFTY
+                'underlyingExchangeSegment': 'IDX_I'
+            }
+        )
+        
+        data = handle_dhan_response(response)
+        return data
+    except Exception as e:
+        logger.error(f"Error fetching expiry dates: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch expiry dates: {str(e)}")
+
+@app.get("/api/option-chain")
+async def get_option_chain(expiry: str):
+    try:
+        response = requests.post(
+            f"{DHAN_API_BASE}/option-chain",
+            headers=get_dhan_headers(),
+            json={
+                'underlyingSecurityId': 25,  # NIFTY
+                'underlyingExchangeSegment': 'IDX_I',
+                'expiry': expiry
+            }
+        )
+        
+        data = handle_dhan_response(response)
+        return data
+    except Exception as e:
+        logger.error(f"Error fetching option chain: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch option chain: {str(e)}")
+
+# Existing endpoints (keep your existing endpoints here)
 @app.get("/instruments")
 async def get_instruments(
     symbol: Optional[str] = Query(None, description="Filter by symbol"),
@@ -505,6 +560,31 @@ async def analyze_strategy(
     except Exception as e:
         logger.error(f"Error in strategy analysis: {e}")
         raise HTTPException(status_code=500, detail=f"Strategy analysis failed: {str(e)}")
+
+# OpenAI helper
+def get_openai_analysis(prompt: str, context: Dict = None):
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=400, detail="OpenAI API key not configured")
+    
+    try:
+        # This would be replaced with actual OpenAI API call
+        # For now, we'll simulate a response
+        import random
+        analyses = [
+            "Based on current market conditions, a bull call spread might be profitable with strikes at 18000 and 18200.",
+            "The put-call ratio indicates bearish sentiment. Consider buying puts or implementing a bear put spread.",
+            "IV is elevated suggesting potential for selling options. Iron condor strategy could capture premium.",
+            "Technical analysis shows strong support at 17800. Consider buying calls or implementing a bull put spread."
+        ]
+        
+        return {
+            "analysis": random.choice(analyses),
+            "confidence": round(random.uniform(0.6, 0.95), 2),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"OpenAI analysis error: {e}")
+        raise HTTPException(status_code=500, detail=f"OpenAI analysis failed: {str(e)}")
 
 # Error handlers
 @app.exception_handler(HTTPException)
