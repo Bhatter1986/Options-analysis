@@ -1,162 +1,134 @@
-# App/Routers/instruments.py
-from __future__ import annotations
-
-import logging
+import os, csv, time
 from pathlib import Path
-from typing import List, Dict, Any, Optional
-
-import pandas as pd
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
+import requests
+from App.common import logger
 
-logger = logging.getLogger("instruments")
 router = APIRouter(prefix="/instruments", tags=["instruments"])
 
-# ----------------------------
-# CSV paths (safe resolution)
-# ----------------------------
-# Try both repo root and data/ (works on Render & locally)
-HERE = Path(__file__).resolve()
-PROJECT_ROOT = HERE.parents[2] if (HERE.name == "instruments.py") else HERE
-CANDIDATE_CSV = [
-    PROJECT_ROOT / "instruments.csv",
-    PROJECT_ROOT / "data" / "instruments.csv",
-]
+INSTRUMENTS_URL       = os.getenv("INSTRUMENTS_URL", "https://images.dhan.co/api-data/api-script-master-detailed.csv")
+INSTRUMENTS_CACHE     = Path("/tmp/instruments.csv")
+INSTRUMENTS_TTL_SEC   = int(os.getenv("INSTRUMENTS_TTL_SEC", "86400"))
+LOCAL_FALLBACK_PATH   = Path("data/instruments.csv")  # optional local
 
-# In-memory cache
-_df: Optional[pd.DataFrame] = None
-_cols: List[str] = []
-_csv_path: Optional[Path] = None
+def _download_to_cache() -> Path:
+    logger.info(f"Downloading instruments: {INSTRUMENTS_URL}")
+    r = requests.get(INSTRUMENTS_URL, timeout=30)
+    r.raise_for_status()
+    INSTRUMENTS_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    INSTRUMENTS_CACHE.write_bytes(r.content)
+    logger.info(f"Saved instruments to {INSTRUMENTS_CACHE} ({len(r.content)} bytes)")
+    return INSTRUMENTS_CACHE
 
+def _ensure_csv_path(force: bool = False) -> Path:
+    # prefer /tmp cache (fresh), else local fallback, else download
+    if force and INSTRUMENTS_CACHE.exists():
+        try: INSTRUMENTS_CACHE.unlink()
+        except Exception: pass
+    if INSTRUMENTS_CACHE.exists():
+        age = time.time() - INSTRUMENTS_CACHE.stat().st_mtime
+        if age < INSTRUMENTS_TTL_SEC:
+            return INSTRUMENTS_CACHE
+    if LOCAL_FALLBACK_PATH.exists():
+        # copy once into cache to keep a single path source
+        try:
+            data = LOCAL_FALLBACK_PATH.read_bytes()
+            INSTRUMENTS_CACHE.write_bytes(data)
+            logger.info(f"Copied local data/instruments.csv → {INSTRUMENTS_CACHE}")
+            return INSTRUMENTS_CACHE
+        except Exception as e:
+            logger.warning(f"Local fallback copy failed: {e}")
+    return _download_to_cache()
 
-def _load_csv() -> pd.DataFrame:
-    """Load instruments.csv from any of the candidate paths."""
-    global _df, _cols, _csv_path
+def _iter_rows(limit: Optional[int] = None,
+               q: str = "",
+               filter_fn = None) -> List[Dict[str, Any]]:
+    path = _ensure_csv_path()
+    out: List[Dict[str, Any]] = []
+    qq = (q or "").strip().lower()
 
-    for p in CANDIDATE_CSV:
-        if p.exists():
-            logger.info("Loading instruments from %s", p)
-            df = pd.read_csv(p, dtype=str).fillna("")
-            _df = df
-            _cols = list(df.columns)
-            _csv_path = p
-            return df
-
-    paths_str = ", ".join(str(p) for p in CANDIDATE_CSV)
-    logger.error("instruments.csv not found in: %s", paths_str)
-    raise FileNotFoundError(f"instruments.csv not found in: {paths_str}")
-
-
-def _ensure_loaded() -> pd.DataFrame:
-    return _df if _df is not None else _load_csv()
-
-
-def _rows_to_dict(df: pd.DataFrame, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-    if limit is not None:
-        df = df.head(limit)
-    return df.to_dict(orient="records")
-
-
-# ----------------------------
-# Endpoints
-# ----------------------------
+    with path.open("r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if filter_fn and not filter_fn(row):
+                continue
+            if qq:
+                hay = " ".join([
+                    str(row.get("symbol_name","")), str(row.get("trading_symbol","")),
+                    str(row.get("underlying_symbol","")), str(row.get("name","")),
+                    str(row.get("security_id",""))
+                ]).lower()
+                if qq not in hay:
+                    continue
+            out.append(row)
+            if limit and len(out) >= limit:
+                break
+    return out
 
 @router.get("/_debug")
-def debug() -> Dict[str, Any]:
-    """
-    Lightweight status — shows whether CSV is loaded and a preview of columns.
-    """
-    try:
-        df = _ensure_loaded()
-        return {
-            "ok": True,
-            "exists": True,
-            "path": str(_csv_path) if _csv_path else None,
-            "rows": int(df.shape[0]),
-            "cols": list(df.columns),
-            "ready": True,
-        }
-    except FileNotFoundError:
-        return {"ok": False, "exists": False, "rows": 0, "cols": [], "ready": False}
-
+def dbg():
+    path = None
+    exists = INSTRUMENTS_CACHE.exists()
+    size = INSTRUMENTS_CACHE.stat().st_size if exists else 0
+    rows = 0
+    if exists:
+        try:
+            with INSTRUMENTS_CACHE.open("r", encoding="utf-8") as f:
+                rows = sum(1 for _ in f) - 1  # header
+        except Exception:
+            rows = -1
+    return {
+        "cache_path": str(INSTRUMENTS_CACHE),
+        "exists": exists,
+        "size_bytes": size,
+        "rows_estimate": rows,
+        "ttl_sec": INSTRUMENTS_TTL_SEC,
+        "source_url": INSTRUMENTS_URL
+    }
 
 @router.post("/_refresh")
-def refresh() -> Dict[str, Any]:
-    """
-    Re-read the CSV from disk and refresh cache.
-    """
-    df = _load_csv()
-    return {"ok": True, "rows": int(df.shape[0]), "path": str(_csv_path)}
-
+def refresh():
+    _ensure_csv_path(force=True)
+    return {"status": "ok"}
 
 @router.get("")
-def list_instruments(limit: int = Query(50, ge=1, le=500)) -> Dict[str, Any]:
-    """
-    First N instruments (default 50).
-    """
-    df = _ensure_loaded()
-    return {"rows": _rows_to_dict(df, limit=limit)}
-
+def list_sample(limit: int = Query(50, ge=1, le=500)):
+    rows = _iter_rows(limit=limit)
+    return {"count": len(rows), "data": rows}
 
 @router.get("/indices")
-def list_indices(q: Optional[str] = Query(None, description="case-insensitive filter")) -> Dict[str, Any]:
-    """
-    Only indices (works for NSE/BSE master where indices are tagged).
-    We try common patterns:
-      - instrument_type == 'INDEX'
-      - segment == 'I'
-    """
-    df = _ensure_loaded()
-
-    # Broad filter for "index-ness"
-    mask = (df.get("instrument_type", "") == "INDEX") | (df.get("segment", "") == "I")
-    out = df[mask].copy()
-
-    if q:
-        ql = q.lower()
-        cols = [c for c in ["symbol_name", "underlying_symbol"] if c in out.columns]
-        if cols:
-            mask_q = False
-            for c in cols:
-                mask_q = mask_q | out[c].str.lower().str.contains(ql, na=False)
-            out = out[mask_q]
-
-    return {"rows": _rows_to_dict(out)}
-
+def list_indices(q: str = Query("", description="filter text"),
+                 limit: int = Query(200, ge=1, le=2000)):
+    def is_index(row):
+        it = str(row.get("instrument_type","")).upper()
+        seg = str(row.get("segment","") or row.get("exchange_segment","")).upper()
+        return it in ("INDEX","I") or seg == "I"
+    rows = _iter_rows(limit=limit, q=q, filter_fn=is_index)
+    # compact fields first
+    slim = []
+    for r in rows:
+        slim.append({
+            "security_id": r.get("security_id"),
+            "symbol_name": r.get("symbol_name") or r.get("symbol"),
+            "underlying_symbol": r.get("underlying_symbol") or r.get("symbol"),
+            "segment": r.get("segment") or r.get("exchange_segment"),
+            "instrument_type": r.get("instrument_type")
+        })
+    return {"count": len(slim), "data": slim}
 
 @router.get("/search")
-def search(q: str = Query(..., min_length=1)) -> Dict[str, Any]:
-    """
-    Generic search across symbol_name / underlying_symbol / security_id (contains).
-    """
-    df = _ensure_loaded()
-    ql = q.lower()
-
-    mask = False
-    if "symbol_name" in df.columns:
-        mask = mask | df["symbol_name"].str.lower().str.contains(ql, na=False)
-    if "underlying_symbol" in df.columns:
-        mask = mask | df["underlying_symbol"].str.lower().str.contains(ql, na=False)
-    if "security_id" in df.columns:
-        mask = mask | df["security_id"].str.lower().str.contains(ql, na=False)
-
-    out = df[mask] if isinstance(mask, pd.Series) else df.iloc[0:0]
-    return {"rows": _rows_to_dict(out)}
-
+def search(q: str = Query(..., min_length=1),
+           limit: int = Query(100, ge=1, le=1000)):
+    rows = _iter_rows(limit=limit, q=q)
+    return {"count": len(rows), "data": rows}
 
 @router.get("/by-id")
-def by_id(security_id: str = Query(..., description="Exact security_id (string or number as string)")) -> Dict[str, Any]:
-    """
-    Return a single instrument row by exact security_id.
-    """
-    df = _ensure_loaded()
-    if "security_id" not in df.columns:
-        raise HTTPException(status_code=500, detail="CSV missing 'security_id' column")
-
-    # string-safe equality match
-    out = df[df["security_id"].astype(str) == str(security_id)]
-
-    if out.empty:
-        raise HTTPException(status_code=404, detail="Not Found")
-
-    # Return the single row as object (not list)
-    return out.iloc[0].to_dict()
+def by_id(security_id: str = Query(...)):
+    path = _ensure_csv_path()
+    with path.open("r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if str(row.get("security_id")) == str(security_id):
+                return {"data": row}
+    raise HTTPException(status_code=404, detail="Security ID not found")
