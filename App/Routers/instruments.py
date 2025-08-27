@@ -9,13 +9,12 @@ import pandas as pd
 
 router = APIRouter(prefix="/instruments", tags=["Instruments"])
 
-# ---- Paths & cache ----------------------------------------------------------
-DATA_DIR = Path("data")
-CSV_FILE = DATA_DIR / "instruments.csv"
+# --- Paths & cache ---
+from pathlib import Path
 
-_cache: Dict[str, Any] = {"df": None, "ts": None, "rows": 0, "cols": []}
-
-
+ROOT     = Path(__file__).resolve().parents[2]   # <repo root>
+DATA_DIR = ROOT / "data"
+CSV_FILE = DATA_DIR / "instruments.csv"          # <-- yahi read hoga
 # ---- Utils ------------------------------------------------------------------
 def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Lowercase + underscore columns so header names become resilient."""
