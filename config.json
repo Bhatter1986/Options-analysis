@@ -1,14 +1,35 @@
 {
-  "base_url": "https://options-analysis.onrender.com",
-  "pagination": { "page_size": 200 },
   "watchlists": {
-    "indices_core": [2, 25, 38, 27, 29, 31, 32, 33, 37],
-    "currencies": [600],
-    "examples": { "reliance_fut": 834804, "reliance_opt_any": 832027 }
+    "indices": {
+      "NIFTY50": 2,
+      "BANKNIFTY": 25,
+      "NIFTY_NEXT50": 38,
+      "FINNIFTY": 26009,
+      "SENSEX": 301
+    },
+    "currencies": {
+      "USDINR": 600
+    },
+    "futures": {
+      "RELIANCE_FUT": 834804
+    },
+    "options": {
+      "RELIANCE_OPT": 832027,
+      "BANKNIFTY_OPT": 35000
+    },
+    "stocks": {
+      "RELIANCE": 500325,
+      "HDFCBANK": 500180,
+      "ICICIBANK": 532174,
+      "INFY": 500209,
+      "TCS": 532540,
+      "SBIN": 500112
+    }
   },
   "filters": {
-    "only_indices":  { "instrument_type": ["INDEX"] },
-    "only_futures":  { "instrument_type": ["FUTIDX","FUTSTK","FUTCUR"] },
-    "only_options":  { "instrument_type": ["OP","OPTIDX","OPTSTK","OPTCUR"] }
+    "min_oi": 100000,
+    "min_volume": 50000,
+    "max_iv": 50,
+    "delta_range": [-0.5, 0.5]
   }
 }
