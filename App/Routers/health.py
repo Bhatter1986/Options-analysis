@@ -1,31 +1,19 @@
-# App/Routers/health.py
-import os, time
-from fastapi import APIRouter
+# Health check
+curl -sS "$BASE/health" | jq
 
-router = APIRouter()
+# Debug (rows count)
+curl -sS "$BASE/instruments/_debug" | jq
 
-@router.get("/health", tags=["default"])
-def health():
-    return {"status": "ok"}
+# Sample rows
+curl -sS "$BASE/instruments" | jq
 
-def _selftest_payload():
-    return {
-        "ok": True,
-        "status": {
-            "env": os.getenv("RENDER", "Local"),
-            "mode": os.getenv("DHAN_MODE", "DEMO"),
-            "token_present": bool(os.getenv("DHAN_ACCESS_TOKEN")),
-            "client_id_present": bool(os.getenv("DHAN_CLIENT_ID")),
-            "ai_present": bool(os.getenv("OPENAI_API_KEY")),
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        }
-    }
+# Sirf indices
+curl -sS "$BASE/instruments/indices?q=nifty" | jq
 
-@router.get("/__selftest", tags=["default"])
-def selftest():
-    return _selftest_payload()
+# Search (Reliance)
+curl -sS "$BASE/instruments/search?q=reliance" | jq
 
-# alias to avoid any underscore/caching weirdness
-@router.get("/selftest", tags=["default"])
-def selftest_alias():
-    return _selftest_payload()
+# By-ID
+curl -sS "$BASE/instruments/by-id?security_id=2" | jq    # NIFTY
+curl -sS "$BASE/instruments/by-id?security_id=25" | jq   # BANKNIFTY
+curl -sS "$BASE/instruments/by-id?security_id=834804" | jq  # RELIANCE FUT
