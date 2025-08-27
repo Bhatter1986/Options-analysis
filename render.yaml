@@ -1,18 +1,24 @@
 services:
   - type: web
-    name: options-analysis-platform
+    name: options-analysis
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: MODE
-        value: SANDBOX
+        value: LIVE
       - key: WEBHOOK_SECRET
-        fromSecret: webhook_secret
+        value: mysecret123
       - key: DHAN_CLIENT_ID
-        fromSecret: dhan_client_id
+        sync: false
       - key: DHAN_ACCESS_TOKEN
-        fromSecret: dhan_access_token
+        sync: false
       - key: OPENAI_API_KEY
-        fromSecret: openai_api_key
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4.1-mini
+      - key: INSTRUMENTS_URL
+        value: https://images.dhan.co/api-data/api-script-master-detailed.csv
+      - key: INSTRUMENTS_TTL_SEC
+        value: "86400"
