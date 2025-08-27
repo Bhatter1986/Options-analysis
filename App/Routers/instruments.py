@@ -1,201 +1,222 @@
 # App/Routers/instruments.py
-from __future__ import annotations
-
-from fastapi import APIRouter, Query, HTTPException
+import csv
+import json
+import time
+import logging
 from pathlib import Path
-import pandas as pd
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any, List, Optional
 
-router = APIRouter(prefix="/instruments", tags=["Instruments"])
+import requests
+from fastapi import APIRouter, HTTPException, Query, Body
+from pydantic import BaseModel
+import os
 
-# ---- Paths & cache ----------------------------------------------------------
-DATA_DIR = Path("data")
-CSV_FILE = DATA_DIR / "instruments.csv"   # <--- yahi file padhenge
+router = APIRouter(prefix="/instruments", tags=["instruments"])
+log = logging.getLogger("instruments")
 
-# Lightweight in-memory cache
-_cache: Dict[str, Any] = {
-    "rows": None,     # type: Optional[List[Dict[str, Any]]]
-    "cols": None,     # type: Optional[List[str]]
-    "count": 0,
-    "ready": False,
-}
+# -------- Config / CSV sources --------
+INSTRUMENTS_URL = os.getenv(
+    "INSTRUMENTS_URL",
+    "https://images.dhan.co/api-data/api-script-master-detailed.csv",
+)
+CACHE_DIR = Path(os.getenv("CACHE_DIR", "/tmp"))
+CSV_CACHE = CACHE_DIR / "instruments.csv"
+CSV_TTL_SEC = int(os.getenv("INSTRUMENTS_TTL_SEC", "86400"))  # 24h
 
+# config.json (repo root)
+CONFIG_PATH = Path("config.json")
+CONFIG_TTL_SEC = 60  # reload if changed within a minute
 
-# ---- Utils -----------------------------------------------------------------
-def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Lowercase + spaces to underscore; stay resilient to header variations."""
-    df = df.copy()
-    df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
-    return df
+# -------- In-memory caches --------
+_csv_rows: List[Dict[str, Any]] = []
+_csv_loaded_at: float = 0.0
+_config: Dict[str, Any] = {}
+_config_loaded_at: float = 0.0
+_config_mtime_seen: float = 0.0
 
+# -------- Models --------
+class RefreshResp(BaseModel):
+    status: str
+    csv_rows: int
+    csv_source: str
+    config_loaded: bool
 
-def _wanted_columns(cols: List[str]) -> List[str]:
-    """
-    Choose a stable subset if present. We don't fail if any is missing.
-    """
-    preferred = [
-        "exchange_segment", "segment",
-        "security_id",
-        "isin",
-        "instrument_type",
-        "series",
-        "underlying_security_id",
-        "underlying_symbol",
-        "symbol",
-        "symbol_name",
-    ]
-    present = []
-    s = set(cols)
-    for c in preferred:
-        if c in s:
-            present.append(c)
-    # Always keep security_id if we have it
-    if "security_id" in s and "security_id" not in present:
-        present.insert(0, "security_id")
-    return present or cols  # fallback to everything
+# -------- Utilities --------
+def _safe_lower(s: Any) -> str:
+    return str(s or "").lower()
 
+def _load_config(force: bool = False) -> Dict[str, Any]:
+    """Load config.json with light caching; tolerate missing file."""
+    global _config, _config_loaded_at, _config_mtime_seen
+    try:
+        mtime = CONFIG_PATH.stat().st_mtime if CONFIG_PATH.exists() else 0.0
+    except Exception:
+        mtime = 0.0
 
-def _load_into_cache() -> Dict[str, Any]:
-    """
-    Read CSV → pandas → normalize → list[dict] into _cache.
-    Safe even if some columns differ; we normalize & subset gracefully.
-    """
-    if not CSV_FILE.exists():
-        _cache.update({"rows": [], "cols": [], "count": 0, "ready": False})
-        return _cache
+    now = time.time()
+    should_reload = (
+        force
+        or not _config
+        or (mtime and mtime != _config_mtime_seen)
+        or (now - _config_loaded_at > CONFIG_TTL_SEC)
+    )
 
-    # Read efficiently; dtype=str keeps ids exact (no 1e+05 surprises)
-    df = pd.read_csv(CSV_FILE, dtype=str, low_memory=False)
-    df = _normalize_columns(df)
+    if not should_reload:
+        return _config
 
-    keep = _wanted_columns(df.columns.tolist())
-    df = df[keep] if keep else df
+    if CONFIG_PATH.exists():
+        try:
+            _config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            _config_loaded_at = now
+            _config_mtime_seen = mtime
+            log.info("config.json loaded (%s)", CONFIG_PATH)
+        except Exception as e:
+            log.warning("config.json parse error: %s", e)
+            _config = {}
+            _config_loaded_at = now
+            _config_mtime_seen = mtime
+    else:
+        _config = {}
+        _config_loaded_at = now
+        _config_mtime_seen = mtime
+        log.info("config.json not found; continuing with empty config")
 
-    # Clean up typical NAN strings
-    df = df.fillna("")
+    return _config
 
-    rows = df.to_dict(orient="records")
-    _cache.update({"rows": rows, "cols": df.columns.tolist(), "count": len(rows), "ready": True})
-    return _cache
+def _download_csv_if_stale(force: bool = False) -> Path:
+    """Ensure CSV cache is present/fresh."""
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    age = time.time() - CSV_CACHE.stat().st_mtime if CSV_CACHE.exists() else 10**9
+    if (not force) and CSV_CACHE.exists() and age < CSV_TTL_SEC:
+        return CSV_CACHE
 
+    log.info("Downloading instruments CSV: %s", INSTRUMENTS_URL)
+    r = requests.get(INSTRUMENTS_URL, timeout=30)
+    r.raise_for_status()
+    CSV_CACHE.write_bytes(r.content)
+    log.info("Saved instruments to %s (%d bytes)", CSV_CACHE, len(r.content))
+    return CSV_CACHE
 
-def _ensure_ready():
-    if not _cache.get("ready"):
-        _load_into_cache()
+def _load_csv_into_memory(force: bool = False) -> int:
+    """Load CSV rows into memory once; return count."""
+    global _csv_rows, _csv_loaded_at
+    path = _download_csv_if_stale(force=force)
+    rows: List[Dict[str, Any]] = []
+    with path.open("r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            rows.append(row)
+    _csv_rows = rows
+    _csv_loaded_at = time.time()
+    log.info("CSV loaded into memory: %s rows=%d", path, len(rows))
+    return len(rows)
 
+def _ensure_loaded():
+    if not _csv_rows:
+        _load_csv_into_memory(force=False)
+    _load_config(force=False)
 
-def _textmatch(hay: str, needle: str) -> bool:
-    return needle in hay if hay else False
+def _is_index_row(row: Dict[str, Any]) -> bool:
+    # Dhan master CSV usually: segment 'I' for indices or instrument_type 'INDEX'
+    seg = str(row.get("segment") or row.get("exchange_segment") or "").upper()
+    itype = str(row.get("instrument_type") or "").upper()
+    return seg == "I" or itype == "INDEX"
 
+def _row_matches_q(row: Dict[str, Any], q: str) -> bool:
+    if not q:
+        return True
+    hay = " ".join([
+        str(row.get("symbol_name") or row.get("symbol") or ""),
+        str(row.get("trading_symbol") or ""),
+        str(row.get("underlying_symbol") or ""),
+        str(row.get("security_id") or ""),
+        str(row.get("isin") or ""),
+        str(row.get("name") or ""),
+    ]).lower()
+    return q in hay
 
-# ---- Endpoints --------------------------------------------------------------
-
+# -------- Endpoints --------
 @router.get("/_debug")
-def debug_info():
-    """Quick visibility: file path, presence, row/col counts."""
-    exists = CSV_FILE.exists()
-    _ensure_ready()
+def instruments_debug():
+    _ensure_loaded()
+    src = str(CSV_CACHE) if CSV_CACHE.exists() else "(mem)"
+    cfg = _load_config()
     return {
-        "exists": exists,
-        "path": str(CSV_FILE),
-        "rows": _cache["count"],
-        "cols": _cache["cols"],
-        "ready": _cache["ready"],
+        "status": "ok",
+        "csv": {
+            "rows": len(_csv_rows),
+            "cache_path": src,
+            "loaded_at": _csv_loaded_at,
+            "url": INSTRUMENTS_URL,
+            "ttl_sec": CSV_TTL_SEC,
+        },
+        "config": {
+            "present": bool(cfg),
+            "watchlists_keys": list((cfg.get("watchlists") or {}).keys()),
+            "filters_keys": list((cfg.get("filters") or {}).keys()),
+            "path": str(CONFIG_PATH.resolve()),
+            "loaded_at": _config_loaded_at,
+        },
     }
 
-
-@router.post("/_refresh")
-def refresh_cache():
-    """Reload CSV into memory. Call after you update data/instruments.csv."""
-    _load_into_cache()
-    return {"ok": True, "rows": _cache["count"], "cols": _cache["cols"]}
-
+@router.post("/_refresh", response_model=RefreshResp)
+def instruments_refresh(force: bool = Query(True)):
+    csv_count = _load_csv_into_memory(force=force)
+    cfg = _load_config(force=True)
+    return RefreshResp(
+        status="refreshed",
+        csv_rows=csv_count,
+        csv_source=str(CSV_CACHE),
+        config_loaded=bool(cfg),
+    )
 
 @router.get("")
-def list_sample(limit: int = Query(50, ge=1, le=500)):
-    """Return first N rows just to sanity-check."""
-    _ensure_ready()
-    return {"count": min(limit, _cache["count"]), "data": (_cache["rows"][:limit])}
+def instruments_sample(limit: int = Query(50, ge=1, le=500)):
+    _ensure_loaded()
+    return {"data": _csv_rows[:limit], "count": min(limit, len(_csv_rows))}
 
+@router.get("/watchlists")
+def instruments_watchlists():
+    cfg = _load_config()
+    return {"watchlists": cfg.get("watchlists") or {}}
 
 @router.get("/indices")
-def list_indices(q: Optional[str] = Query(None), limit: int = Query(50, ge=1, le=500)):
-    """
-    Filter rows where instrument_type == 'INDEX' (case-insensitive).
-    Optional q does contains match on symbol/symbol_name/underlying_symbol.
-    """
-    _ensure_ready()
-    qnorm = (q or "").strip().lower()
-
-    data = []
-    for r in _cache["rows"]:
-        itype = str(r.get("instrument_type", "")).lower()
-        if itype != "index":
+def instruments_indices(q: str = Query("", description="text filter"), limit: int = Query(100, ge=1, le=1000)):
+    _ensure_loaded()
+    qq = q.strip().lower()
+    out: List[Dict[str, Any]] = []
+    for row in _csv_rows:
+        if not _is_index_row(row):
             continue
-
-        if qnorm:
-            fields = [
-                str(r.get("symbol", "")).lower(),
-                str(r.get("symbol_name", "")).lower(),
-                str(r.get("underlying_symbol", "")).lower(),
-            ]
-            if not any(_textmatch(f, qnorm) for f in fields):
-                continue
-
-        data.append(r)
-        if len(data) >= limit:
+        if qq and not _row_matches_q(row, qq):
+            continue
+        out.append({
+            "security_id": row.get("security_id"),
+            "symbol_name": row.get("symbol_name") or row.get("symbol"),
+            "underlying_symbol": row.get("underlying_symbol"),
+            "segment": row.get("segment") or row.get("exchange_segment"),
+            "instrument_type": row.get("instrument_type"),
+        })
+        if len(out) >= limit:
             break
-
-    return {"count": len(data), "data": data}
-
+    return {"data": out, "count": len(out)}
 
 @router.get("/search")
-def search(
-    q: str = Query(..., description="Free text (symbol, symbol_name, underlying_symbol, isin, security_id)"),
-    exchange_segment: Optional[str] = Query(None, description="Optional segment filter (e.g., NSE_EQ, IDX_I, etc.)"),
-    limit: int = Query(50, ge=1, le=500),
-):
-    """Generic search across common fields."""
-    _ensure_ready()
-    qnorm = q.strip().lower()
-
-    segnorm = (exchange_segment or "").strip().lower()
-    seg_keys = ["exchange_segment", "segment"]
-
-    data: List[Dict[str, Any]] = []
-    for r in _cache["rows"]:
-        # segment filter (if provided)
-        if segnorm:
-            seg_val = ""
-            for k in seg_keys:
-                if k in r and r[k]:
-                    seg_val = str(r[k]).lower()
-                    break
-            if seg_val != segnorm:
-                continue
-
-        # text match
-        fields = [
-            str(r.get("symbol", "")).lower(),
-            str(r.get("symbol_name", "")).lower(),
-            str(r.get("underlying_symbol", "")).lower(),
-            str(r.get("isin", "")).lower(),
-            str(r.get("security_id", "")).lower(),
-        ]
-        if any(_textmatch(f, qnorm) for f in fields):
-            data.append(r)
-            if len(data) >= limit:
+def instruments_search(q: str = Query(..., description="free text"), limit: int = Query(100, ge=1, le=1000)):
+    _ensure_loaded()
+    qq = q.strip().lower()
+    out: List[Dict[str, Any]] = []
+    for row in _csv_rows:
+        if _row_matches_q(row, qq):
+            out.append(row)
+            if len(out) >= limit:
                 break
-
-    return {"count": len(data), "data": data}
-
+    return {"data": out, "count": len(out)}
 
 @router.get("/by-id")
-def by_id(security_id: str = Query(..., description="Exact security_id to fetch")):
-    """Return a single instrument row by exact security_id."""
-    _ensure_ready()
-    sid = security_id.strip()
-    for r in _cache["rows"]:
-        if str(r.get("security_id", "")).strip() == sid:
-            return r
-    raise HTTPException(status_code=404, detail="Not Found")
+def instruments_by_id(security_id: str = Query(...)):
+    _ensure_loaded()
+    for row in _csv_rows:
+        if str(row.get("security_id")) == str(security_id):
+            return {"data": row}
+    raise HTTPException(status_code=404, detail="security_id not found")
