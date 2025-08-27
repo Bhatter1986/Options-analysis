@@ -4,196 +4,129 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 from pathlib import Path
 import pandas as pd
-from typing import Dict, List, Any
+from typing import Dict, Any, List
 
 router = APIRouter(prefix="/instruments", tags=["Instruments"])
 
-# ---- Paths & cache -----------------------------------------------------------
+# ---- Paths & cache ---------------------------------------------------
 DATA_DIR = Path("data")
-CSV_FILE = DATA_DIR / "indices.csv"          # <-- we’ll read this file
+CSV_FILE = DATA_DIR / "indices.csv"     # <-- CSV path
 _cache: Dict[str, Any] = {"rows": None, "cols": None, "count": 0}
 
 
-# ---- Utils -------------------------------------------------------------------
+# ---- Utils -----------------------------------------------------------
 def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Normalize column names to lowercase snake-ish for resilient access.
-    No assumptions about exact header names from DhanHQ dump.
-    """
+    """Normalize CSV column names"""
     df = df.copy()
     df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
     return df
 
 
-def _pick_first_col(df: pd.DataFrame, candidates: List[str]) -> str | None:
-    """
-    Return the first column present from the candidate list (case-insensitive).
-    """
-    cols = list(df.columns)
-    for c in candidates:
-        c_low = c.lower()
-        if c_low in cols:
-            return c_low
-    return None
+def _load_csv(force: bool = False):
+    """Load CSV into cache"""
+    global _cache
+    if _cache["rows"] is None or force:
+        if not CSV_FILE.exists():
+            _cache = {"rows": [], "cols": [], "count": 0}
+            return _cache
 
-
-def _load_csv_into_cache() -> Dict[str, Any]:
-    """
-    Read CSV into memory, store normalized rows + a search blob for quick filtering.
-    Cache structure:
-      rows: list[dict]
-      cols: list[str]
-      count: int
-    """
-    if not CSV_FILE.exists():
-        raise FileNotFoundError(f"CSV not found at {CSV_FILE}")
-
-    # Read with pandas; tolerate big files
-    df = pd.read_csv(CSV_FILE, dtype=str, low_memory=False)
-    df = _normalize_columns(df).fillna("")
-
-    # Optional “friendly” fields if present
-    security_id_col = _pick_first_col(df, ["security_id", "sec_id", "securityid"])
-    symbol_col      = _pick_first_col(df, ["trading_symbol", "symbol", "name", "instrument_name"])
-    exch_seg_col    = _pick_first_col(df, ["exchange_segment", "exch_seg", "segment", "exchange"])
-
-    # Prepare rows
-    records: List[Dict[str, Any]] = []
-    for _, row in df.iterrows():
-        d = row.to_dict()
-
-        # add normalized convenience keys if columns exist
-        if security_id_col and "security_id" not in d:
-            d["security_id"] = row[security_id_col]
-
-        if symbol_col and "symbol" not in d:
-            d["symbol"] = row[symbol_col]
-
-        if exch_seg_col and "exchange_segment" not in d:
-            d["exchange_segment"] = row[exch_seg_col]
-
-        # pre-compute a search blob
-        d["_blob"] = " ".join(str(v) for v in d.values()).lower()
-        records.append(d)
-
-    _cache["rows"] = records
-    _cache["cols"] = list(df.columns)
-    _cache["count"] = len(records)
-    return _cache
-
-
-def _ensure_cache() -> Dict[str, Any]:
-    if _cache["rows"] is None:
-        return _load_csv_into_cache()
-    return _cache
-
-
-# ---- Endpoints ---------------------------------------------------------------
-
-@router.get("", summary="Info/health for instruments data")
-def info() -> Dict[str, Any]:
-    """
-    Returns basic info about what is loaded. Useful for quick checks.
-    """
-    try:
-        c = _ensure_cache()
-        return {
-            "ok": True,
-            "count": c["count"],
-            "columns": c["cols"],
-            "csv_path": str(CSV_FILE),
-            "loaded": c["rows"] is not None,
+        df = pd.read_csv(CSV_FILE)
+        df = _normalize_columns(df)
+        _cache = {
+            "rows": df.to_dict(orient="records"),
+            "cols": list(df.columns),
+            "count": len(df),
         }
-    except FileNotFoundError as e:
-        return {"ok": False, "detail": str(e)}
+    return _cache
 
 
-@router.post("/_refresh", summary="Reload CSV into memory")
-def refresh() -> Dict[str, Any]:
-    try:
-        c = _load_csv_into_cache()
-        return {"ok": True, "rows": c["count"]}
-    except Exception as e:
-        return {"ok": False, "detail": str(e)}
+# ---- Endpoints -------------------------------------------------------
 
-
-@router.get("/indices", summary="List indices with optional filters")
-def list_indices(
-    q: str | None = Query(None, description="Search string (matches any column)"),
-    exchange_segment: str | None = Query(None, description="Optional exchange segment filter"),
-    limit: int = Query(50, ge=1, le=500),
-) -> Dict[str, Any]:
+@router.get("/")
+def list_instruments(
+    q: str | None = Query(None, description="search symbol/name"),
+    exchange_segment: str | None = None,
+    security_id: str | None = None,
+    limit: int = 50,
+):
     """
-    Returns index instruments from the local CSV.
-    - q filters against a precomputed text blob of each row
-    - exchange_segment (if present in CSV) narrows results
+    Full instruments list with optional filters.
     """
-    try:
-        c = _ensure_cache()
-    except FileNotFoundError:
+    data = _load_csv()["rows"]
+    if not data:
         return {"count": 0, "data": []}
 
-    rows = c["rows"]
-
-    # Keep only rows that look like indices if we can infer it
-    # Many Dhan master dumps have a column with 'index' in instrument_type/series/name.
-    # We'll heuristically keep rows whose blob contains "index".
-    index_only = [r for r in rows if "index" in r["_blob"]]
+    # Apply filters
+    if q:
+        q_lower = q.lower()
+        data = [r for r in data if q_lower in str(r.get("name", "")).lower()]
 
     if exchange_segment:
-        es = exchange_segment.lower()
-        index_only = [
-            r
-            for r in index_only
-            if ("exchange_segment" in r and es in str(r["exchange_segment"]).lower())
-            or (es in r["_blob"])
-        ]
+        data = [r for r in data if str(r.get("exchange_segment", "")).lower() == exchange_segment.lower()]
 
-    if q:
-        ql = q.lower()
-        index_only = [r for r in index_only if ql in r["_blob"]]
+    if security_id:
+        data = [r for r in data if str(r.get("security_id", "")) == str(security_id)]
 
-    # Trim helper fields
-    out = []
-    for r in index_only[:limit]:
-        d = {k: v for k, v in r.items() if k != "_blob"}
-        out.append(d)
-
-    return {"count": len(out), "data": out}
+    return {"count": len(data[:limit]), "data": data[:limit]}
 
 
-@router.get("/search", summary="Generic search across the CSV")
-def generic_search(
-    q: str = Query(..., description="Search string"),
-    limit: int = Query(50, ge=1, le=500),
-) -> Dict[str, Any]:
-    try:
-        c = _ensure_cache()
-    except FileNotFoundError:
+@router.get("/indices")
+def list_indices(q: str | None = None, limit: int = 50):
+    """
+    Only indices (instrument_type == INDEX).
+    """
+    data = _load_csv()["rows"]
+    if not data:
         return {"count": 0, "data": []}
 
-    ql = q.lower()
-    hits = [r for r in c["rows"] if ql in r["_blob"]]
+    data = [r for r in data if str(r.get("instrument_type", "")).lower() == "index"]
 
-    out = []
-    for r in hits[:limit]:
-        d = {k: v for k, v in r.items() if k != "_blob"}
-        out.append(d)
+    if q:
+        q_lower = q.lower()
+        data = [r for r in data if q_lower in str(r.get("name", "")).lower()]
 
-    return {"count": len(out), "data": out}
+    return {"count": len(data[:limit]), "data": data[:limit]}
 
 
-@router.get("/by-id", summary="Lookup by security_id")
-def by_id(security_id: str = Query(..., description="Security ID to match")) -> Dict[str, Any]:
-    try:
-        c = _ensure_cache()
-    except FileNotFoundError:
+@router.get("/search")
+def search_instruments(q: str, limit: int = 50):
+    """
+    Generic search across all columns.
+    """
+    data = _load_csv()["rows"]
+    if not data:
+        return {"count": 0, "data": []}
+
+    q_lower = q.lower()
+    results = []
+    for r in data:
+        row_text = " ".join([str(v).lower() for v in r.values()])
+        if q_lower in row_text:
+            results.append(r)
+
+    return {"count": len(results[:limit]), "data": results[:limit]}
+
+
+@router.get("/by-id")
+def get_by_id(security_id: str):
+    """
+    Lookup instrument by exact security_id.
+    """
+    data = _load_csv()["rows"]
+    if not data:
         return {"detail": "Not Found"}
 
-    sid = security_id.strip().lower()
-    for r in c["rows"]:
-        val = str(r.get("security_id", "")).lower()
-        if val == sid:
-            return {k: v for k, v in r.items() if k != "_blob"}
+    for r in data:
+        if str(r.get("security_id")) == str(security_id):
+            return r
 
     return {"detail": "Not Found"}
+
+
+@router.post("/_refresh")
+def refresh_cache():
+    """
+    Force reload the CSV into cache.
+    """
+    data = _load_csv(force=True)
+    return {"ok": True, "rows": data["count"], "cols": data["cols"]}
