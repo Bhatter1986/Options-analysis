@@ -1,123 +1,201 @@
 # App/Routers/instruments.py
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, HTTPException
 from pathlib import Path
-from typing import Any, Dict, Optional, List
-
 import pandas as pd
+from typing import Dict, List, Any, Optional
 
 router = APIRouter(prefix="/instruments", tags=["Instruments"])
 
-# --- Paths & cache ---
-from pathlib import Path
+# ---- Paths & cache ----------------------------------------------------------
+DATA_DIR = Path("data")
+CSV_FILE = DATA_DIR / "instruments.csv"   # <--- yahi file padhenge
 
-ROOT     = Path(__file__).resolve().parents[2]   # <repo root>
-DATA_DIR = ROOT / "data"
-CSV_FILE = DATA_DIR / "instruments.csv"          # <-- yahi read hoga
-# ---- Utils ------------------------------------------------------------------
+# Lightweight in-memory cache
+_cache: Dict[str, Any] = {
+    "rows": None,     # type: Optional[List[Dict[str, Any]]]
+    "cols": None,     # type: Optional[List[str]]
+    "count": 0,
+    "ready": False,
+}
+
+
+# ---- Utils -----------------------------------------------------------------
 def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Lowercase + underscore columns so header names become resilient."""
+    """Lowercase + spaces to underscore; stay resilient to header variations."""
     df = df.copy()
     df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
     return df
 
 
-def _load_csv(force: bool = False) -> pd.DataFrame:
-    """Load CSV once & cache. Auto-refresh if file mtime changes or force=True."""
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+def _wanted_columns(cols: List[str]) -> List[str]:
+    """
+    Choose a stable subset if present. We don't fail if any is missing.
+    """
+    preferred = [
+        "exchange_segment", "segment",
+        "security_id",
+        "isin",
+        "instrument_type",
+        "series",
+        "underlying_security_id",
+        "underlying_symbol",
+        "symbol",
+        "symbol_name",
+    ]
+    present = []
+    s = set(cols)
+    for c in preferred:
+        if c in s:
+            present.append(c)
+    # Always keep security_id if we have it
+    if "security_id" in s and "security_id" not in present:
+        present.insert(0, "security_id")
+    return present or cols  # fallback to everything
+
+
+def _load_into_cache() -> Dict[str, Any]:
+    """
+    Read CSV → pandas → normalize → list[dict] into _cache.
+    Safe even if some columns differ; we normalize & subset gracefully.
+    """
     if not CSV_FILE.exists():
-        return pd.DataFrame()
+        _cache.update({"rows": [], "cols": [], "count": 0, "ready": False})
+        return _cache
 
-    mtime = CSV_FILE.stat().st_mtime
-    if force or _cache["df"] is None or _cache["ts"] != mtime:
-        df = pd.read_csv(CSV_FILE)
-        df = _normalize_columns(df)
-        # keep security_id as string for exact match
-        if "security_id" in df.columns:
-            df["security_id"] = df["security_id"].astype(str)
+    # Read efficiently; dtype=str keeps ids exact (no 1e+05 surprises)
+    df = pd.read_csv(CSV_FILE, dtype=str, low_memory=False)
+    df = _normalize_columns(df)
 
-        _cache.update(
-            {"df": df, "ts": mtime, "rows": len(df), "cols": list(df.columns)}
-        )
-    return _cache["df"]
+    keep = _wanted_columns(df.columns.tolist())
+    df = df[keep] if keep else df
+
+    # Clean up typical NAN strings
+    df = df.fillna("")
+
+    rows = df.to_dict(orient="records")
+    _cache.update({"rows": rows, "cols": df.columns.tolist(), "count": len(rows), "ready": True})
+    return _cache
 
 
-# ---- Debug & maintenance ----------------------------------------------------
+def _ensure_ready():
+    if not _cache.get("ready"):
+        _load_into_cache()
+
+
+def _textmatch(hay: str, needle: str) -> bool:
+    return needle in hay if hay else False
+
+
+# ---- Endpoints --------------------------------------------------------------
+
 @router.get("/_debug")
-def debug() -> Dict[str, Any]:
+def debug_info():
+    """Quick visibility: file path, presence, row/col counts."""
     exists = CSV_FILE.exists()
-    size = CSV_FILE.stat().st_size if exists else 0
-    df = _load_csv()
-    sample: List[Dict[str, Any]] = []
-    if not df.empty:
-        sample = df.head(3).to_dict(orient="records")
+    _ensure_ready()
     return {
-        "csv_path": str(CSV_FILE),
         "exists": exists,
-        "size": size,
-        "rows": int(_cache.get("rows", 0)),
-        "cols": _cache.get("cols", []),
-        "sample": sample,
+        "path": str(CSV_FILE),
+        "rows": _cache["count"],
+        "cols": _cache["cols"],
+        "ready": _cache["ready"],
     }
 
 
 @router.post("/_refresh")
-def refresh() -> Dict[str, Any]:
-    df = _load_csv(force=True)
-    return {"ok": True, "rows": len(df), "cols": list(df.columns)}
+def refresh_cache():
+    """Reload CSV into memory. Call after you update data/instruments.csv."""
+    _load_into_cache()
+    return {"ok": True, "rows": _cache["count"], "cols": _cache["cols"]}
 
 
-# ---- API: list, indices, search, by-id -------------------------------------
 @router.get("")
-def list_all(limit: int = Query(50, ge=1, le=500)) -> Dict[str, Any]:
-    df = _load_csv()
-    if df.empty:
-        return {"count": 0, "data": []}
-    data = df.head(limit).to_dict(orient="records")
-    return {"count": len(data), "data": data}
+def list_sample(limit: int = Query(50, ge=1, le=500)):
+    """Return first N rows just to sanity-check."""
+    _ensure_ready()
+    return {"count": min(limit, _cache["count"]), "data": (_cache["rows"][:limit])}
 
 
 @router.get("/indices")
-def list_indices(
-    q: Optional[str] = None, limit: int = Query(50, ge=1, le=500)
-) -> Dict[str, Any]:
-    df = _load_csv()
-    if df.empty:
-        return {"count": 0, "data": []}
+def list_indices(q: Optional[str] = Query(None), limit: int = Query(50, ge=1, le=500)):
+    """
+    Filter rows where instrument_type == 'INDEX' (case-insensitive).
+    Optional q does contains match on symbol/symbol_name/underlying_symbol.
+    """
+    _ensure_ready()
+    qnorm = (q or "").strip().lower()
 
-    # Match INDEX via common columns, else fallback to full-row text search
-    mask = pd.Series(False, index=df.index)
-    for col in ["instrument_type", "series", "instrument"]:
-        if col in df.columns:
-            mask |= df[col].astype(str).str.upper().str.contains(r"\bINDEX\b", na=False)
+    data = []
+    for r in _cache["rows"]:
+        itype = str(r.get("instrument_type", "")).lower()
+        if itype != "index":
+            continue
 
-    df_idx = df[mask]
-    if q:
-        row_text = df_idx.astype(str).fillna("").agg(" ".join, axis=1)
-        df_idx = df_idx[row_text.str.contains(q, case=False, na=False)]
+        if qnorm:
+            fields = [
+                str(r.get("symbol", "")).lower(),
+                str(r.get("symbol_name", "")).lower(),
+                str(r.get("underlying_symbol", "")).lower(),
+            ]
+            if not any(_textmatch(f, qnorm) for f in fields):
+                continue
 
-    data = df_idx.head(limit).to_dict(orient="records")
+        data.append(r)
+        if len(data) >= limit:
+            break
+
     return {"count": len(data), "data": data}
 
 
 @router.get("/search")
-def generic_search(q: str, limit: int = Query(50, ge=1, le=500)) -> Dict[str, Any]:
-    df = _load_csv()
-    if df.empty or not q:
-        return {"count": 0, "data": []}
-    row_text = df.astype(str).fillna("").agg(" ".join, axis=1)
-    df2 = df[row_text.str.contains(q, case=False, na=False)]
-    data = df2.head(limit).to_dict(orient="records")
+def search(
+    q: str = Query(..., description="Free text (symbol, symbol_name, underlying_symbol, isin, security_id)"),
+    exchange_segment: Optional[str] = Query(None, description="Optional segment filter (e.g., NSE_EQ, IDX_I, etc.)"),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """Generic search across common fields."""
+    _ensure_ready()
+    qnorm = q.strip().lower()
+
+    segnorm = (exchange_segment or "").strip().lower()
+    seg_keys = ["exchange_segment", "segment"]
+
+    data: List[Dict[str, Any]] = []
+    for r in _cache["rows"]:
+        # segment filter (if provided)
+        if segnorm:
+            seg_val = ""
+            for k in seg_keys:
+                if k in r and r[k]:
+                    seg_val = str(r[k]).lower()
+                    break
+            if seg_val != segnorm:
+                continue
+
+        # text match
+        fields = [
+            str(r.get("symbol", "")).lower(),
+            str(r.get("symbol_name", "")).lower(),
+            str(r.get("underlying_symbol", "")).lower(),
+            str(r.get("isin", "")).lower(),
+            str(r.get("security_id", "")).lower(),
+        ]
+        if any(_textmatch(f, qnorm) for f in fields):
+            data.append(r)
+            if len(data) >= limit:
+                break
+
     return {"count": len(data), "data": data}
 
 
 @router.get("/by-id")
-def by_id(security_id: str) -> Dict[str, Any]:
-    df = _load_csv()
-    if df.empty or "security_id" not in df.columns:
-        return {"detail": "Not Found"}
-    pick = df[df["security_id"].astype(str) == str(security_id)]
-    if pick.empty:
-        return {"detail": "Not Found"}
-    return pick.head(1).to_dict(orient="records")[0]
+def by_id(security_id: str = Query(..., description="Exact security_id to fetch")):
+    """Return a single instrument row by exact security_id."""
+    _ensure_ready()
+    sid = security_id.strip()
+    for r in _cache["rows"]:
+        if str(r.get("security_id", "")).strip() == sid:
+            return r
+    raise HTTPException(status_code=404, detail="Not Found")
