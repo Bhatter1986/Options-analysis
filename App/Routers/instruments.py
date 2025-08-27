@@ -1,31 +1,33 @@
-# --- /instruments/by-id ------------------------------------------------------
 from fastapi import HTTPException
 
 @router.get("/by-id")
-def by_id(security_id: str = Query(..., description="Exact Dhan security_id")):
-    _ensure_loaded()
-    df = _cache["rows"]
-    if df is None:
-        raise HTTPException(status_code=503, detail="Cache not ready")
-
-    # normalize column name (lowercase safety)
-    if "security_id" not in df.columns:
-        # map lowercase names just in case
-        cols_map = {c.lower(): c for c in df.columns}
-        if "security_id" not in cols_map:
-            raise HTTPException(status_code=500, detail="security_id column missing")
-        real_col = cols_map["security_id"]
-    else:
-        real_col = "security_id"
-
-    sid = str(security_id).strip()           # always compare as string
+def get_by_id(security_id: str):
+    """
+    Return single instrument row by security_id (string-safe match).
+    Example: /instruments/by-id?security_id=2
+    """
     try:
-        row = df[df[real_col].astype(str) == sid].head(1)
-        if row.empty:
+        # ensure cache/dataframe ready
+        if _cache.get("rows") is None:
+            _load_csv()  # your existing loader util
+
+        df = _cache["rows"]                # pandas DataFrame
+        col = "security_id"
+        if col not in df.columns:
+            raise HTTPException(status_code=500, detail=f"Column '{col}' missing")
+
+        # cast both sides to string for safe comparison
+        m = df[col].astype(str) == str(security_id)
+        hit = df.loc[m]
+
+        if hit.empty:
+            # proper 404 when not found
             raise HTTPException(status_code=404, detail="Not Found")
-        return row.iloc[0].to_dict()
+
+        return hit.iloc[0].to_dict()
     except HTTPException:
+        # re-raise clean HTTP errors
         raise
     except Exception as e:
-        # defensive: don't 500 with stack traces
-        raise HTTPException(status_code=400, detail=f"bad request: {e}")
+        # any unexpected error => 500 with message
+        raise HTTPException(status_code=500, detail=f"by-id failed: {e}")
