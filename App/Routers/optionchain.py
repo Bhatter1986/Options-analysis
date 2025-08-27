@@ -1,67 +1,57 @@
-from fastapi import APIRouter, Query, Body
-from typing import Any, Dict
-from datetime import datetime, timedelta
-import random
-from App.common import dhan_get, dhan_post, logger
+from __future__ import annotations
+from fastapi import APIRouter, HTTPException, Query
+from pathlib import Path
+from typing import Optional, List, Dict, Any
+import pandas as pd
+import time
 
 router = APIRouter(prefix="/optionchain", tags=["optionchain"])
 
-def _mock_expiries():
-    base = datetime.now().date()
-    return [(base + timedelta(days=7*i)).strftime("%Y-%m-%d") for i in range(1,5)]
+# CSV yahi expect kar rahe hain:
+LOCAL_CSV = Path("data/option_chain.csv")
 
-def _mock_chain():
-    strikes = [24800, 24900, 25000, 25100, 25200]
-    data = {}
-    for sp in strikes:
-        data[str(sp)] = {
-            "CE": {
-                "oi": random.randint(8000,22000),
-                "previous_oi": random.randint(7000,21000),
-                "volume": random.randint(1500,7000),
-                "implied_volatility": round(15+random.random()*6,2),
-                "last_price": round(90+random.random()*60,2),
-                "change": round(-3+random.random()*6,2),
-            },
-            "PE": {
-                "oi": random.randint(8000,22000),
-                "previous_oi": random.randint(7000,21000),
-                "volume": random.randint(1500,7000),
-                "implied_volatility": round(15+random.random()*6,2),
-                "last_price": round(90+random.random()*60,2),
-                "change": round(-3+random.random()*6,2),
-            }
-        }
-    return data
+_df_cache: Optional[pd.DataFrame] = None
+_last_loaded_ts: Optional[float] = None
 
-@router.get("/expirylist")
-def expirylist(under_security_id: int = Query(...), under_exchange_segment: str = Query(...)):
+def _csv_exists() -> bool:
+    return LOCAL_CSV.exists() and LOCAL_CSV.is_file()
+
+def _load_df(force: bool = False) -> pd.DataFrame:
+    global _df_cache, _last_loaded_ts
+    if not _csv_exists():
+        raise FileNotFoundError(f"CSV not found at {LOCAL_CSV}")
+    if (not force) and (_df_cache is not None):
+        return _df_cache
+
+    df = pd.read_csv(LOCAL_CSV, dtype=str, keep_default_na=False, na_filter=False)
+    df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+
+    _df_cache = df
+    _last_loaded_ts = time.time()
+    return _df_cache
+
+def _rows_dict(df: pd.DataFrame) -> List[Dict[str, Any]]:
+    return df.to_dict(orient="records")
+
+@router.get("/_debug")
+def optionchain_debug() -> Dict[str, Any]:
+    info: Dict[str, Any] = {"exists": _csv_exists(), "path": str(LOCAL_CSV), "rows": 0, "ready": False}
+    if not info["exists"]:
+        return info
     try:
-        j = dhan_get("/option-chain/expiry-list", {
-            "under_security_id": under_security_id,
-            "under_exchange_segment": under_exchange_segment
-        })
-        return {"data": {"data": j}}
+        df = _load_df(force=True)
+        info["rows"] = int(df.shape[0])
+        info["cols"] = list(df.columns)
+        info["ready"] = info["rows"] > 0
+        info["loaded_at"] = _last_loaded_ts
     except Exception as e:
-        logger.warning(f"expirylist mock due to: {e}")
-        return {"data": {"data": _mock_expiries()}}
-
-def _chain_common(under_security_id: int, under_exchange_segment: str, expiry: str):
-    try:
-        j = dhan_post("/option-chain", {
-            "under_security_id": under_security_id,
-            "under_exchange_segment": under_exchange_segment,
-            "expiry": expiry
-        })
-        return {"data": {"data": j}}
-    except Exception as e:
-        logger.warning(f"optionchain mock due to: {e}")
-        return {"data": {"data": _mock_chain()}}
-
-@router.post("")
-def optionchain_post(payload: Dict[str, Any] = Body(...)):
-    return _chain_common(int(payload.get("under_security_id")), str(payload.get("under_exchange_segment")), str(payload.get("expiry")))
+        info["error"] = str(e)
+    return info
 
 @router.get("")
-def optionchain_get(under_security_id: int = Query(...), under_exchange_segment: str = Query(...), expiry: str = Query(...)):
-    return _chain_common(under_security_id, under_exchange_segment, expiry)
+def optionchain_list(limit: int = Query(10, ge=1, le=500)) -> Dict[str, Any]:
+    try:
+        df = _load_df()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"CSV load failed: {e}")
+    return {"data": _rows_dict(df.head(limit))}
