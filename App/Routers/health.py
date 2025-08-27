@@ -1,19 +1,29 @@
-# Health check
-curl -sS "$BASE/health" | jq
+from fastapi import APIRouter
+from datetime import datetime
+from App.common import MODE, OPENAI_API_KEY, OPENAI_MODEL, DHAN_CLIENT_ID, DHAN_ACCESS_TOKEN, OPENAI_BASE_URL
 
-# Debug (rows count)
-curl -sS "$BASE/instruments/_debug" | jq
+router = APIRouter(tags=["health"])
 
-# Sample rows
-curl -sS "$BASE/instruments" | jq
+@router.get("/health")
+def health():
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "mode": MODE,
+        "dhan_configured": bool(DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN),
+        "openai_configured": bool(OPENAI_API_KEY),
+        "model": OPENAI_MODEL,
+        "base_url": OPENAI_BASE_URL or "default"
+    }
 
-# Sirf indices
-curl -sS "$BASE/instruments/indices?q=nifty" | jq
-
-# Search (Reliance)
-curl -sS "$BASE/instruments/search?q=reliance" | jq
-
-# By-ID
-curl -sS "$BASE/instruments/by-id?security_id=2" | jq    # NIFTY
-curl -sS "$BASE/instruments/by-id?security_id=25" | jq   # BANKNIFTY
-curl -sS "$BASE/instruments/by-id?security_id=834804" | jq  # RELIANCE FUT
+@router.get("/__selftest")
+def selftest():
+    return {"ok": True, "status": {
+        "env": "Render",
+        "mode": MODE,
+        "token_present": bool(DHAN_ACCESS_TOKEN),
+        "client_id_present": bool(DHAN_CLIENT_ID),
+        "ai_present": bool(OPENAI_API_KEY),
+        "ai_model": OPENAI_MODEL,
+        "base_url": OPENAI_BASE_URL or "default"
+    }}
