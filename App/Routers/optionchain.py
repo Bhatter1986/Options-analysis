@@ -1,101 +1,83 @@
-# App/Routers/optionchain.py
-from __future__ import annotations
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-import os, time, httpx
-from typing import Dict, Any, List, Optional
+import os, requests, time
 
-router = APIRouter(prefix="/optionchain", tags=["optionchain"])
+router = APIRouter()
 
-DHAN_BASE = "https://dhan-api.co.in"  # DhanHQ v2 base
-DHAN_TOKEN = os.getenv("DHAN_ACCESS_TOKEN", "").strip()
-DHAN_CLIENT = os.getenv("DHAN_CLIENT_ID", "").strip()
+# 🔑 Env Vars from Render
+DHAN_TOKEN = os.getenv("DHAN_TOKEN")
+DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID")
+BASE_URL = "https://api.dhan.co/v2"
 
-# --- simple rate limit: 1 call per 3s (Dhan guideline)
-_LAST_HIT: float = 0.0
-def _throttle():
-    global _LAST_HIT
-    delay = 3.0 - (time.time() - _LAST_HIT)
-    if delay > 0: time.sleep(delay)
-    _LAST_HIT = time.time()
+# Cache memory
+_cache = {
+    "expirylist": {},
+    "optionchain": {}
+}
+_cache_ttl = 10    # seconds (expirylist cache)
+_chain_ttl = 3     # seconds (optionchain cache, matches API rate-limit)
 
-def _auth_headers() -> Dict[str, str]:
-    if not DHAN_TOKEN or not DHAN_CLIENT:
-        raise HTTPException(503, detail="Dhan credentials missing (set DHAN_ACCESS_TOKEN & DHAN_CLIENT_ID).")
-    return {
+
+def call_dhan_api(endpoint: str, payload: dict):
+    """Generic caller for Dhan API with headers"""
+    headers = {
         "access-token": DHAN_TOKEN,
-        "client-id": DHAN_CLIENT,
-        "content-type": "application/json",
+        "client-id": DHAN_CLIENT_ID,
+        "Content-Type": "application/json"
     }
+    url = f"{BASE_URL}{endpoint}"
+    resp = requests.post(url, headers=headers, json=payload)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return resp.json()
 
-# ------------- Models -------------
-class ExpiryRequest(BaseModel):
-    UnderlyingScrip: int        # e.g. 2=NIFTY, 25=BANKNIFTY
-    UnderlyingSeg: str          # e.g. "IDX_I"  (index options)
-    # (Dhan doc: first call expirylist, then pass one expiry to /optionchain)
 
-class ChainRequest(ExpiryRequest):
-    Expiry: str                 # "YYYY-MM-DD"
+@router.post("/optionchain/expirylist/{symbol}")
+def get_expiry_list(symbol: str):
+    """
+    Fetch Expiry List for given underlying (e.g., NIFTY, BANKNIFTY).
+    Uses caching for 10s to reduce hits.
+    """
+    now = time.time()
+    if symbol in _cache["expirylist"] and now - _cache["expirylist"][symbol]["time"] < _cache_ttl:
+        return _cache["expirylist"][symbol]["data"]
 
-# ------------- Helpers -------------
-async def _post_json(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    _throttle()
-    headers = _auth_headers()
-    url = f"{DHAN_BASE}{path}"
-    async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.post(url, headers=headers, json=payload)
-        if r.status_code >= 400:
-            raise HTTPException(r.status_code, detail=f"{path} failed: {r.text}")
-        try:
-            return r.json()
-        except Exception:
-            raise HTTPException(502, detail=f"{path} returned non-JSON")
-
-# ------------- Endpoints -------------
-
-@router.get("/_debug")
-def debug_status() -> Dict[str, Any]:
-    return {
-        "env_has_token": bool(DHAN_TOKEN),
-        "env_has_client_id": bool(DHAN_CLIENT),
-        "rate_limit": "1 req / 3s",
-        "notes": "Use /optionchain/expirylist first, then /optionchain with Expiry.",
+    # Map symbol to UnderlyingScrip + Segment (from instruments.csv ideally)
+    mapping = {
+        "NIFTY": {"UnderlyingScrip": 13, "UnderlyingSeg": "IDX_I"},
+        "BANKNIFTY": {"UnderlyingScrip": 25, "UnderlyingSeg": "IDX_I"},
+        "FINNIFTY": {"UnderlyingScrip": 52, "UnderlyingSeg": "IDX_I"},
     }
+    if symbol not in mapping:
+        raise HTTPException(status_code=400, detail=f"Unsupported symbol: {symbol}")
 
-@router.post("/expirylist")
-async def expiry_list(req: ExpiryRequest) -> Dict[str, Any]:
-    """
-    POST -> Dhan /v2/option-chain/expirylist
-    Body: { UnderlyingScrip, UnderlyingSeg }
-    """
-    # Sandbox shortcut
-    if not DHAN_TOKEN or not DHAN_CLIENT:
-        # mock expiries (7,14,21,28 days)
-        today = time.strftime("%Y-%m-%d", time.gmtime())
-        return {"data": [today], "status": "sandbox-mock"}
-    data = await _post_json("/v2/option-chain/expirylist", req.dict())
+    payload = mapping[symbol]
+    data = call_dhan_api("/optionchain/expirylist", payload)
+
+    _cache["expirylist"][symbol] = {"data": data, "time": now}
     return data
 
-@router.post("")
-async def option_chain(req: ChainRequest) -> Dict[str, Any]:
+
+@router.post("/optionchain/{symbol}/{expiry}")
+def get_option_chain(symbol: str, expiry: str):
     """
-    POST -> Dhan /v2/option-chain
-    Body: { UnderlyingScrip, UnderlyingSeg, Expiry }
+    Fetch Option Chain for given symbol + expiry.
+    Uses caching for 3s because Dhan rate-limit is 1 req/3s.
     """
-    if not DHAN_TOKEN or not DHAN_CLIENT:
-        # small mock so UI doesn't break in SANDBOX
-        return {
-            "data": {
-                "last_price": 25000.0,
-                "oc": {
-                    "25000": {
-                        "CE": {"implied_volatility": 18.2, "last_price": 120.5, "oi": 1000, "previous_oi": 900, "volume": 5000},
-                        "PE": {"implied_volatility": 19.9, "last_price": 115.0, "oi": 1200, "previous_oi": 1100, "volume": 5200},
-                    }
-                },
-            },
-            "status": "sandbox-mock",
-        }
-    payload = req.dict()
-    data = await _post_json("/v2/option-chain", payload)
+    cache_key = f"{symbol}_{expiry}"
+    now = time.time()
+    if cache_key in _cache["optionchain"] and now - _cache["optionchain"][cache_key]["time"] < _chain_ttl:
+        return _cache["optionchain"][cache_key]["data"]
+
+    mapping = {
+        "NIFTY": {"UnderlyingScrip": 13, "UnderlyingSeg": "IDX_I"},
+        "BANKNIFTY": {"UnderlyingScrip": 25, "UnderlyingSeg": "IDX_I"},
+        "FINNIFTY": {"UnderlyingScrip": 52, "UnderlyingSeg": "IDX_I"},
+    }
+    if symbol not in mapping:
+        raise HTTPException(status_code=400, detail=f"Unsupported symbol: {symbol}")
+
+    payload = {**mapping[symbol], "Expiry": expiry}
+    data = call_dhan_api("/optionchain", payload)
+
+    _cache["optionchain"][cache_key] = {"data": data, "time": now}
     return data
