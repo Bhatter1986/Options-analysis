@@ -1,10 +1,14 @@
-# Map instrument_type + segment -> Dhan V2 UnderlyingSeg
-# Tweak/extend with Annexure as needed.
+# App/utils/seg_map.py
+# Map (instrument_type, segment) -> Dhan Annexure segment code
+# Indices: IDX_I confirmed. Stocks: replace "E_E" with exact code from Annexure if different.
 SEG_MAP = {
-    ("INDEX", "I"): "IDX_I",   # indices
-    ("EQ",    "E"): "E_E",     # placeholder for equity options — replace per Annexure if different
-    # add more when needed…
+    ("INDEX", "I"): "IDX_I",   # NIFTY, BANKNIFTY, FINNIFTY, SENSEX...
+    ("EQ",    "E"): "E_E",     # <- verify with Annexure; update if required
+    # Add more when needed (examples):
+    ("OPTSTK", "D"): "D_D",    # placeholder, fill with real code from Annexure
+    ("FUTSTK", "D"): "D_D",    # placeholder
 }
 
 def to_dhan_seg(instrument_type: str, segment: str) -> str | None:
-    return SEG_MAP.get((instrument_type.upper(), segment.upper()))
+    key = (instrument_type.upper(), segment.upper())
+    return SEG_MAP.get(key)
