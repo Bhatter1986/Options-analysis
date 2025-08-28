@@ -1,156 +1,171 @@
 # App/Routers/optionchain_auto.py
-
 from __future__ import annotations
-from fastapi import APIRouter, Query, HTTPException
+
+import csv
+import os
+import json
 from pathlib import Path
-import pandas as pd
-import json, time
-from ..utils.dhan_api import call_dhan_api, dhan_sleep
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, HTTPException, Query
+
 from ..utils.seg_map import to_dhan_seg
-from App.utils.dhan_api import fetch_expirylist
+from ..utils.dhan_api import (
+    fetch_expirylist,
+    fetch_optionchain,
+)
 
-router = APIRouter(prefix="/optionchain/auto", tags=["optionchain-auto"])
+router = APIRouter(prefix="/optionchain/auto", tags=["optionchain_auto"])
 
-# Paths
-CSV_PATH = Path("data/instruments.csv")
-SAVE_DIR = Path("data/optionchain")
-SAVE_DIR.mkdir(parents=True, exist_ok=True)
+# Data locations
+ROOT = Path(".")
+DATA_DIR = ROOT / "data"
+INSTRUMENTS_CSV = DATA_DIR / "instruments.csv"
+SAVE_DIR = DATA_DIR / "optionchain"
 
-# ---------- Helpers ----------
-def load_instruments() -> pd.DataFrame:
-    """Load instruments.csv into DataFrame."""
-    if not CSV_PATH.exists():
-        raise HTTPException(503, "instruments.csv missing")
-    df = pd.read_csv(CSV_PATH, dtype=str, keep_default_na=False, na_filter=False)
-    df.columns = [c.strip().lower() for c in df.columns]
 
-    required = ["security_id", "symbol_name", "underlying_symbol", "segment", "instrument_type"]
-    for col in required:
-        if col not in df.columns:
-            raise HTTPException(500, f"instruments.csv missing column: {col}")
-    return df
+# ---- Utilities ---------------------------------------------------------------
 
-def payload_from_row(row: pd.Series) -> dict | None:
-    """Convert instruments.csv row to Dhan payload."""
-    seg = to_dhan_seg(row["instrument_type"], row["segment"])
-    if not seg:
-        return None
-    return {
-        "UnderlyingScrip": int(row["security_id"]),  # Dhan expects int
-        "UnderlyingSeg": seg,
-    }
+def _read_instruments(max_rows: Optional[int] = None) -> List[Dict[str, str]]:
+    """
+    Expect a CSV with headers including:
+      security_id, symbol_name, underlying_symbol, segment, instrument_type
+    """
+    if not INSTRUMENTS_CSV.exists():
+        raise HTTPException(status_code=500, detail=f"Missing {INSTRUMENTS_CSV}")
 
-def write_json(path: Path, data: dict) -> None:
-    """Safe JSON writer with auto dir creation."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    out: List[Dict[str, str]] = []
+    with INSTRUMENTS_CSV.open("r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for i, row in enumerate(reader):
+            out.append({k: (v or "").strip() for k, v in row.items()})
+            if max_rows is not None and len(out) >= max_rows:
+                break
+    return out
 
-# ---------- Routes ----------
+
+def _ensure_dir(p: Path) -> None:
+    p.mkdir(parents=True, exist_ok=True)
+
+
+def _symbol_dir(symbol: str) -> Path:
+    d = SAVE_DIR / symbol
+    _ensure_dir(d)
+    return d
+
+
+# ---- Endpoints ---------------------------------------------------------------
+
 @router.get("/_debug")
-def debug_info():
-    """Debug info for optionchain automation."""
+def debug() -> Dict[str, Any]:
     return {
-        "instruments_csv": str(CSV_PATH),
-        "instruments_exists": CSV_PATH.exists(),
+        "ok": True,
+        "status": {
+            "env": os.getenv("RENDER", "Render"),
+            "mode": os.getenv("APP_MODE", "SANDBOX").upper(),
+            "token_present": bool(os.getenv("DHAN_SAND_TOKEN") or os.getenv("DHAN_LIVE_TOKEN")),
+            "client_id_present": bool(os.getenv("DHAN_SAND_CLIENT_ID") or os.getenv("DHAN_LIVE_CLIENT_ID")),
+            "ai_present": bool(os.getenv("OPENAI_API_KEY")),
+            "ai_model": os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+            "base_url": os.getenv("DHAN_BASE_URL_SANDBOX") or os.getenv("DHAN_BASE_URL_LIVE") or "",
+        },
+        "instruments_csv": str(INSTRUMENTS_CSV),
+        "instruments_exists": INSTRUMENTS_CSV.exists(),
         "optionchain_dir": str(SAVE_DIR),
     }
 
+
 @router.get("/expirylist")
-def all_expirylist(q: str | None = Query(None), limit: int = Query(0, ge=0, le=500)):
+def build_expiry_lists(
+    limit: int = Query(5, ge=1, le=1000, description="How many rows from instruments.csv")
+) -> Dict[str, Any]:
     """
-    Pull expirylist for ALL (or filtered) underlyings.
-    Saves per symbol: data/optionchain/<SYMBOL>/expiries.json
+    For first `limit` instruments, fetch expiry list from Dhan and save:
+      data/optionchain/<SYMBOL>/expiries.json
+
+    Returns per-symbol status.
     """
-    df = load_instruments()
+    rows = _read_instruments(max_rows=limit)
+    results: List[Dict[str, Any]] = []
 
-    if q:
-        qlow = q.lower()
-        df = df[df["symbol_name"].str.lower().str.contains(qlow) |
-                df["underlying_symbol"].str.lower().str.contains(qlow)]
-
-    if limit and limit > 0:
-        df = df.head(limit)
-
-    out = []
-    for _, row in df.iterrows():
-        pl = payload_from_row(row)
-        if not pl:
-            continue
+    for row in rows:
         try:
-            res = call_dhan_api("/optionchain/expirylist", pl)
-            sym = row["symbol_name"]
-            ddir = SAVE_DIR / sym
-            write_json(ddir / "expiries.json", res)
-            out.append({
-                "symbol": sym,
-                "payload": pl,
-                "status": "ok",
-                "count": len(res.get("data", []))
-            })
+            sec_id = int(row.get("security_id") or 0)
+            seg_in_csv = row.get("segment") or ""
+            symbol = row.get("symbol_name") or row.get("underlying_symbol") or f"SEC_{sec_id}"
+
+            if not sec_id:
+                raise ValueError("security_id missing")
+
+            dhan_seg = to_dhan_seg(seg_in_csv)
+            expiries = fetch_expirylist(sec_id, dhan_seg)
+
+            # Save expiries
+            out_path = _symbol_dir(symbol) / "expiries.json"
+            with out_path.open("w", encoding="utf-8") as f:
+                json.dump({"under_security_id": sec_id, "under_exchange_segment": dhan_seg, "expiries": expiries},
+                          f, indent=2, ensure_ascii=False)
+
+            results.append({"symbol": symbol, "security_id": sec_id, "segment": dhan_seg,
+                            "expiries_saved": len(expiries), "path": str(out_path)})
+
         except Exception as e:
-            out.append({
-                "symbol": row["symbol_name"],
-                "payload": pl,
-                "status": "err",
-                "detail": str(e)
-            })
-        dhan_sleep()
-    return {"items": out}
+            results.append({"symbol": row.get("symbol_name"), "error": str(e)})
+
+    return {"ok": True, "count": len(results), "results": results}
+
 
 @router.post("/fetch")
-def fetch_optionchains(
-    symbols: list[str] | None = None,
-    use_all: bool = False,
-    max_expiry: int = Query(1, ge=1, le=10)
-):
+def fetch_all_optionchains(
+    use_all: bool = Query(True, description="Use all expiries (else only first)"),
+    max_expiry: int = Query(1, ge=1, le=10, description="How many expiries per symbol if use_all"),
+    limit: int = Query(0, ge=0, le=1000, description="Limit instruments processed (0 = all)"),
+) -> Dict[str, Any]:
     """
-    For given symbols (or ALL), read expiries.json and fetch optionchain for N expiries.
-    Saves: data/optionchain/<SYMBOL>/<YYYY-MM-DD>.json
+    Reads each symbol's saved expiries.json and fetches optionchain JSONs.
+    Writes to: data/optionchain/<SYMBOL>/<YYYY-MM-DD>.json
     """
-    df = load_instruments()
-    if not use_all and not symbols:
-        raise HTTPException(400, "Provide symbols or set use_all=true")
+    # Collect symbols with expiries.json
+    if not SAVE_DIR.exists():
+        raise HTTPException(status_code=500, detail=f"Missing dir: {SAVE_DIR}")
 
-    if not use_all:
-        df = df[df["symbol_name"].isin(symbols)]
+    symbols = sorted([p for p in SAVE_DIR.iterdir() if p.is_dir()])
+    if limit > 0:
+        symbols = symbols[:limit]
 
-    results = []
-    for _, row in df.iterrows():
-        pl = payload_from_row(row)
-        if not pl:
-            continue
-        sym = row["symbol_name"]
-        ddir = SAVE_DIR / sym
-        exp_file = ddir / "expiries.json"
+    results: List[Dict[str, Any]] = []
 
-        if not exp_file.exists():
-            results.append({
-                "symbol": sym,
-                "status": "skip",
-                "detail": "expiries.json missing; call /auto/expirylist first"
-            })
-            continue
-
-        expiries = []
+    for symdir in symbols:
         try:
-            with open(exp_file, encoding="utf-8") as f:
-                expiries = json.load(f).get("data", [])
+            exp_path = symdir / "expiries.json"
+            if not exp_path.exists():
+                results.append({"symbol": symdir.name, "skipped": "no expiries.json"})
+                continue
+
+            meta = json.loads(exp_path.read_text(encoding="utf-8"))
+            sec_id = int(meta["under_security_id"])
+            seg = str(meta["under_exchange_segment"])
+            expiries: List[str] = list(meta.get("expiries") or [])
+
+            if not expiries:
+                results.append({"symbol": symdir.name, "skipped": "no expiries"})
+                continue
+
+            target_expiries = expiries if use_all else expiries[:1]
+            if use_all and max_expiry > 0:
+                target_expiries = target_expiries[:max_expiry]
+
+            fetched = 0
+            for exp in target_expiries:
+                chain = fetch_optionchain(sec_id, seg, exp)
+                out_path = symdir / f"{exp}.json"
+                with out_path.open("w", encoding="utf-8") as f:
+                    json.dump(chain, f, indent=2, ensure_ascii=False)
+                fetched += 1
+
+            results.append({"symbol": symdir.name, "fetched": fetched})
+
         except Exception as e:
-            results.append({"symbol": sym, "status": "err", "detail": f"bad exp file: {e}"})
-            continue
+            results.append({"symbol": symdir.name, "error": str(e)})
 
-        expiries = expiries[:max_expiry]
-        fetched = []
-        for e in expiries:
-            body = {**pl, "Expiry": e}
-            try:
-                res = call_dhan_api("/optionchain", body)
-                write_json(ddir / f"{e}.json", res)
-                fetched.append(e)
-            except Exception as er:
-                fetched.append({"expiry": e, "err": str(er)})
-            dhan_sleep()
-
-        results.append({"symbol": sym, "fetched": fetched})
-    return {"ok": True, "results": results}
+    return {"ok": True, "count": len(results), "results": results}
