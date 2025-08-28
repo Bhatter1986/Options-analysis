@@ -5,11 +5,12 @@ SEG_MAP = {
     "STKOPT": "OPTSTK",   # Options - Stock
     "IDXFUT": "FUTIDX",   # Futures - Index
     "STKFUT": "FUTSTK",   # Futures - Stock
+    # Need be: add/override more codes here.
 }
 
 def to_dhan_seg(code: str) -> str:
     """
-    Map TradingView/our internal segment codes to Dhan API segment codes.
-    If not found, return original code.
+    Map our/internal segment code -> Dhan API segment code.
+    Returns original if unknown (safe fallback).
     """
     return SEG_MAP.get(code.upper(), code)
