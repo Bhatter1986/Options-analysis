@@ -1,19 +1,9 @@
-# App/utils/seg_map.py
-
 SEG_MAP = {
-    # CSV / internal  ->  Dhan API segment codes
-    "I": "IDX_I",        # Index (e.g., NIFTY, BANKNIFTY, etc.)
-    "S": "STK_S",        # Stocks (if CSV ever has 'S')
-    # legacy/internal codes (keep as-is for safety)
-    "IDXOPT": "OPTIDX",  # Options - Index
-    "STKOPT": "OPTSTK",  # Options - Stock
-    "IDXFUT": "FUTIDX",  # Futures - Index
-    "STKFUT": "FUTSTK",  # Futures - Stock
+    ("INDEX", "I"): "IDX_I",    # NSE Indices
+    ("EQ",    "E"): "E_E",      # NSE Equity
+    ("OPTSTK","D"): "D_E",      # NSE Stock Options (placeholder – check Annexure)
+    ("FUTSTK","D"): "D_F",      # NSE Stock Futures
 }
 
-def to_dhan_seg(code: str) -> str:
-    """
-    Map our/internal segment code -> Dhan API segment code.
-    Returns original if unknown (safe fallback).
-    """
-    return SEG_MAP.get((code or "").upper(), code)
+def to_dhan_seg(instr_type: str, seg: str) -> str | None:
+    return SEG_MAP.get((instr_type.upper(), seg.upper()))
