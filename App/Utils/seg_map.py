@@ -1,14 +1,9 @@
-# App/utils/seg_map.py
-from __future__ import annotations
-
-# Map your CSV (instrument_type, segment) -> Dhan UnderlyingSeg
-# Indices are correct with IDX_I. Add more later as needed.
+# Map instrument_type + segment -> Dhan V2 UnderlyingSeg
+# Tweak/extend with Annexure as needed.
 SEG_MAP = {
-    ("INDEX", "I"): "IDX_I",
-    # TODO (when going LIVE with stocks/currency/etc):
-    # ("EQ", "E"): "<PUT_CORRECT_CODE_FROM_ANNEXURE>",
-    # ("OPTSTK", "D"): "<...>",
-    # ("FUTSTK", "D"): "<...>",
+    ("INDEX", "I"): "IDX_I",   # indices
+    ("EQ",    "E"): "E_E",     # placeholder for equity options — replace per Annexure if different
+    # add more when needed…
 }
 
 def to_dhan_seg(instrument_type: str, segment: str) -> str | None:
