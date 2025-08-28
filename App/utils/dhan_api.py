@@ -3,171 +3,152 @@ from __future__ import annotations
 
 import os
 import time
-import json
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-import requests
+import httpx
 from fastapi import HTTPException
 
-# ---- Configuration -----------------------------------------------------------
+# ---- Env & constants ---------------------------------------------------------
 
-# Pick environment: default SANDBOX
-APP_MODE = os.getenv("APP_MODE", "SANDBOX").upper().strip()
+APP_MODE = os.getenv("APP_MODE", "SANDBOX").upper()
 
-# Accept both naming styles to keep backward-compat
-# Sandbox
-DHAN_SANDBOX_CLIENT_ID = (
-    os.getenv("DHAN_SANDBOX_CLIENT_ID")
-    or os.getenv("DHAN_SAND_CLIENT_ID")
-    or os.getenv("DHAN_CLIENT_ID_SAND")
-)
-DHAN_SANDBOX_TOKEN = (
-    os.getenv("DHAN_SANDBOX_TOKEN")
-    or os.getenv("DHAN_SAND_TOKEN")
-    or os.getenv("DHAN_ACCESS_TOKEN_SAND")
-)
+# Required creds (provide via Render/ENV or .env)
+DHAN_SAND_CLIENT_ID = os.getenv("DHAN_SAND_CLIENT_ID", "")
+DHAN_SAND_TOKEN = os.getenv("DHAN_SAND_TOKEN", "")
 
-# Live
-DHAN_LIVE_CLIENT_ID = os.getenv("DHAN_LIVE_CLIENT_ID")
-DHAN_LIVE_TOKEN = os.getenv("DHAN_LIVE_TOKEN") or os.getenv("DHAN_ACCESS_TOKEN_LIVE")
+DHAN_LIVE_CLIENT_ID = os.getenv("DHAN_LIVE_CLIENT_ID", "")
+DHAN_LIVE_TOKEN = os.getenv("DHAN_LIVE_TOKEN", "")
 
-# Base URLs (Dhan v2)
-# If your account uses a dedicated sandbox host, set DHAN_BASE_URL_SANDBOX env.
-DHAN_BASE_URL_SANDBOX = os.getenv("DHAN_BASE_URL_SANDBOX", "https://api.dhan.co/v2")
-DHAN_BASE_URL_LIVE = os.getenv("DHAN_BASE_URL_LIVE", "https://api.dhan.co/v2")
+# Optional custom base URLs (defaults to Dhan v2)
+DHAN_BASE_URL_SANDBOX = os.getenv("DHAN_BASE_URL_SANDBOX", "https://api.dhan.co")
+DHAN_BASE_URL_LIVE = os.getenv("DHAN_BASE_URL_LIVE", "https://api.dhan.co")
 
-# Request defaults
-REQUEST_TIMEOUT = float(os.getenv("DHAN_HTTP_TIMEOUT", "20"))  # seconds
-USER_AGENT = os.getenv("DHAN_HTTP_UA", "options-analysis/1.0 (+fastapi)")
+# Dhan OptionChain rate limit: 1 req / 3 sec
+DEFAULT_SLEEP_SEC = 3.0
 
 
-def _active_creds() -> Tuple[str, str, str]:
-    """
-    Returns (base_url, client_id, token) based on APP_MODE.
-    Raises HTTPException 503 if missing.
-    """
+# ---- Helpers ----------------------------------------------------------------
+
+def _pick_creds() -> Tuple[str, str, str]:
+    """Return (base_url, client_id, token) based on APP_MODE."""
     if APP_MODE == "LIVE":
-        base = DHAN_BASE_URL_LIVE
-        cid = DHAN_LIVE_CLIENT_ID or ""
-        tok = DHAN_LIVE_TOKEN or ""
-    else:
-        base = DHAN_BASE_URL_SANDBOX
-        cid = DHAN_SANDBOX_CLIENT_ID or ""
-        tok = DHAN_SANDBOX_TOKEN or ""
+        return (DHAN_BASE_URL_LIVE, DHAN_LIVE_CLIENT_ID, DHAN_LIVE_TOKEN)
+    return (DHAN_BASE_URL_SANDBOX, DHAN_SAND_CLIENT_ID, DHAN_SAND_TOKEN)
 
-    if not cid or not tok:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Dhan credentials missing. "
-                "Ensure client-id & access-token are set for the selected APP_MODE."
-            ),
-        )
-    return base, cid, tok
+
+def dhan_sleep(sec: float = DEFAULT_SLEEP_SEC) -> None:
+    """Respect documented rate limits."""
+    try:
+        time.sleep(max(0.0, float(sec)))
+    except Exception:
+        time.sleep(DEFAULT_SLEEP_SEC)
 
 
 def _headers(client_id: str, token: str) -> Dict[str, str]:
     return {
-        "accept": "application/json",
         "Content-Type": "application/json",
-        "User-Agent": USER_AGENT,
-        # Dhan v2 expects these:
-        "access-token": token,
         "client-id": client_id,
+        "access-token": token,
     }
 
-
-# ---- Public helpers ----------------------------------------------------------
 
 def call_dhan_api(
-    endpoint: str,
-    payload: Optional[Dict[str, Any]] = None,
+    method: str,
+    path: str,
     *,
-    method: str = "POST",
-    params: Optional[Dict[str, Any]] = None,
-    timeout: Optional[float] = None,
+    json_body: Optional[Dict[str, Any]] = None,
+    timeout: float = 30.0,
 ) -> Dict[str, Any]:
     """
-    Generic Dhan API caller.
-    - endpoint: like '/optionchain/expirylist' or '/optionchain'
-    - payload: JSON body for POST; ignored for GET
-    - params:  query params for GET (rare for these endpoints)
+    Low-level caller for Dhan v2 endpoints.
+
+    method: "GET" | "POST"
+    path:   "/v2/optionchain/expirylist" or "/v2/optionchain"
     """
-    base, client_id, token = _active_creds()
-    url = f"{base.rstrip('/')}{endpoint}"
+    base_url, client_id, token = _pick_creds()
 
-    hdrs = _headers(client_id, token)
-    timeout = timeout or REQUEST_TIMEOUT
-
-    try:
-        if method.upper() == "GET":
-            resp = requests.get(url, headers=hdrs, params=params, timeout=timeout)
-        else:
-            # Default to POST
-            resp = requests.post(url, headers=hdrs, json=payload or {}, timeout=timeout)
-
-    except requests.Timeout:
-        raise HTTPException(504, f"Dhan API timeout: {endpoint}")
-
-    except requests.RequestException as e:
-        # Network/SSL/connection issues
-        raise HTTPException(502, f"Dhan API network error: {e}")
-
-    # Non-200 handling with details surfaced
-    if resp.status_code != 200:
-        # Try to extract useful body
-        body = resp.text
-        try:
-            jb = resp.json()
-            body = json.dumps(jb)
-        except Exception:
-            pass
+    if not client_id or not token:
         raise HTTPException(
-            status_code=resp.status_code,
-            detail=f"Dhan API {endpoint} failed ({resp.status_code}): {body}",
+            status_code=500,
+            detail="Dhan credentials missing. Set DHAN_* env vars.",
         )
 
+    url = f"{base_url.rstrip('/')}{path}"
+
     try:
-        return resp.json()
-    except ValueError:
-        raise HTTPException(502, "Dhan API returned non-JSON response")
+        with httpx.Client(timeout=timeout) as client:
+            if method.upper() == "POST":
+                resp = client.post(url, headers=_headers(client_id, token), json=json_body or {})
+            else:
+                resp = client.get(url, headers=_headers(client_id, token), params=json_body or {})
+
+        # Raise for HTTP errors; Dhan returns JSON body with error sometimes
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+
+        data = resp.json()
+        return data if isinstance(data, dict) else {"data": data}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Dhan API call failed: {e}")
 
 
-def dhan_sleep(seconds: float = 3.0) -> None:
+# ---- High level wrappers -----------------------------------------------------
+
+def fetch_expirylist(under_security_id: int, under_exchange_segment: str) -> List[str]:
     """
-    Respect Dhan rate-limit for Option Chain (1 req / 3s).
-    """
-    time.sleep(seconds)
+    Hit Dhan /v2/optionchain/expirylist and return list of YYYY-MM-DD strings.
 
-
-# ---- Convenience wrappers (clean usage in routers) --------------------------
-
-def fetch_expirylist(underlying_scrip: int, underlying_seg: str) -> Dict[str, Any]:
-    """
-    POST /optionchain/expirylist
-    payload:
-      { "UnderlyingScrip": <int>, "UnderlyingSeg": "<enum>" }
+    Docs require:
+      POST JSON: {"UnderlyingScrip": <int>, "UnderlyingSeg": "<enum>"}
+      Headers: client-id, access-token
     """
     body = {
-        "UnderlyingScrip": int(underlying_scrip),
-        "UnderlyingSeg": str(underlying_seg),
+        "UnderlyingScrip": int(under_security_id),
+        "UnderlyingSeg": str(under_exchange_segment),
     }
-    return call_dhan_api("/optionchain/expirylist", payload=body, method="POST")
+
+    data = call_dhan_api("POST", "/v2/optionchain/expirylist", json_body=body)
+
+    if "data" not in data or not isinstance(data["data"], list):
+        raise HTTPException(status_code=502, detail=f"Unexpected expirylist response: {data}")
+
+    # Respect rate limit (1 req / 3 sec)
+    dhan_sleep()
+
+    return data["data"]
 
 
 def fetch_optionchain(
-    underlying_scrip: int,
-    underlying_seg: str,
-    expiry: str,
+    under_security_id: int,
+    under_exchange_segment: str,
+    expiry_date: str,
 ) -> Dict[str, Any]:
     """
-    POST /optionchain
-    payload:
-      { "UnderlyingScrip": <int>, "UnderlyingSeg": "<enum>", "Expiry": "YYYY-MM-DD" }
+    Hit Dhan /v2/optionchain for a given underlying + expiry.
+
+    POST JSON expected by Dhan (mirroring their docs):
+      {
+        "UnderlyingScrip": <int>,
+        "UnderlyingSeg":   "<enum>",
+        "ExpiryDate":      "YYYY-MM-DD"
+      }
     """
     body = {
-        "UnderlyingScrip": int(underlying_scrip),
-        "UnderlyingSeg": str(underlying_seg),
-        "Expiry": str(expiry),
+        "UnderlyingScrip": int(under_security_id),
+        "UnderlyingSeg": str(under_exchange_segment),
+        "ExpiryDate": str(expiry_date),
     }
-    return call_dhan_api("/optionchain", payload=body, method="POST")
+
+    data = call_dhan_api("POST", "/v2/optionchain", json_body=body)
+
+    # Option chain payload varies; we just validate the top-level structure.
+    if "data" not in data:
+        raise HTTPException(status_code=502, detail=f"Unexpected optionchain response: {data}")
+
+    # Respect rate limit
+    dhan_sleep()
+
+    return data["data"]
