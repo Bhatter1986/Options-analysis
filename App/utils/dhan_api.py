@@ -8,32 +8,35 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 from fastapi import HTTPException
 
-# ---- Env & constants ---------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Env & constants
 
 APP_MODE = os.getenv("APP_MODE", "SANDBOX").upper()
 
-# Required creds (provide via Render/ENV or .env)
+# Sandbox creds
 DHAN_SAND_CLIENT_ID = os.getenv("DHAN_SAND_CLIENT_ID", "")
-DHAN_SAND_TOKEN = os.getenv("DHAN_SAND_TOKEN", "")
+DHAN_SAND_TOKEN     = os.getenv("DHAN_SAND_TOKEN", "")
+DHAN_SANDBOX_URL    = os.getenv("DHAN_SANDBOX_URL", "https://api.dhan.co/v2")
 
+# Live creds
 DHAN_LIVE_CLIENT_ID = os.getenv("DHAN_LIVE_CLIENT_ID", "")
-DHAN_LIVE_TOKEN = os.getenv("DHAN_LIVE_TOKEN", "")
-
-# Optional custom base URLs (defaults to Dhan v2)
-DHAN_BASE_URL_SANDBOX = os.getenv("DHAN_BASE_URL_SANDBOX", "https://api.dhan.co")
-DHAN_BASE_URL_LIVE = os.getenv("DHAN_BASE_URL_LIVE", "https://api.dhan.co")
+DHAN_LIVE_TOKEN     = os.getenv("DHAN_LIVE_TOKEN", "")
+DHAN_LIVE_URL       = os.getenv("DHAN_LIVE_URL", "https://api.dhan.co/v2")
 
 # Dhan OptionChain rate limit: 1 req / 3 sec
 DEFAULT_SLEEP_SEC = 3.0
 
 
-# ---- Helpers ----------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Helpers
 
 def _pick_creds() -> Tuple[str, str, str]:
-    """Return (base_url, client_id, token) based on APP_MODE."""
+    """
+    Return (base_url, client_id, token) by APP_MODE.
+    """
     if APP_MODE == "LIVE":
-        return (DHAN_BASE_URL_LIVE, DHAN_LIVE_CLIENT_ID, DHAN_LIVE_TOKEN)
-    return (DHAN_BASE_URL_SANDBOX, DHAN_SAND_CLIENT_ID, DHAN_SAND_TOKEN)
+        return (DHAN_LIVE_URL, DHAN_LIVE_CLIENT_ID, DHAN_LIVE_TOKEN)
+    return (DHAN_SANDBOX_URL, DHAN_SAND_CLIENT_ID, DHAN_SAND_TOKEN)
 
 
 def dhan_sleep(sec: float = DEFAULT_SLEEP_SEC) -> None:
@@ -52,9 +55,27 @@ def _headers(client_id: str, token: str) -> Dict[str, str]:
     }
 
 
+def _join_url(base_url: str, endpoint: str) -> str:
+    """
+    Join base + endpoint safely. If base doesn't end with /v2 and endpoint
+    also doesn't start with /v2, add /v2 in the middle.
+
+    Works for:
+      base=https://api.dhan.co      endpoint=/optionchain/expirylist -> .../v2/optionchain/expirylist
+      base=https://api.dhan.co/v2   endpoint=/optionchain/expirylist -> .../v2/optionchain/expirylist
+      base=https://api.dhan.co/v2   endpoint=/v2/optionchain         -> .../v2/optionchain
+    """
+    b = (base_url or "").rstrip("/")
+    e = "/" + (endpoint or "").lstrip("/")
+
+    if not b.endswith("/v2") and not e.startswith("/v2/"):
+        b += "/v2"
+    return b + e
+
+
 def call_dhan_api(
     method: str,
-    path: str,
+    endpoint: str,
     *,
     json_body: Optional[Dict[str, Any]] = None,
     timeout: float = 30.0,
@@ -63,7 +84,7 @@ def call_dhan_api(
     Low-level caller for Dhan v2 endpoints.
 
     method: "GET" | "POST"
-    path:   "/v2/optionchain/expirylist" or "/v2/optionchain"
+    endpoint: "/optionchain/expirylist" or "/optionchain" (without /v2)
     """
     base_url, client_id, token = _pick_creds()
 
@@ -73,7 +94,7 @@ def call_dhan_api(
             detail="Dhan credentials missing. Set DHAN_* env vars.",
         )
 
-    url = f"{base_url.rstrip('/')}{path}"
+    url = _join_url(base_url, endpoint)
 
     try:
         with httpx.Client(timeout=timeout) as client:
@@ -82,8 +103,9 @@ def call_dhan_api(
             else:
                 resp = client.get(url, headers=_headers(client_id, token), params=json_body or {})
 
-        # Raise for HTTP errors; Dhan returns JSON body with error sometimes
+        # HTTP error?
         if resp.status_code >= 400:
+            # Surface Dhan's body for easier debugging
             raise HTTPException(status_code=resp.status_code, detail=resp.text)
 
         data = resp.json()
@@ -95,29 +117,28 @@ def call_dhan_api(
         raise HTTPException(status_code=502, detail=f"Dhan API call failed: {e}")
 
 
-# ---- High level wrappers -----------------------------------------------------
+# -----------------------------------------------------------------------------
+# High-level wrappers
 
 def fetch_expirylist(under_security_id: int, under_exchange_segment: str) -> List[str]:
     """
-    Hit Dhan /v2/optionchain/expirylist and return list of YYYY-MM-DD strings.
-
-    Docs require:
-      POST JSON: {"UnderlyingScrip": <int>, "UnderlyingSeg": "<enum>"}
-      Headers: client-id, access-token
+    POST /optionchain/expirylist
+    Body:
+      { "UnderlyingScrip": <int>, "UnderlyingSeg": "<enum>" }
+    Returns: list of YYYY-MM-DD strings.
     """
     body = {
         "UnderlyingScrip": int(under_security_id),
-        "UnderlyingSeg": str(under_exchange_segment),
+        "UnderlyingSeg":   str(under_exchange_segment),
     }
 
-    data = call_dhan_api("POST", "/v2/optionchain/expirylist", json_body=body)
+    data = call_dhan_api("POST", "/optionchain/expirylist", json_body=body)
 
     if "data" not in data or not isinstance(data["data"], list):
         raise HTTPException(status_code=502, detail=f"Unexpected expirylist response: {data}")
 
-    # Respect rate limit (1 req / 3 sec)
+    # rate limit
     dhan_sleep()
-
     return data["data"]
 
 
@@ -127,9 +148,8 @@ def fetch_optionchain(
     expiry_date: str,
 ) -> Dict[str, Any]:
     """
-    Hit Dhan /v2/optionchain for a given underlying + expiry.
-
-    POST JSON expected by Dhan (mirroring their docs):
+    POST /optionchain
+    Body:
       {
         "UnderlyingScrip": <int>,
         "UnderlyingSeg":   "<enum>",
@@ -138,17 +158,15 @@ def fetch_optionchain(
     """
     body = {
         "UnderlyingScrip": int(under_security_id),
-        "UnderlyingSeg": str(under_exchange_segment),
-        "ExpiryDate": str(expiry_date),
+        "UnderlyingSeg":   str(under_exchange_segment),
+        "ExpiryDate":      str(expiry_date),
     }
 
-    data = call_dhan_api("POST", "/v2/optionchain", json_body=body)
+    data = call_dhan_api("POST", "/optionchain", json_body=body)
 
-    # Option chain payload varies; we just validate the top-level structure.
     if "data" not in data:
         raise HTTPException(status_code=502, detail=f"Unexpected optionchain response: {data}")
 
-    # Respect rate limit
+    # rate limit
     dhan_sleep()
-
     return data["data"]
