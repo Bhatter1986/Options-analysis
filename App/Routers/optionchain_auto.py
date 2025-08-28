@@ -5,9 +5,9 @@ from fastapi import APIRouter, Query, HTTPException
 from pathlib import Path
 import pandas as pd
 import json, time
+from ..utils.dhan_api import call_dhan_api, dhan_sleep
+from ..utils.seg_map import to_dhan_seg
 
-from App.utils.dhan_api import call_dhan_api, dhan_sleep
-from App.utils.seg_map import to_dhan_seg
 
 router = APIRouter(prefix="/optionchain/auto", tags=["optionchain-auto"])
 
