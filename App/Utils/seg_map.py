@@ -1,18 +1,15 @@
 # App/utils/seg_map.py
-SEG_MAP = {
-    # Confirmed for indices (NIFTY, BANKNIFTY, FINNIFTY, SENSEX...)
-    ("INDEX", "I"): "IDX_I",
+from __future__ import annotations
 
-    # ====== PLACEHOLDERS (Annexure se exact fill karein) ======
-    # Example ideas (replace with exact):
-    # ("EQ", "E"): "EQ_E",         # Equity (cash) underlying segment code
-    # ("OPTSTK", "D"): "EQ_D",     # Stock derivatives underlying segment code
-    # ("FUTSTK", "D"): "EQ_D",
-    # ("CURR", "C"): "CURR_C",
-    # ("MCX", "M"): "MCX_M",
-    # ==========================================================
+# Map your CSV (instrument_type, segment) -> Dhan UnderlyingSeg
+# Indices are correct with IDX_I. Add more later as needed.
+SEG_MAP = {
+    ("INDEX", "I"): "IDX_I",
+    # TODO (when going LIVE with stocks/currency/etc):
+    # ("EQ", "E"): "<PUT_CORRECT_CODE_FROM_ANNEXURE>",
+    # ("OPTSTK", "D"): "<...>",
+    # ("FUTSTK", "D"): "<...>",
 }
 
 def to_dhan_seg(instrument_type: str, segment: str) -> str | None:
-    key = (instrument_type.upper(), segment.upper())
-    return SEG_MAP.get(key)
+    return SEG_MAP.get((instrument_type.upper(), segment.upper()))
