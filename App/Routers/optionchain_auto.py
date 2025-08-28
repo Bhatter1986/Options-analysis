@@ -1,134 +1,82 @@
-# App/Routers/optionchain_auto.py
 from __future__ import annotations
-
-import csv
-from pathlib import Path
-from typing import Dict, List, Optional
-
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pathlib import Path
+import pandas as pd, json
 
-from ..utils.seg_map import to_dhan_seg
-from ..utils.dhan_api import (
-    fetch_expirylist,
-    fetch_optionchain,
-)
+from App.utils.dhan_api import fetch_expirylist, fetch_optionchain
+from App.utils.seg_map import to_dhan_seg
 
-router = APIRouter(prefix="/optionchain/auto", tags=["optionchain_auto"])
+router = APIRouter(prefix="/optionchain/auto", tags=["optionchain-auto"])
 
-INSTRUMENTS_CSV = Path("data/instruments.csv")
-OPTIONCHAIN_DIR = Path("data/optionchain")
+CSV_PATH  = Path("data/instruments.csv")
+SAVE_DIR  = Path("data/optionchain")
+SAVE_DIR.mkdir(parents=True, exist_ok=True)
 
-# ---- Models ------------------------------------------------------------------
+def load_instruments():
+    if not CSV_PATH.exists():
+        raise HTTPException(503, "instruments.csv missing")
+    df = pd.read_csv(CSV_PATH, dtype=str)
+    df.columns = [c.strip().lower() for c in df.columns]
+    return df
 
-class ResultItem(BaseModel):
-    symbol: str
-    error: str = ""
-    expiry: Optional[str] = None
-    saved_at: Optional[str] = None
-    contracts: Optional[int] = None
-
-class FetchResponse(BaseModel):
-    ok: bool = True
-    count: int = 0
-    results: List[ResultItem] = []
-
-# ---- Utils -------------------------------------------------------------------
-
-def _load_rows(limit: Optional[int] = None) -> List[Dict[str, str]]:
-    if not INSTRUMENTS_CSV.exists():
-        raise HTTPException(500, f"{INSTRUMENTS_CSV} not found")
-    with INSTRUMENTS_CSV.open(newline="") as f:
-        r = csv.DictReader(f)
-        rows = list(r)
-    if limit:
-        rows = rows[: int(limit)]
-    return rows
-
-def _want_symbols_filter(rows: List[Dict[str, str]]) -> List[Dict[str, str]]:
-    want = {"NIFTY", "BANKNIFTY", "NIFTYNXT50", "FINNIFTY", "SENSEX"}
-    return [r for r in rows if r.get("symbol_name") in want]
-
-# ---- Endpoints ---------------------------------------------------------------
+def payload_from_row(row):
+    seg = to_dhan_seg(row["instrument_type"], row["segment"])
+    if not seg:
+        return None
+    return int(row["security_id"]), seg
 
 @router.get("/_debug")
-def debug():
+def debug_status():
     return {
         "ok": True,
-        "status": {
-            "env": "true",
-            "mode": "SANDBOX",
-            "token_present": True,
-            "client_id_present": True,
-            "ai_present": False,
-            "ai_model": "gpt-4.1-mini",
-            "base_url": "",
-        },
-        "instruments_csv": str(INSTRUMENTS_CSV),
-        "instruments_exists": INSTRUMENTS_CSV.exists(),
-        "optionchain_dir": str(OPTIONCHAIN_DIR),
+        "instruments_csv": str(CSV_PATH),
+        "instruments_exists": CSV_PATH.exists(),
+        "optionchain_dir": str(SAVE_DIR),
     }
 
 @router.get("/expirylist")
-def build_expiry_list(limit: int = Query(5, ge=1, le=50)):
-    rows = _want_symbols_filter(_load_rows(limit=None))
-    rows = rows[:limit]
-
-    out: List[ResultItem] = []
-    for row in rows:
-        symbol = row["symbol_name"]
-        seg_csv = row.get("segment", "")
-        seg = to_dhan_seg(seg_csv)  # e.g. I -> IDX_I
-        sec_id = int(row["security_id"])
-
+def all_expirylist(limit: int = Query(5, ge=1, le=100)):
+    df = load_instruments().head(limit)
+    results = []
+    for _, row in df.iterrows():
+        pl = payload_from_row(row)
+        if not pl: continue
+        sid, seg = pl
         try:
-            expiries = fetch_expirylist(sec_id, seg)  # returns list of YYYY-MM-DD
-            out.append(ResultItem(symbol=symbol, error="", expiry=expiries[0] if expiries else None))
-        except HTTPException as e:
-            out.append(ResultItem(symbol=symbol, error=str(e.detail)))
+            expiries = fetch_expirylist(sid, seg)
+            sym = row["symbol_name"]
+            ddir = SAVE_DIR / sym
+            ddir.mkdir(parents=True, exist_ok=True)
+            with open(ddir / "expiries.json", "w") as f:
+                json.dump(expiries, f, indent=2)
+            results.append({"symbol": sym, "expiries": expiries})
         except Exception as e:
-            out.append(ResultItem(symbol=symbol, error=str(e)))
+            results.append({"symbol": row["symbol_name"], "error": str(e)})
+    return {"ok": True, "count": len(results), "results": results}
 
-    return {"ok": True, "count": len(out), "results": [r.dict() for r in out]}
-
-@router.post("/fetch", response_model=FetchResponse)
-def fetch_all(use_all: bool = True, max_expiry: int = 1):
-    """
-    For each wanted symbol:
-    - get expiry list
-    - pick nearest (first)
-    - fetch optionchain for that expiry
-    """
-    rows = _want_symbols_filter(_load_rows(limit=None))
-    results: List[ResultItem] = []
-
-    for row in rows:
-        symbol = row["symbol_name"]
-        seg = to_dhan_seg(row.get("segment", ""))
-        sec_id = int(row["security_id"])
-
-        try:
-            expiries = fetch_expirylist(sec_id, seg)
-            if not expiries:
-                results.append(ResultItem(symbol=symbol, error="No expiries"))
-                continue
-
-            expiry = expiries[0]  # nearest
-            chain = fetch_optionchain(sec_id, seg, expiry)
-
-            # (optional) save to disk if you want
-            # OPTIONCHAIN_DIR.mkdir(parents=True, exist_ok=True)
-            # (you can write json to file here if needed)
-
-            contracts = len(chain) if isinstance(chain, list) else 0
-            results.append(ResultItem(symbol=symbol, error="", expiry=expiry, contracts=contracts))
-
-        except HTTPException as e:
-            results.append(ResultItem(symbol=symbol, error=str(e.detail)))
-        except Exception as e:
-            results.append(ResultItem(symbol=symbol, error=str(e)))
-
-        if not use_all and len(results) >= 1:
-            break
-
-    return FetchResponse(ok=True, count=len(results), results=results)
+@router.post("/fetch")
+def fetch_chains(use_all: bool = True, max_expiry: int = Query(1, ge=1, le=5)):
+    df = load_instruments() if use_all else pd.DataFrame()
+    results = []
+    for _, row in df.iterrows():
+        pl = payload_from_row(row)
+        if not pl: continue
+        sid, seg = pl
+        sym = row["symbol_name"]
+        ddir = SAVE_DIR / sym
+        exp_file = ddir / "expiries.json"
+        if not exp_file.exists():
+            results.append({"symbol": sym, "error": "no expiries.json"})
+            continue
+        expiries = json.load(open(exp_file))[:max_expiry]
+        fetched = []
+        for e in expiries:
+            try:
+                data = fetch_optionchain(sid, seg, e)
+                with open(ddir / f"{e}.json", "w") as f:
+                    json.dump(data, f, indent=2)
+                fetched.append(e)
+            except Exception as er:
+                fetched.append({"expiry": e, "error": str(er)})
+        results.append({"symbol": sym, "fetched": fetched})
+    return {"ok": True, "count": len(results), "results": results}
