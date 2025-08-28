@@ -85,7 +85,7 @@ _include_router("App.Routers.instruments")
 _include_router("App.Routers.optionchain")   # <- your new Option Chain router
 _include_router("App.Routers.marketfeed")
 _include_router("App.Routers.ai")
-
+_include_router("App.Routers.optionchain_auto")
 
 # ---- Uvicorn entry (Render uses gunicorn/uvicorn workers)
 # if __name__ == "__main__":
