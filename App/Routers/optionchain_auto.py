@@ -7,7 +7,7 @@ import pandas as pd
 import json, time
 from ..utils.dhan_api import call_dhan_api, dhan_sleep
 from ..utils.seg_map import to_dhan_seg
-
+from App.utils.dhan_api import fetch_expirylist
 
 router = APIRouter(prefix="/optionchain/auto", tags=["optionchain-auto"])
 
