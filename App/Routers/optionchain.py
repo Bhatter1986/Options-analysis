@@ -1,83 +1,117 @@
-from fastapi import APIRouter, HTTPException
-import os, requests, time
+# App/Routers/optionchain_auto.py
+from __future__ import annotations
+from fastapi import APIRouter, Query, HTTPException
+from pathlib import Path
+import pandas as pd
+import json
 
-router = APIRouter()
+from App.utils.dhan_api import call_dhan_api, dhan_sleep
+from App.utils.seg_map import to_dhan_seg
 
-# 🔑 Env Vars from Render
-DHAN_TOKEN = os.getenv("DHAN_TOKEN")
-DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID")
-BASE_URL = "https://api.dhan.co/v2"
+router = APIRouter(prefix="/optionchain/auto", tags=["optionchain-auto"])
 
-# Cache memory
-_cache = {
-    "expirylist": {},
-    "optionchain": {}
-}
-_cache_ttl = 10    # seconds (expirylist cache)
-_chain_ttl = 3     # seconds (optionchain cache, matches API rate-limit)
+CSV_PATH = Path("data/instruments.csv")
+SAVE_DIR = Path("data/optionchain")
+SAVE_DIR.mkdir(parents=True, exist_ok=True)
 
+def load_instruments() -> pd.DataFrame:
+    if not CSV_PATH.exists():
+        raise HTTPException(503, "instruments.csv missing")
+    df = pd.read_csv(CSV_PATH, dtype=str, keep_default_na=False, na_filter=False)
+    df.columns = [c.strip().lower() for c in df.columns]
+    need = ["security_id","symbol_name","underlying_symbol","segment","instrument_type"]
+    for n in need:
+        if n not in df.columns:
+            raise HTTPException(500, f"instruments.csv missing column: {n}")
+    return df
 
-def call_dhan_api(endpoint: str, payload: dict):
-    """Generic caller for Dhan API with headers"""
-    headers = {
-        "access-token": DHAN_TOKEN,
-        "client-id": DHAN_CLIENT_ID,
-        "Content-Type": "application/json"
-    }
-    url = f"{BASE_URL}{endpoint}"
-    resp = requests.post(url, headers=headers, json=payload)
-    if resp.status_code != 200:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
-    return resp.json()
+def payload_from_row(row: pd.Series) -> dict | None:
+    seg = to_dhan_seg(row["instrument_type"], row["segment"])
+    if not seg:
+        return None
+    try:
+        sid = int(str(row["security_id"]).strip())
+    except ValueError:
+        return None
+    return {"UnderlyingScrip": sid, "UnderlyingSeg": seg}
 
-
-@router.post("/optionchain/expirylist/{symbol}")
-def get_expiry_list(symbol: str):
+@router.get("/expirylist")
+def all_expirylist(q: str | None = Query(None), limit: int = Query(0, ge=0, le=500)):
     """
-    Fetch Expiry List for given underlying (e.g., NIFTY, BANKNIFTY).
-    Uses caching for 10s to reduce hits.
+    Pull expirylist for ALL (or filtered) underlyings.
+    Saves: data/optionchain/<SYMBOL>/expiries.json
     """
-    now = time.time()
-    if symbol in _cache["expirylist"] and now - _cache["expirylist"][symbol]["time"] < _cache_ttl:
-        return _cache["expirylist"][symbol]["data"]
+    df = load_instruments()
+    if q:
+        qq = q.lower()
+        df = df[df["symbol_name"].str.lower().str.contains(qq) |
+                df["underlying_symbol"].str.lower().str.contains(qq)]
+    if limit and limit > 0:
+        df = df.head(limit)
 
-    # Map symbol to UnderlyingScrip + Segment (from instruments.csv ideally)
-    mapping = {
-        "NIFTY": {"UnderlyingScrip": 13, "UnderlyingSeg": "IDX_I"},
-        "BANKNIFTY": {"UnderlyingScrip": 25, "UnderlyingSeg": "IDX_I"},
-        "FINNIFTY": {"UnderlyingScrip": 52, "UnderlyingSeg": "IDX_I"},
-    }
-    if symbol not in mapping:
-        raise HTTPException(status_code=400, detail=f"Unsupported symbol: {symbol}")
+    items = []
+    for _, row in df.iterrows():
+        sym = row["symbol_name"]
+        pl = payload_from_row(row)
+        if not pl:
+            items.append({"symbol": sym, "status": "skip_no_seg"})
+            continue
+        try:
+            res = call_dhan_api("/optionchain/expirylist", pl)
+            ddir = SAVE_DIR / sym
+            ddir.mkdir(parents=True, exist_ok=True)
+            with open(ddir / "expiries.json", "w") as f:
+                json.dump(res, f, indent=2)
+            items.append({"symbol": sym, "status": "ok", "count": len(res.get("data", []))})
+        except HTTPException as e:
+            items.append({"symbol": sym, "status": "err", "detail": str(e)})
+        dhan_sleep()
+    return {"items": items}
 
-    payload = mapping[symbol]
-    data = call_dhan_api("/optionchain/expirylist", payload)
-
-    _cache["expirylist"][symbol] = {"data": data, "time": now}
-    return data
-
-
-@router.post("/optionchain/{symbol}/{expiry}")
-def get_option_chain(symbol: str, expiry: str):
+@router.post("/fetch")
+def fetch_optionchains(
+    symbols: list[str] | None = None,
+    use_all: bool = False,
+    max_expiry: int = Query(1, ge=1, le=10)
+):
     """
-    Fetch Option Chain for given symbol + expiry.
-    Uses caching for 3s because Dhan rate-limit is 1 req/3s.
+    For given symbols (or ALL), read expiries.json & fetch optionchain for N expiries.
+    Saves: data/optionchain/<SYMBOL>/<YYYY-MM-DD>.json
     """
-    cache_key = f"{symbol}_{expiry}"
-    now = time.time()
-    if cache_key in _cache["optionchain"] and now - _cache["optionchain"][cache_key]["time"] < _chain_ttl:
-        return _cache["optionchain"][cache_key]["data"]
+    df = load_instruments()
+    if not use_all and not symbols:
+        raise HTTPException(400, "Provide symbols or set use_all=true")
+    if not use_all:
+        df = df[df["symbol_name"].isin(symbols)]
 
-    mapping = {
-        "NIFTY": {"UnderlyingScrip": 13, "UnderlyingSeg": "IDX_I"},
-        "BANKNIFTY": {"UnderlyingScrip": 25, "UnderlyingSeg": "IDX_I"},
-        "FINNIFTY": {"UnderlyingScrip": 52, "UnderlyingSeg": "IDX_I"},
-    }
-    if symbol not in mapping:
-        raise HTTPException(status_code=400, detail=f"Unsupported symbol: {symbol}")
+    results = []
+    for _, row in df.iterrows():
+        sym = row["symbol_name"]
+        pl = payload_from_row(row)
+        if not pl:
+            results.append({"symbol": sym, "status": "skip_no_seg"})
+            continue
 
-    payload = {**mapping[symbol], "Expiry": expiry}
-    data = call_dhan_api("/optionchain", payload)
+        ddir = SAVE_DIR / sym
+        exp_file = ddir / "expiries.json"
+        if not exp_file.exists():
+            results.append({"symbol": sym, "status": "skip_no_expiries", "detail": "call /auto/expirylist first"})
+            continue
 
-    _cache["optionchain"][cache_key] = {"data": data, "time": now}
-    return data
+        with open(exp_file) as f:
+            exps = (json.load(f) or {}).get("data", [])
+        exps = exps[:max_expiry]
+
+        fetched = []
+        for e in exps:
+            body = {**pl, "Expiry": e}
+            try:
+                res = call_dhan_api("/optionchain", body)
+                with open(ddir / f"{e}.json", "w") as f:
+                    json.dump(res, f, indent=2)
+                fetched.append(e)
+            except HTTPException as er:
+                fetched.append({"expiry": e, "err": str(er)})
+            dhan_sleep()
+        results.append({"symbol": sym, "fetched": fetched})
+    return {"ok": True, "results": results}
