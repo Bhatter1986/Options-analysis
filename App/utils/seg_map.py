@@ -1,5 +1,6 @@
 # App/utils/seg_map.py
 
+# Mapping between our CSV segment codes and Dhan API expected codes
 SEG_MAP = {
     # Indexes
     "I_INDEX": "IDX_I",
@@ -15,4 +16,8 @@ SEG_MAP = {
 }
 
 def to_dhan_seg(seg: str) -> str:
+    """
+    Map segment code from instruments.csv to Dhan API segment code.
+    If not found, return as-is.
+    """
     return SEG_MAP.get(seg, seg)
