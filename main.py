@@ -18,7 +18,7 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# ---- CORS (open; tighten later if needed)
+# ---- CORS (open for all; tighten later if needed)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -30,7 +30,8 @@ app.add_middleware(
 # ---- Helper: include router if module exists
 def _include_router(module_path: str, attr: str = "router") -> bool:
     """
-    Tries to import `module_path` (e.g. 'App.Routers.instruments') and include its FastAPI `router`.
+    Tries to import `module_path` (e.g. 'App.Routers.instruments')
+    and include its FastAPI `router`.
     Returns True if included, False if module not found or no router present.
     """
     try:
@@ -53,15 +54,18 @@ def root():
     return {"status": "ok", "name": "Dhan Options Analysis API"}
 
 
-# ---- Selftest (matches what you were using)
+# ---- Selftest endpoint
 @app.get("/__selftest")
 def selftest():
     env = "Render" if os.getenv("RENDER") else "Local"
     mode = os.getenv("APP_MODE", "SANDBOX")
 
+    # Dhan creds
+    dh_client = os.getenv("DHAN_CLIENT_ID", "")
+    dh_token  = os.getenv("DHAN_ACCESS_TOKEN", "")
+
+    # AI creds
     openai_key = os.getenv("OPENAI_API_KEY", "")
-    dh_client  = os.getenv("DHAN_CLIENT_ID", "")
-    dh_token   = os.getenv("DHAN_ACCESS_TOKEN", "")
     ai_model   = os.getenv("OPENAI_MODEL", os.getenv("AI_MODEL", "gpt-4.1-mini"))
     base_url   = os.getenv("OPENAI_BASE_URL", "default")
 
@@ -82,12 +86,14 @@ def selftest():
 # ---- Include available routers (any missing file is safely skipped)
 _include_router("App.Routers.health")
 _include_router("App.Routers.instruments")
-_include_router("App.Routers.optionchain")   # <- your new Option Chain router
+_include_router("App.Routers.optionchain")
 _include_router("App.Routers.marketfeed")
 _include_router("App.Routers.ai")
 _include_router("App.Routers.optionchain_auto")
+_include_router("App.Routers.admin_refresh")   # 👈 NEW: instruments auto-refresh router
 
-# ---- Uvicorn entry (Render uses gunicorn/uvicorn workers)
+
+# ---- Uvicorn entry (for local dev; Render uses gunicorn/uvicorn workers)
 # if __name__ == "__main__":
 #     import uvicorn
 #     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
