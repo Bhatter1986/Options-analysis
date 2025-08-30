@@ -91,7 +91,7 @@ _include_router("App.Routers.marketfeed")
 _include_router("App.Routers.ai")
 _include_router("App.Routers.optionchain_auto")
 _include_router("App.Routers.admin_refresh")   # 👈 NEW: instruments auto-refresh router
-
+_include_router("App.Ui.ui_router")
 
 # ---- Uvicorn entry (for local dev; Render uses gunicorn/uvicorn workers)
 # if __name__ == "__main__":
