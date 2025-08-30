@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Options Analysis Dashboard</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root{
+      --bg:#121826;--card:#1b2235;--text:#e8ecf1;--muted:#9fb0c3;--pri:#3da5ff;--ok:#2ecc71;--bad:#e74c3c;
+    }
+    body{background:var(--bg);color:var(--text);}
+    .navbar{background:linear-gradient(135deg,#22304a,#151c2d);}
+    .card{background:var(--card);border:none;border-radius:14px;}
+    .badge-soft{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);}
+    .strike-col{font-weight:700;color:var(--pri)}
+    .atm{background:rgba(61,165,255,.12) !important}
+    .pos{color:var(--ok)} .neg{color:var(--bad)}
+    .table-dark{--bs-table-bg:transparent}
+    .tiny{font-size:.9rem;color:var(--muted)}
+  </style>
+</head>
+<body>
+<nav class="navbar navbar-dark px-3">
+  <div class="container-fluid">
+    <a class="navbar-brand fw-semibold" href="#"><span class="me-2">📈</span>Options Analysis Dashboard</a>
+    <div class="d-flex gap-2">
+      <select id="symbolSelect" class="form-select form-select-sm bg-dark text-light">
+        <option value="BANKNIFTY">BANKNIFTY (IDX_I)</option>
+        <option value="NIFTY">NIFTY (IDX_I)</option>
+      </select>
+      <select id="expirySelect" class="form-select form-select-sm bg-dark text-light"></select>
+      <button id="refreshBtn" class="btn btn-sm btn-primary">Refresh</button>
+    </div>
+  </div>
+</nav>
+
+<div class="container my-4">
+
+  <div class="row g-3">
+    <div class="col-lg-8">
+      <div class="card">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <div>
+              <h5 class="mb-0" id="title">BANKNIFTY Options Chain</h5>
+              <div class="tiny">Expiry: <span id="titleExpiry">—</span> • LTP: <span id="ltp">—</span></div>
+            </div>
+            <span class="badge badge-soft rounded-pill px-3" id="apiStatus">API: …</span>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-dark table-hover table-sm align-middle" id="chainTable">
+              <thead>
+                <tr class="tiny text-uppercase">
+                  <th class="text-end">CE LTP</th>
+                  <th class="text-end">CE IV</th>
+                  <th class="text-end">CE OI</th>
+                  <th class="text-end">Δ OI</th>
+                  <th class="text-center strike-col">Strike</th>
+                  <th class="text-start">Δ OI</th>
+                  <th class="text-start">PE OI</th>
+                  <th class="text-start">PE IV</th>
+                  <th class="text-start">PE LTP</th>
+                </tr>
+              </thead>
+              <tbody id="chainBody">
+                <tr><td colspan="9" class="text-center py-4">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="tiny mt-2">* Δ OI = OI − Previous OI</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-4">
+      <div class="card mb-3">
+        <div class="card-body">
+          <h6 class="mb-2">Open Interest (Calls vs Puts)</h6>
+          <canvas id="oiChart" height="220"></canvas>
+          <div class="d-flex justify-content-between mt-3 tiny">
+            <div>Total CE OI: <span id="sumCe">—</span></div>
+            <div>Total PE OI: <span id="sumPe">—</span></div>
+          </div>
+          <div class="d-flex justify-content-between mt-1 tiny">
+            <div>PCR: <strong id="pcr">—</strong></div>
+            <div>Max Pain* (simple): <strong id="maxPain">—</strong></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-body">
+          <h6 class="mb-2">Quick Tips</h6>
+          <ul class="tiny mb-0">
+            <li>ATM row is highlighted.</li>
+            <li>PCR & Max-Pain are quick approximations for feel.</li>
+            <li>Use the top selects to switch symbol/expiry.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/** ---- CONFIG ---- **/
+const SEGMENT = 'IDX_I';
+const SYMBOLS = {
+  BANKNIFTY: { under_security_id: 25, label: 'BANKNIFTY' },
+  NIFTY:     { under_security_id: 2,  label: 'NIFTY' }
+};
+
+let currentSymbol = 'BANKNIFTY';
+let currentExpiry = null;
+let oiChart = null;
+
+/** ---- DOM refs ---- **/
+const expirySelect = document.getElementById('expirySelect');
+const symbolSelect = document.getElementById('symbolSelect');
+const chainBody = document.getElementById('chainBody');
+const apiStatus = document.getElementById('apiStatus');
+const title = document.getElementById('title');
+const titleExpiry = document.getElementById('titleExpiry');
+const ltpEl = document.getElementById('ltp');
+const sumCeEl = document.getElementById('sumCe');
+const sumPeEl = document.getElementById('sumPe');
+const pcrEl = document.getElementById('pcr');
+const maxPainEl = document.getElementById('maxPain');
+const refreshBtn = document.getElementById('refreshBtn');
+
+/** ---- Helpers ---- **/
+const fmt = (n, d=2) => (n==null || isNaN(n)) ? '0' : Number(n).toLocaleString('en-IN', {maximumFractionDigits:d});
+const ivfmt = (n) => n ? (Number(n)*100).toFixed(2)+'%' : '0.00%';
+
+function setStatus(ok, msg) {
+  apiStatus.textContent = (ok?'OK':'ERR')+(msg?` • ${msg}`:'');
+  apiStatus.className = 'badge rounded-pill px-3 ' + (ok?'bg-success-subtle text-success':'bg-danger-subtle text-danger');
+}
+
+/** ---- Fetch expiries ---- **/
+async function loadExpiries() {
+  const {under_security_id} = SYMBOLS[currentSymbol];
+  setStatus(true,'loading');
+  expirySelect.innerHTML = `<option>Loading…</option>`;
+  try {
+    const res = await fetch(`/optionchain/expirylist?under_security_id=${under_security_id}&under_exchange_segment=${SEGMENT}`);
+    const js = await res.json();
+    if(!res.ok || !js?.data){ throw new Error('expirylist'); }
+    expirySelect.innerHTML = '';
+    js.data.forEach((d,i)=>{
+      const opt = document.createElement('option');
+      opt.value = d; opt.textContent = d;
+      if(i===0) opt.selected = true;
+      expirySelect.appendChild(opt);
+    });
+    currentExpiry = expirySelect.value;
+    title.textContent = `${SYMBOLS[currentSymbol].label} Options Chain`;
+    titleExpiry.textContent = currentExpiry || '—';
+    setStatus(true,'expiries ok');
+  } catch(e){
+    setStatus(false, 'expirylist failed');
+    throw e;
+  }
+}
+
+/** ---- Fetch chain ---- **/
+async function loadChain() {
+  const {under_security_id} = SYMBOLS[currentSymbol];
+  const exp = expirySelect.value;
+  chainBody.innerHTML = `<tr><td colspan="9" class="text-center py-4">Loading…</td></tr>`;
+  try{
+    const res = await fetch(`/optionchain?under_security_id=${under_security_id}&under_exchange_segment=${SEGMENT}&expiry=${encodeURIComponent(exp)}`);
+    const js = await res.json();
+    if(!res.ok || !js?.data?.oc){ throw new Error('chain'); }
+
+    // LTP
+    const ltp = js.data.last_price ?? 0;
+    ltpEl.textContent = fmt(ltp,2);
+
+    // Build rows
+    const rows = [];
+    for(const [strikeStr, legs] of Object.entries(js.data.oc)){
+      const strike = Number(strikeStr);
+      const ce = legs?.ce || {};
+      const pe = legs?.pe || {};
+
+      const ceOI = Number(ce.oi||0), peOI = Number(pe.oi||0);
+      const cePrev = Number(ce.previous_oi||0), pePrev = Number(pe.previous_oi||0);
+      const dCe = ceOI - cePrev;
+      const dPe = peOI - pePrev;
+
+      rows.push({
+        strike,
+        ce_ltp: Number(ce.last_price||0),
+        ce_iv: Number(ce.implied_volatility||0),
+        ce_oi: ceOI, d_ce: dCe,
+        pe_ltp: Number(pe.last_price||0),
+        pe_iv: Number(pe.implied_volatility||0),
+        pe_oi: peOI, d_pe: dPe
+      });
+    }
+
+    // sort by strike numeric
+    rows.sort((a,b)=>a.strike-b.strike);
+
+    // render
+    const nearATMIndex = rows.reduce((best, r, i)=>{
+      const d = Math.abs((r.strike)-(ltp||r.strike));
+      return d < best.dist ? {i, dist:d} : best;
+    }, {i:0, dist:Infinity}).i;
+
+    chainBody.innerHTML='';
+    rows.forEach((r,i)=>{
+      const tr = document.createElement('tr');
+      if(i===nearATMIndex) tr.classList.add('atm');
+      tr.innerHTML = `
+        <td class="text-end">${fmt(r.ce_ltp,2)}</td>
+        <td class="text-end">${ivfmt(r.ce_iv)}</td>
+        <td class="text-end">${fmt(r.ce_oi,0)}</td>
+        <td class="text-end ${r.d_ce>=0?'pos':'neg'}">${r.d_ce>=0?'+':''}${fmt(r.d_ce,0)}</td>
+        <td class="text-center strike-col">${fmt(r.strike,0)}</td>
+        <td class="${r.d_pe>=0?'pos':'neg'}">${r.d_pe>=0?'+':''}${fmt(r.d_pe,0)}</td>
+        <td>${fmt(r.pe_oi,0)}</td>
+        <td>${ivfmt(r.pe_iv)}</td>
+        <td>${fmt(r.pe_ltp,2)}</td>
+      `;
+      chainBody.appendChild(tr);
+    });
+
+    // OI stats + chart
+    const sumCE = rows.reduce((s,r)=>s+r.ce_oi,0);
+    const sumPE = rows.reduce((s,r)=>s+r.pe_oi,0);
+    const pcr = sumCE>0 ? (sumPE/sumCE) : 0;
+    sumCeEl.textContent = fmt(sumCE,0);
+    sumPeEl.textContent = fmt(sumPE,0);
+    pcrEl.textContent = pcr.toFixed(2);
+
+    // Simple max pain proxy (min |CE OI - PE OI|)
+    let minDiff = Infinity, mp = null;
+    rows.forEach(r=>{
+      const diff = Math.abs((r.ce_oi||0)-(r.pe_oi||0));
+      if(diff<minDiff){ minDiff=diff; mp=r.strike; }
+    });
+    maxPainEl.textContent = mp?fmt(mp,0):'—';
+
+    drawChart(rows);
+    setStatus(true,'chain ok');
+  }catch(e){
+    setStatus(false,'chain failed');
+    console.error(e);
+    chainBody.innerHTML = `<tr><td colspan="9" class="text-center py-4 text-danger">Failed to load chain.</td></tr>`;
+  }
+}
+
+/** ---- Chart ---- **/
+function drawChart(rows){
+  const ctx = document.getElementById('oiChart');
+  if(oiChart){ oiChart.destroy(); }
+  const labels = rows.map(r=>r.strike);
+  const ce = rows.map(r=>r.ce_oi||0);
+  const pe = rows.map(r=>r.pe_oi||0);
+
+  oiChart = new Chart(ctx, {
+    type:'bar',
+    data:{
+      labels,
+      datasets:[
+        {label:'Call OI', data:ce, backgroundColor:'#2ecc71'},
+        {label:'Put OI', data:pe, backgroundColor:'#e74c3c'}
+      ]
+    },
+    options:{
+      responsive:true,
+      plugins:{ legend:{ position:'top', labels:{ color:'#e8ecf1' } } },
+      scales:{
+        x:{ ticks:{ color:'#9fb0c3' }, grid:{ display:false }},
+        y:{ ticks:{ color:'#9fb0c3' }, grid:{ color:'rgba(255,255,255,.08)' } }
+      }
+    }
+  });
+}
+
+/** ---- Wiring ---- **/
+symbolSelect.addEventListener('change', async ()=>{
+  currentSymbol = symbolSelect.value;
+  await loadExpiries();
+  await loadChain();
+});
+expirySelect.addEventListener('change', async ()=>{
+  currentExpiry = expirySelect.value;
+  titleExpiry.textContent = currentExpiry || '—';
+  await loadChain();
+});
+refreshBtn.addEventListener('click', async ()=>{ await loadChain(); });
+
+(async function init(){
+  try{
+    await loadExpiries();
+    await loadChain();
+  }catch(e){
+    console.error(e);
+  }
+})();
+</script>
+</body>
+</html>
