@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 
@@ -18,15 +17,25 @@ def option_chain(
     under_exchange_segment: str,
     expiry: str,
     show_all: Optional[bool] = False,
-    strikes_window: int = Query(15, ge=1, le=50), # ATM ± N strikes; default 15
-    step: int = Query(100, ge=1)                  # strike step (BankNifty=100, Nifty=50)
+    strikes_window: int = Query(15, ge=1, le=50),
+    step: int = Query(100, ge=1)
 ):
     """
-    Return option chain:
-    - Default: ATM ± `strikes_window` strikes
-    - `show_all=true` -> full chain
-    - Also returns summary: PCR, Max Pain, Total OI, Spot
+    Return option chain with expiry validation
     """
+    # ✅ Validate expiry first
+    valid_expiries = get_expiry_list(under_security_id, under_exchange_segment)
+    if expiry not in valid_expiries:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Invalid expiry",
+                "passed": expiry,
+                "valid": valid_expiries
+            }
+        )
+
+    # Now fetch raw chain
     raw = get_option_chain_raw(under_security_id, under_exchange_segment, expiry)
     if not raw or "oc" not in raw:
         raise HTTPException(502, "Empty chain returned from Dhan")
@@ -34,7 +43,6 @@ def option_chain(
     spot: float = float(raw.get("last_price", 0) or 0)
     oc: Dict[str, Any] = raw["oc"]
 
-    # Parse to list
     def _to_row(strike_str: str) -> Dict[str, Any]:
         row = oc.get(strike_str, {})
         ce = row.get("ce", {}) or {}
@@ -58,22 +66,18 @@ def option_chain(
     strikes_sorted: List[float] = sorted(float(k) for k in oc.keys())
     chain_all: List[Dict[str, Any]] = [_to_row(f"{s:.6f}") for s in strikes_sorted]
 
-    # Summary on FULL chain
     total_call_oi = sum(x["call"]["oi"] for x in chain_all)
     total_put_oi  = sum(x["put"]["oi"]  for x in chain_all)
     pcr = round(total_put_oi / total_call_oi, 2) if total_call_oi else 0.0
 
-    # Max Pain (simplified: min |call_oi - put_oi|)
-    if chain_all:
-        max_pain_strike = min(chain_all, key=lambda r: abs(r["call"]["oi"] - r["put"]["oi"]))["strike"]
-    else:
-        max_pain_strike = 0.0
+    max_pain_strike = (
+        min(chain_all, key=lambda r: abs(r["call"]["oi"] - r["put"]["oi"]))["strike"]
+        if chain_all else 0.0
+    )
 
-    # Filtered window (ATM ± N strikes)
     if show_all or not spot or not strikes_sorted:
         chain_window = chain_all
     else:
-        # Pick closest strike to spot
         atm = min(strikes_sorted, key=lambda s: abs(s - spot))
         lo = atm - strikes_window * step
         hi = atm + strikes_window * step
