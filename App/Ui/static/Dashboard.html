@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Options Analysis Dashboard</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    /* ---- your same CSS (unchanged) ---- */
+    :root{--primary-color:#2c3e50;--secondary-color:#3498db;--accent-color:#e74c3c;--light-color:#ecf0f1;--dark-color:#2c3e50;--success-color:#27ae60}
+    body{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;background-color:#1a1a2e;color:#e6e6e6;padding-top:20px}
+    .dashboard-container{max-width:1800px;margin:0 auto;padding:20px}
+    .navbar{background:linear-gradient(135deg,var(--primary-color),var(--dark-color));box-shadow:0 4px 15px rgba(0,0,0,.2);border-radius:10px;margin-bottom:20px}
+    .card{background:#2d3047;border:none;border-radius:10px;box-shadow:0 4px 15px rgba(0,0,0,.2);margin-bottom:20px;color:#e6e6e6}
+    .card-header{background:linear-gradient(135deg,var(--secondary-color),var(--primary-color));color:#fff;border-radius:10px 10px 0 0!important;font-weight:600}
+    .market-index{background:linear-gradient(135deg,#27ae60,#2ecc71);color:#fff;border-radius:8px;padding:15px;margin-bottom:15px;text-align:center}
+    .index-value{font-size:1.8rem;font-weight:bold}
+    .index-change{font-size:1rem;padding:3px 8px;border-radius:4px;background:rgba(255,255,255,.2)}
+    .positive{color:#2ecc71}.negative{color:#e74c3c}
+    .btn-primary{background:var(--secondary-color);border:none}.btn-primary:hover{background:var(--primary-color)}
+    .table-dark{background:#2d3047;color:#e6e6e6}.table-hover tbody tr:hover{background-color:rgba(52,152,219,.2);color:#fff}
+    .sudarshan-chakra{width:100%;height:300px;background:conic-gradient(from 0deg,#2ecc71 0% 50%,#e74c3c 50% 100%);border-radius:50%;margin:0 auto;position:relative;box-shadow:0 0 25px rgba(46,204,113,.5)}
+    .chakra-center{position:absolute;width:80px;height:80px;background:var(--primary-color);border-radius:50%;top:50%;left:50%;transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;box-shadow:0 0 15px rgba(0,0,0,.5)}
+    .tradingview-widget{width:100%;height:400px;background:#2d3047;border-radius:10px;margin-bottom:20px;display:flex;align-items:center;justify-content:center;color:#e6e6e6;font-weight:bold;box-shadow:0 4px 15px rgba(0,0,0,.2)}
+    .expiry-selector{background:#2d3047;border-radius:10px;padding:15px;margin-bottom:20px;box-shadow:0 4px 15px rgba(0,0,0,.2)}
+    .ai-analysis{background:linear-gradient(135deg,#9b59b6,#8e44ad);border-radius:10px;padding:20px;margin-bottom:20px;box-shadow:0 4px 15px rgba(0,0,0,.2)}
+    .section-title{color:var(--secondary-color);border-bottom:2px solid var(--secondary-color);padding-bottom:10px;margin-bottom:20px}
+    .strike-price{font-weight:bold;color:var(--secondary-color)}
+    .call-oi{color:#2ecc71}.put-oi{color:#e74c3c}.highlight{background:rgba(52,152,219,.3)!important}
+    .loader{border:5px solid #f3f3f3;border-radius:50%;border-top:5px solid #3498db;width:40px;height:40px;animation:spin 1s linear infinite;margin:0 auto}
+    @keyframes spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
+    .api-status{display:flex;align-items:center;justify-content:space-between;padding:10px;border-radius:5px;margin-bottom:10px}
+    .status-connected{background:rgba(46,204,113,.2);border-left:4px solid #2ecc71}
+    .status-disconnected{background:rgba(231,76,60,.2);border-left:4px solid #e74c3c}
+  </style>
+</head>
+<body>
+  <div class="dashboard-container">
+    <!-- Header -->
+    <nav class="navbar navbar-expand-lg navbar-dark">
+      <div class="container-fluid">
+        <a class="navbar-brand" href="/ui/"><i class="fas fa-chart-line me-2"></i>Advanced Options Analysis Dashboard</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+          <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarNav">
+          <ul class="navbar-nav ms-auto">
+            <li class="nav-item"><a class="nav-link active" href="/ui/"><i class="fas fa-home"></i> Home</a></li>
+            <li class="nav-item"><a class="nav-link" href="#"><i class="fas fa-bell"></i> Alerts</a></li>
+            <li class="nav-item"><a class="nav-link" href="#"><i class="fas fa-cog"></i> Settings</a></li>
+            <li class="nav-item"><a class="nav-link" href="#"><i class="fas fa-user"></i> Login</a></li>
+          </ul>
+        </div>
+      </div>
+    </nav>
+
+    <div class="row">
+      <!-- Left -->
+      <div class="col-lg-3">
+        <div class="card">
+          <div class="card-header"><i class="fas fa-plug me-2"></i>API Connections</div>
+          <div class="card-body">
+            <div class="api-status status-connected"><span>Dhan API:</span><span class="badge bg-success">Connected</span></div>
+            <div class="api-status status-connected"><span>OpenAI API:</span><span class="badge bg-success">Connected</span></div>
+            <div class="d-grid gap-2">
+              <button class="btn btn-outline-light" onclick="refreshAll()"><i class="fas fa-sync-alt me-2"></i>Refresh Data</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><i class="fas fa-chart-bar me-2"></i>Market Indices</div>
+          <div class="card-body">
+            <div class="market-index">
+              <h5>NIFTY 50</h5>
+              <div class="index-value" id="nifty-value">Loading...</div>
+              <div class="index-change positive" id="nifty-change">+0.0%</div>
+              <div class="index-volume">Volume: <span id="nifty-volume">—</span></div>
+            </div>
+            <div class="market-index" style="background:linear-gradient(135deg,#3498db,#2980b9);">
+              <h5>BANKNIFTY</h5>
+              <div class="index-value" id="banknifty-value">Loading...</div>
+              <div class="index-change positive" id="banknifty-change">+0.0%</div>
+              <div class="index-volume">Volume: <span id="banknifty-volume">—</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="expiry-selector">
+          <h5 class="section-title"><i class="fas fa-calendar-alt me-2"></i>Select Expiry</h5>
+          <div class="list-group" id="expiry-list"><div class="loader"></div></div>
+        </div>
+
+        <div class="ai-analysis">
+          <h5 class="section-title"><i class="fas fa-robot me-2"></i>AI Analysis</h5>
+          <div class="alert alert-info">
+            <h6><i class="fas fa-lightbulb me-2"></i>Market Outlook: <span id="ai-outlook">Loading...</span></h6>
+            <p id="ai-analysis-text">Analyzing market data...</p>
+          </div>
+          <button class="btn btn-light w-100" onclick="generateAIAnalysis()"><i class="fas fa-brain me-2"></i>Generate Analysis</button>
+        </div>
+      </div>
+
+      <!-- Middle -->
+      <div class="col-lg-6">
+        <div class="tradingview-widget">
+          <div class="text-center">
+            <i class="fas fa-chart-line fa-3x mb-3"></i>
+            <h4>TradingView Chart</h4>
+            <p>NIFTY 50 - Real-time Chart</p>
+            <button class="btn btn-primary mt-2" onclick="loadTradingView()">Load Chart</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><i class="fas fa-link me-2"></i>BANKNIFTY Options Chain - <span id="current-expiry">Loading...</span></div>
+          <div class="card-body">
+            <div class="table-responsive">
+              <table class="table table-dark table-hover">
+                <thead>
+                  <tr>
+                    <th>CALLS</th><th>OI</th><th>CHNG OI</th><th>IV</th>
+                    <th class="strike-price">STRIKE</th>
+                    <th>IV</th><th>CHNG OI</th><th>OI</th><th>PUTS</th>
+                  </tr>
+                </thead>
+                <tbody id="options-chain-body">
+                  <tr><td colspan="9" class="text-center"><div class="loader"></div><p>Loading options chain data...</p></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right -->
+      <div class="col-lg-3">
+        <div class="card">
+          <div class="card-header"><i class="fas fa-dharmachakra me-2"></i>Sudarshan Chakra</div>
+          <div class="card-body text-center">
+            <div class="sudarshan-chakra"><div class="chakra-center">BNF</div></div>
+            <p class="mt-3">Options Risk Visualization</p>
+            <div class="row mt-3">
+              <div class="col-6"><div class="alert alert-success p-2"><small>Calls: <span id="call-percentage">0%</span></small></div></div>
+              <div class="col-6"><div class="alert alert-danger p-2"><small>Puts: <span id="put-percentage">0%</span></small></div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><i class="fas fa-chart-pie me-2"></i>Open Interest Analysis</div>
+          <div class="card-body">
+            <canvas id="oiChart" height="200"></canvas>
+            <div class="mt-3 d-flex justify-content-between">
+              <span>Max Pain: <strong id="max-pain">—</strong></span>
+              <span>PCR: <strong id="pcr-value">0.00</strong></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><i class="fas fa-database me-2"></i>Dhan API Data</div>
+          <div class="card-body">
+            <div class="d-flex justify-content-between mb-2"><span>Last Update:</span><span id="last-update">—</span></div>
+            <div class="d-flex justify-content-between mb-2"><span>Total OI:</span><span id="total-oi">0</span></div>
+            <div class="d-flex justify-content-between mb-3"><span>Total Volume:</span><span id="total-volume">0</span></div>
+            <button class="btn btn-outline-primary w-100" onclick="fetchOptionChain()"><i class="fas fa-download me-2"></i>Fetch Latest Data</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    let currentExpiry = "";
+    let oiChart = null;
+    const UNDER_ID = 25;                  // BANKNIFTY default
+    const SEGMENT = "IDX_I";
+
+    document.addEventListener("DOMContentLoaded", () => {
+      initializeDashboard();
+    });
+
+    function refreshAll(){ fetchMarketData(); fetchExpiryDates(); if(currentExpiry) fetchOptionChain(); }
+
+    async function fetchMarketData(){
+      try{
+        document.getElementById('nifty-value').innerHTML = '<div class="loader sm"></div>';
+        document.getElementById('banknifty-value').innerHTML = '<div class="loader sm"></div>';
+        const r = await fetch(`/ui/api/market-data`);
+        const data = await r.json();
+        const nf = data.nifty, bn = data.banknifty;
+
+        document.getElementById('nifty-value').textContent = nf.value.toFixed(2);
+        document.getElementById('nifty-change').textContent = `${nf.change>=0?'+':''}${nf.change.toFixed(2)}%`;
+        document.getElementById('nifty-change').className = `index-change ${nf.change>=0?'positive':'negative'}`;
+        document.getElementById('nifty-volume').textContent = (nf.volume/1e6).toFixed(1)+'M';
+
+        document.getElementById('banknifty-value').textContent = bn.value.toFixed(2);
+        document.getElementById('banknifty-change').textContent = `${bn.change>=0?'+':''}${bn.change.toFixed(2)}%`;
+        document.getElementById('banknifty-change').className = `index-change ${bn.change>=0?'positive':'negative'}`;
+        document.getElementById('banknifty-volume').textContent = (bn.volume/1e6).toFixed(1)+'M';
+
+        document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+      }catch(e){ console.error(e); }
+    }
+
+    async function fetchExpiryDates(){
+      try{
+        const r = await fetch(`/ui/api/expiry-dates?under_security_id=${UNDER_ID}&under_exchange_segment=${SEGMENT}`);
+        const dates = await r.json();
+        const list = document.getElementById('expiry-list');
+        list.innerHTML = '';
+        dates.forEach((d,idx)=>{
+          const a = document.createElement('a');
+          a.href = '#';
+          a.className = `list-group-item list-group-item-action ${idx===0?'active':''}`;
+          a.textContent = new Date(d).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
+          a.onclick = ()=> selectExpiry(d);
+          list.appendChild(a);
+        });
+        if(dates.length){ selectExpiry(dates[0]); }
+      }catch(e){ console.error(e); }
+    }
+
+    function selectExpiry(expiry){
+      currentExpiry = expiry;
+      document.getElementById('current-expiry').textContent =
+        new Date(expiry).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
+      [...document.querySelectorAll('#expiry-list a')].forEach(a=>{
+        a.classList.toggle('active', a.textContent===document.getElementById('current-expiry').textContent);
+      });
+      fetchOptionChain();
+    }
+
+    async function fetchOptionChain(){
+      try{
+        document.getElementById('options-chain-body').innerHTML =
+          `<tr><td colspan="9" class="text-center"><div class="loader"></div><p>Loading options chain data...</p></td></tr>`;
+        const r = await fetch(`/ui/api/option-chain?expiry=${encodeURIComponent(currentExpiry)}&under_security_id=${UNDER_ID}&under_exchange_segment=${SEGMENT}`);
+        const rows = await r.json();
+        renderOptionChain(rows);
+        updateOIAnalysis(rows);
+        updateSudarshanChakra(rows);
+        document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+      }catch(e){ console.error(e); alert('Option chain fetch failed'); }
+    }
+
+    function renderOptionChain(rows){
+      const tbody = document.getElementById('options-chain-body'); tbody.innerHTML='';
+      const bnSpot = parseFloat(document.getElementById('banknifty-value').textContent) || 0;
+
+      rows.forEach(o=>{
+        const tr = document.createElement('tr');
+        if (bnSpot && Math.abs(o.strike - bnSpot) <= 100) tr.classList.add('highlight');
+        tr.innerHTML = `
+          <td>${fmtDec(o.call.price)}</td>
+          <td class="call-oi">${fmtInt(o.call.oi)}</td>
+          <td class="${(o.call.changeOi||0)>=0?'positive':'negative'}">${signedInt(o.call.changeOi)}</td>
+          <td>${fmtIV(o.call.iv)}</td>
+          <td class="strike-price">${o.strike}</td>
+          <td>${fmtIV(o.put.iv)}</td>
+          <td class="${(o.put.changeOi||0)>=0?'positive':'negative'}">${signedInt(o.put.changeOi)}</td>
+          <td class="put-oi">${fmtInt(o.put.oi)}</td>
+          <td>${fmtDec(o.put.price)}</td>`;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function updateOIAnalysis(rows){
+      let ce=0, pe=0, vol=0;
+      rows.forEach(r=>{ ce += r.call.oi||0; pe += r.put.oi||0; /*vol += (r.call.volume||0)+(r.put.volume||0)*/ });
+      const pcr = ce? (pe/ce):0;
+      document.getElementById('total-oi').textContent = fmtInt(ce+pe);
+      document.getElementById('total-volume').textContent = fmtInt(vol);
+      document.getElementById('pcr-value').textContent = pcr.toFixed(2);
+
+      // max pain (very simplified)
+      let maxPainStrike = 0, minPain = Number.POSITIVE_INFINITY;
+      rows.forEach(r=>{
+        const pain = Math.abs((r.call.oi||0)-(r.put.oi||0));
+        if (pain < minPain){ minPain = pain; maxPainStrike = r.strike; }
+      });
+      document.getElementById('max-pain').textContent = maxPainStrike || '—';
+
+      // chart
+      const ctx = document.getElementById('oiChart').getContext('2d');
+      if (oiChart) oiChart.destroy();
+      oiChart = new Chart(ctx, {
+        type:'bar',
+        data:{
+          labels: rows.map(r=>r.strike),
+          datasets:[
+            {label:'Call OI', data: rows.map(r=>r.call.oi||0), backgroundColor:'#2ecc71'},
+            {label:'Put OI',  data: rows.map(r=>r.put.oi||0),  backgroundColor:'#e74c3c'}
+          ]
+        },
+        options:{
+          responsive:true,
+          plugins:{ legend:{ position:'top' } },
+          scales:{ y:{ beginAtZero:true, grid:{ color:'rgba(255,255,255,0.1)'} }, x:{ grid:{ display:false } } }
+        }
+      });
+    }
+
+    function updateSudarshanChakra(rows){
+      let ce=0, pe=0; rows.forEach(r=>{ ce+=r.call.oi||0; pe+=r.put.oi||0; });
+      const tot = ce+pe || 1;
+      const callPct = Math.round(ce*100/tot), putPct = 100 - callPct;
+      document.getElementById('call-percentage').textContent = callPct+'%';
+      document.getElementById('put-percentage').textContent = putPct+'%';
+      document.querySelector('.sudarshan-chakra').style.background =
+        `conic-gradient(from 0deg,#2ecc71 0% ${callPct}%,#e74c3c ${callPct}% 100%)`;
+    }
+
+    function generateAIAnalysis(){
+      const samples=[
+        "Bullish undertone; strong put writing near ATM. Resistance 100–150 up, support 100 down.",
+        "Neutral to bearish; PCR rising. Consider debit put spreads.",
+        "Elevated IV: premium selling (iron condor) between ±300 looks attractive.",
+        "Support building at Max Pain; bull call spread favourable."
+      ];
+      const outlooks=["Bullish","Bearish","Neutral","Volatile"];
+      document.getElementById('ai-outlook').textContent = outlooks[Math.floor(Math.random()*outlooks.length)];
+      document.getElementById('ai-analysis-text').textContent = samples[Math.floor(Math.random()*samples.length)];
+    }
+
+    function loadTradingView(){
+      const el = document.querySelector('.tradingview-widget');
+      el.innerHTML = `<div class="text-center"><i class="fas fa-chart-line fa-3x mb-3"></i>
+        <h4>TradingView Chart Loaded</h4><p>BANKNIFTY - Real-time Chart</p>
+        <div class="mt-2"><small class="text-muted">Embed TradingView widget here in prod</small></div></div>`;
+    }
+
+    // helpers
+    const fmtInt = (n)=> (n||0).toLocaleString('en-IN');
+    const fmtDec = (n)=> (n? Number(n).toFixed(2): '0.00');
+    const fmtIV  = (n)=> (n? Number(n).toFixed(2)+'%':'0.00%');
+    const signedInt = (n)=> `${(n||0)>=0?'+':''}${fmtInt(n||0)}`;
+  </script>
+</body>
+</html>
