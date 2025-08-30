@@ -1,309 +1,327 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta charset="utf-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, maximum-scale=1"
+  />
   <title>Options Analysis Dashboard</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- Chart.js (for simple OI bars) -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
     :root{
-      --bg:#121826;--card:#1b2235;--text:#e8ecf1;--muted:#9fb0c3;--pri:#3da5ff;--ok:#2ecc71;--bad:#e74c3c;
+      --bg:#0f172a;        /* slate-900 */
+      --panel:#111827;     /* gray-900 */
+      --panel-2:#1f2937;   /* gray-800 */
+      --text:#e5e7eb;      /* gray-200 */
+      --muted:#94a3b8;     /* slate-400 */
+      --accent:#22c55e;    /* green-500 */
+      --danger:#ef4444;    /* red-500 */
+      --brand:#60a5fa;     /* blue-400 */
+      --chip:#0b1222;
+      --chip-border:#25324c;
+      --row:#0b1222;
+      --row-alt:#0e162a;
+      --highlight:#0f2a1a;
     }
-    body{background:var(--bg);color:var(--text);}
-    .navbar{background:linear-gradient(135deg,#22304a,#151c2d);}
-    .card{background:var(--card);border:none;border-radius:14px;}
-    .badge-soft{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);}
-    .strike-col{font-weight:700;color:var(--pri)}
-    .atm{background:rgba(61,165,255,.12) !important}
-    .pos{color:var(--ok)} .neg{color:var(--bad)}
-    .table-dark{--bs-table-bg:transparent}
-    .tiny{font-size:.9rem;color:var(--muted)}
+    html,body{height:100%}
+    body{
+      margin:0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, Apple Color Emoji, Segoe UI Emoji;
+      background:var(--bg);
+      color:var(--text);
+    }
+    .wrap{max-width:1200px;margin:0 auto;padding:18px}
+    header{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+    .title{font-weight:700;font-size:20px;letter-spacing:.3px}
+    .panel{
+      background:linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+      border:1px solid #1f2937;
+      border-radius:14px;
+      padding:14px;
+    }
+    .controls{
+      display:flex;flex-wrap:wrap;gap:10px;margin-left:auto
+    }
+    select,button{
+      background:#0b1222;color:var(--text);border:1px solid #283a63;
+      padding:8px 10px;border-radius:10px;font-size:14px
+    }
+    button{background:linear-gradient(180deg,#0b355e,#0a2a4b);border-color:#2563eb}
+    button:active{transform:translateY(1px)}
+    .grid{display:grid;grid-template-columns: 1fr 360px; gap:14px;margin-top:14px}
+    @media (max-width: 980px){.grid{grid-template-columns:1fr}}
+    .badge{font-size:12px;border:1px solid var(--chip-border);background:var(--chip);
+      color:var(--muted);padding:4px 8px;border-radius:999px;display:inline-flex;gap:6px;align-items:center}
+    .ok{color:var(--accent)}
+    .err{color:var(--danger)}
+    .meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+    .k{color:var(--muted)}
+    table{width:100%;border-collapse:collapse;margin-top:8px}
+    th,td{padding:8px 10px;border-bottom:1px solid #1b2438;text-align:right;font-variant-numeric: tabular-nums}
+    th{color:#aebad1;font-weight:600;background:#0b1222;position:sticky;top:0;z-index:1}
+    td:first-child, th:first-child{text-align:left}
+    tr:nth-child(odd){background:var(--row)}
+    tr:nth-child(even){background:var(--row-alt)}
+    tr.atm{outline:2px solid #14532d;background:var(--highlight)}
+    .sum{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+    .card{background:#0b1222;border:1px solid #25324c;border-radius:12px;padding:10px}
+    .card h4{margin:0 0 6px 0;color:#cbd5e1;font-size:13px;font-weight:600}
+    .big{font-size:18px;font-weight:700}
+    .muted{color:var(--muted)}
+    .foot{margin-top:12px;color:#8aa0c8;font-size:12px}
+    .spinner{width:14px;height:14px;border:2px solid #2d3d64;border-top-color:#60a5fa;border-radius:50%;display:inline-block;animation:spin 1s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
   </style>
 </head>
 <body>
-<nav class="navbar navbar-dark px-3">
-  <div class="container-fluid">
-    <a class="navbar-brand fw-semibold" href="#"><span class="me-2">📈</span>Options Analysis Dashboard</a>
-    <div class="d-flex gap-2">
-      <select id="symbolSelect" class="form-select form-select-sm bg-dark text-light">
-        <option value="BANKNIFTY">BANKNIFTY (IDX_I)</option>
-        <option value="NIFTY">NIFTY (IDX_I)</option>
-      </select>
-      <select id="expirySelect" class="form-select form-select-sm bg-dark text-light"></select>
-      <button id="refreshBtn" class="btn btn-sm btn-primary">Refresh</button>
-    </div>
-  </div>
-</nav>
+  <div class="wrap">
+    <header class="panel">
+      <div class="title">Options Analysis Dashboard</div>
+      <div class="meta" id="metaLine">
+        <span class="badge" id="chainBadge"><span class="spinner"></span> loading…</span>
+        <span class="badge">LTP: <span id="spot" class="k">—</span></span>
+        <span class="badge">Expiry: <span id="expShow" class="k">—</span></span>
+      </div>
+      <div class="controls">
+        <select id="indexSel" title="Index">
+          <!-- IDs are Dhan under_security_id -->
+          <option value="25">BANKNIFTY (ID)</option>
+          <option value="2">NIFTY (ID)</option>
+          <option value="49">FINNIFTY (ID)</option>
+          <option value="52">SENSEX (ID)</option>
+        </select>
 
-<div class="container my-4">
+        <select id="expirySel" title="Expiry">
+          <option>loading…</option>
+        </select>
 
-  <div class="row g-3">
-    <div class="col-lg-8">
-      <div class="card">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-center mb-2">
-            <div>
-              <h5 class="mb-0" id="title">BANKNIFTY Options Chain</h5>
-              <div class="tiny">Expiry: <span id="titleExpiry">—</span> • LTP: <span id="ltp">—</span></div>
+        <button id="btnRefresh">Refresh</button>
+      </div>
+    </header>
+
+    <div class="grid">
+      <!-- LEFT: Table -->
+      <section class="panel">
+        <div class="meta" style="justify-content:space-between">
+          <div class="meta">
+            <span class="badge">OK: <span class="ok">chain ok</span></span>
+            <span class="badge">Window: <span id="windowInfo" class="k">—</span></span>
+            <span class="badge">Count: <span id="countInfo" class="k">—</span></span>
+          </div>
+          <div class="sum" style="min-width:280px">
+            <div class="card">
+              <h4>Put/Call OI Ratio (PCR)</h4>
+              <div class="big" id="pcr">—</div>
+              <div class="muted">≈ market bias</div>
             </div>
-            <span class="badge badge-soft rounded-pill px-3" id="apiStatus">API: …</span>
+            <div class="card">
+              <h4>Max Pain (simple)</h4>
+              <div class="big" id="maxPain">—</div>
+              <div class="muted">where pain is max for options writers</div>
+            </div>
           </div>
-          <div class="table-responsive">
-            <table class="table table-dark table-hover table-sm align-middle" id="chainTable">
-              <thead>
-                <tr class="tiny text-uppercase">
-                  <th class="text-end">CE LTP</th>
-                  <th class="text-end">CE IV</th>
-                  <th class="text-end">CE OI</th>
-                  <th class="text-end">Δ OI</th>
-                  <th class="text-center strike-col">Strike</th>
-                  <th class="text-start">Δ OI</th>
-                  <th class="text-start">PE OI</th>
-                  <th class="text-start">PE IV</th>
-                  <th class="text-start">PE LTP</th>
-                </tr>
-              </thead>
-              <tbody id="chainBody">
-                <tr><td colspan="9" class="text-center py-4">Loading…</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="tiny mt-2">* Δ OI = OI − Previous OI</div>
         </div>
-      </div>
-    </div>
 
-    <div class="col-lg-4">
-      <div class="card mb-3">
-        <div class="card-body">
-          <h6 class="mb-2">Open Interest (Calls vs Puts)</h6>
-          <canvas id="oiChart" height="220"></canvas>
-          <div class="d-flex justify-content-between mt-3 tiny">
-            <div>Total CE OI: <span id="sumCe">—</span></div>
-            <div>Total PE OI: <span id="sumPe">—</span></div>
-          </div>
-          <div class="d-flex justify-content-between mt-1 tiny">
-            <div>PCR: <strong id="pcr">—</strong></div>
-            <div>Max Pain* (simple): <strong id="maxPain">—</strong></div>
-          </div>
-        </div>
-      </div>
+        <table id="chainTbl">
+          <thead>
+            <tr>
+              <th>CE LTP</th>
+              <th>CE IV</th>
+              <th>CE OI</th>
+              <th>Δ OI</th>
+              <th>STRIKE</th>
+              <th>Δ OI</th>
+              <th>PE OI</th>
+              <th>PE IV</th>
+              <th>PE LTP</th>
+            </tr>
+          </thead>
+          <tbody id="chainBody">
+            <tr><td colspan="9" style="text-align:center;color:#9fb1d6;padding:18px">
+              <span class="spinner"></span> Loading…
+            </td></tr>
+          </tbody>
+        </table>
 
-      <div class="card">
-        <div class="card-body">
-          <h6 class="mb-2">Quick Tips</h6>
-          <ul class="tiny mb-0">
-            <li>ATM row is highlighted.</li>
-            <li>PCR & Max-Pain are quick approximations for feel.</li>
-            <li>Use the top selects to switch symbol/expiry.</li>
-          </ul>
+        <div class="foot">
+          • ATM row is highlighted. • PCR & Max-Pain are quick approximations for feel, not trade signals.
         </div>
-      </div>
+      </section>
+
+      <!-- RIGHT: Chart -->
+      <aside class="panel">
+        <div class="card">
+          <h4>Open Interest (Calls vs Puts)</h4>
+          <canvas id="oiChart" height="260"></canvas>
+          <div class="muted" style="margin-top:8px">Shows OI across strikes in the current view.</div>
+          <div class="card" style="margin-top:10px">
+            <div>Total CE OI: <span id="totCE">—</span></div>
+            <div>Total PE OI: <span id="totPE">—</span></div>
+          </div>
+        </div>
+      </aside>
     </div>
   </div>
 
-</div>
+  <script>
+    // --- Config
+    const API_BASE = ""; // same origin (FastAPI is serving this file)
+    const SEGMENT  = "IDX_I"; // index segment
+    // Known under_security_id values (tweak if needed)
+    // 25: BankNifty, 2: Nifty, 49: Finnifty, 52: Sensex
 
-<script>
-/** ---- CONFIG ---- **/
-const SEGMENT = 'IDX_I';
-const SYMBOLS = {
-  BANKNIFTY: { under_security_id: 25, label: 'BANKNIFTY' },
-  NIFTY:     { under_security_id: 2,  label: 'NIFTY' }
-};
+    const dom = {
+      indexSel:  document.getElementById("indexSel"),
+      expirySel: document.getElementById("expirySel"),
+      btnRefresh:document.getElementById("btnRefresh"),
+      chainBody: document.getElementById("chainBody"),
+      chainTbl:  document.getElementById("chainTbl"),
+      chainBadge:document.getElementById("chainBadge"),
+      pcr:       document.getElementById("pcr"),
+      maxPain:   document.getElementById("maxPain"),
+      windowInfo:document.getElementById("windowInfo"),
+      countInfo: document.getElementById("countInfo"),
+      spot:      document.getElementById("spot"),
+      expShow:   document.getElementById("expShow"),
+      totCE:     document.getElementById("totCE"),
+      totPE:     document.getElementById("totPE"),
+      oiCanvas:  document.getElementById("oiChart")
+    };
 
-let currentSymbol = 'BANKNIFTY';
-let currentExpiry = null;
-let oiChart = null;
+    let chart;
 
-/** ---- DOM refs ---- **/
-const expirySelect = document.getElementById('expirySelect');
-const symbolSelect = document.getElementById('symbolSelect');
-const chainBody = document.getElementById('chainBody');
-const apiStatus = document.getElementById('apiStatus');
-const title = document.getElementById('title');
-const titleExpiry = document.getElementById('titleExpiry');
-const ltpEl = document.getElementById('ltp');
-const sumCeEl = document.getElementById('sumCe');
-const sumPeEl = document.getElementById('sumPe');
-const pcrEl = document.getElementById('pcr');
-const maxPainEl = document.getElementById('maxPain');
-const refreshBtn = document.getElementById('refreshBtn');
+    function setBadgeOk(text="chain ok"){ dom.chainBadge.innerHTML = `OK: <span class="ok">${text}</span>`; }
+    function setBadgeErr(text="error"){ dom.chainBadge.innerHTML = `ERR: <span class="err">${text}</span>`; }
 
-/** ---- Helpers ---- **/
-const fmt = (n, d=2) => (n==null || isNaN(n)) ? '0' : Number(n).toLocaleString('en-IN', {maximumFractionDigits:d});
-const ivfmt = (n) => n ? (Number(n)*100).toFixed(2)+'%' : '0.00%';
+    async function fetchJSON(url){
+      const r = await fetch(url);
+      if(!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    }
 
-function setStatus(ok, msg) {
-  apiStatus.textContent = (ok?'OK':'ERR')+(msg?` • ${msg}`:'');
-  apiStatus.className = 'badge rounded-pill px-3 ' + (ok?'bg-success-subtle text-success':'bg-danger-subtle text-danger');
-}
+    function fmtNum(n){
+      if(n === null || n === undefined) return "0";
+      const v = Number(n);
+      if (!isFinite(v)) return "0";
+      if (Math.abs(v) >= 1000) return v.toLocaleString("en-IN");
+      return v.toString();
+    }
 
-/** ---- Fetch expiries ---- **/
-async function loadExpiries() {
-  const {under_security_id} = SYMBOLS[currentSymbol];
-  setStatus(true,'loading');
-  expirySelect.innerHTML = `<option>Loading…</option>`;
-  try {
-    const res = await fetch(`/optionchain/expirylist?under_security_id=${under_security_id}&under_exchange_segment=${SEGMENT}`);
-    const js = await res.json();
-    if(!res.ok || !js?.data){ throw new Error('expirylist'); }
-    expirySelect.innerHTML = '';
-    js.data.forEach((d,i)=>{
-      const opt = document.createElement('option');
-      opt.value = d; opt.textContent = d;
-      if(i===0) opt.selected = true;
-      expirySelect.appendChild(opt);
-    });
-    currentExpiry = expirySelect.value;
-    title.textContent = `${SYMBOLS[currentSymbol].label} Options Chain`;
-    titleExpiry.textContent = currentExpiry || '—';
-    setStatus(true,'expiries ok');
-  } catch(e){
-    setStatus(false, 'expirylist failed');
-    throw e;
-  }
-}
+    function rowHTML(r, atmStrike){
+      const ce = r.call, pe = r.put, s = r.strike;
+      const atm = (Math.abs(s - atmStrike) < 0.001) ? "atm" : "";
+      return `
+        <tr class="${atm}">
+          <td>${fmtNum(ce.price)}</td>
+          <td>${(ce.iv||0).toFixed(2)}%</td>
+          <td>${fmtNum(ce.oi)}</td>
+          <td>${(ce.chgOi>=0?'+':'')+fmtNum(ce.chgOi)}</td>
+          <td style="font-weight:700">${fmtNum(s)}</td>
+          <td>${(pe.chgOi>=0?'+':'')+fmtNum(pe.chgOi)}</td>
+          <td>${fmtNum(pe.oi)}</td>
+          <td>${(pe.iv||0).toFixed(2)}%</td>
+          <td>${fmtNum(pe.price)}</td>
+        </tr>`;
+    }
 
-/** ---- Fetch chain ---- **/
-async function loadChain() {
-  const {under_security_id} = SYMBOLS[currentSymbol];
-  const exp = expirySelect.value;
-  chainBody.innerHTML = `<tr><td colspan="9" class="text-center py-4">Loading…</td></tr>`;
-  try{
-    const res = await fetch(`/optionchain?under_security_id=${under_security_id}&under_exchange_segment=${SEGMENT}&expiry=${encodeURIComponent(exp)}`);
-    const js = await res.json();
-    if(!res.ok || !js?.data?.oc){ throw new Error('chain'); }
+    function drawTable(chain, spot){
+      const strikes = chain.map(x=>x.strike);
+      const atm = strikes.reduce((a,b)=> Math.abs(b-spot)<Math.abs(a-spot)? b:a, strikes[0]||0);
+      dom.chainBody.innerHTML = chain.map(r => rowHTML(r, atm)).join("") || `
+        <tr><td colspan="9" style="text-align:center;color:#9fb1d6;padding:18px">No rows</td></tr>`;
+    }
 
-    // LTP
-    const ltp = js.data.last_price ?? 0;
-    ltpEl.textContent = fmt(ltp,2);
+    function drawChart(chain){
+      const labels = chain.map(r=> r.strike);
+      const ce = chain.map(r=> r.call.oi);
+      const pe = chain.map(r=> r.put.oi);
 
-    // Build rows
-    const rows = [];
-    for(const [strikeStr, legs] of Object.entries(js.data.oc)){
-      const strike = Number(strikeStr);
-      const ce = legs?.ce || {};
-      const pe = legs?.pe || {};
-
-      const ceOI = Number(ce.oi||0), peOI = Number(pe.oi||0);
-      const cePrev = Number(ce.previous_oi||0), pePrev = Number(pe.previous_oi||0);
-      const dCe = ceOI - cePrev;
-      const dPe = peOI - pePrev;
-
-      rows.push({
-        strike,
-        ce_ltp: Number(ce.last_price||0),
-        ce_iv: Number(ce.implied_volatility||0),
-        ce_oi: ceOI, d_ce: dCe,
-        pe_ltp: Number(pe.last_price||0),
-        pe_iv: Number(pe.implied_volatility||0),
-        pe_oi: peOI, d_pe: dPe
+      if(chart){ chart.destroy(); }
+      chart = new Chart(dom.oiCanvas, {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [
+            {label:"Call OI", data: ce},
+            {label:"Put OI",  data: pe}
+          ]
+        },
+        options: {
+          responsive: true,
+          plugins:{ legend:{labels:{color:"#cbd5e1"}}},
+          scales:{
+            x:{ ticks:{color:"#9fb1d6"}, grid:{color:"#1b2438"} },
+            y:{ ticks:{color:"#9fb1d6"}, grid:{color:"#1b2438"} }
+          }
+        }
       });
     }
 
-    // sort by strike numeric
-    rows.sort((a,b)=>a.strike-b.strike);
-
-    // render
-    const nearATMIndex = rows.reduce((best, r, i)=>{
-      const d = Math.abs((r.strike)-(ltp||r.strike));
-      return d < best.dist ? {i, dist:d} : best;
-    }, {i:0, dist:Infinity}).i;
-
-    chainBody.innerHTML='';
-    rows.forEach((r,i)=>{
-      const tr = document.createElement('tr');
-      if(i===nearATMIndex) tr.classList.add('atm');
-      tr.innerHTML = `
-        <td class="text-end">${fmt(r.ce_ltp,2)}</td>
-        <td class="text-end">${ivfmt(r.ce_iv)}</td>
-        <td class="text-end">${fmt(r.ce_oi,0)}</td>
-        <td class="text-end ${r.d_ce>=0?'pos':'neg'}">${r.d_ce>=0?'+':''}${fmt(r.d_ce,0)}</td>
-        <td class="text-center strike-col">${fmt(r.strike,0)}</td>
-        <td class="${r.d_pe>=0?'pos':'neg'}">${r.d_pe>=0?'+':''}${fmt(r.d_pe,0)}</td>
-        <td>${fmt(r.pe_oi,0)}</td>
-        <td>${ivfmt(r.pe_iv)}</td>
-        <td>${fmt(r.pe_ltp,2)}</td>
-      `;
-      chainBody.appendChild(tr);
-    });
-
-    // OI stats + chart
-    const sumCE = rows.reduce((s,r)=>s+r.ce_oi,0);
-    const sumPE = rows.reduce((s,r)=>s+r.pe_oi,0);
-    const pcr = sumCE>0 ? (sumPE/sumCE) : 0;
-    sumCeEl.textContent = fmt(sumCE,0);
-    sumPeEl.textContent = fmt(sumPE,0);
-    pcrEl.textContent = pcr.toFixed(2);
-
-    // Simple max pain proxy (min |CE OI - PE OI|)
-    let minDiff = Infinity, mp = null;
-    rows.forEach(r=>{
-      const diff = Math.abs((r.ce_oi||0)-(r.pe_oi||0));
-      if(diff<minDiff){ minDiff=diff; mp=r.strike; }
-    });
-    maxPainEl.textContent = mp?fmt(mp,0):'—';
-
-    drawChart(rows);
-    setStatus(true,'chain ok');
-  }catch(e){
-    setStatus(false,'chain failed');
-    console.error(e);
-    chainBody.innerHTML = `<tr><td colspan="9" class="text-center py-4 text-danger">Failed to load chain.</td></tr>`;
-  }
-}
-
-/** ---- Chart ---- **/
-function drawChart(rows){
-  const ctx = document.getElementById('oiChart');
-  if(oiChart){ oiChart.destroy(); }
-  const labels = rows.map(r=>r.strike);
-  const ce = rows.map(r=>r.ce_oi||0);
-  const pe = rows.map(r=>r.pe_oi||0);
-
-  oiChart = new Chart(ctx, {
-    type:'bar',
-    data:{
-      labels,
-      datasets:[
-        {label:'Call OI', data:ce, backgroundColor:'#2ecc71'},
-        {label:'Put OI', data:pe, backgroundColor:'#e74c3c'}
-      ]
-    },
-    options:{
-      responsive:true,
-      plugins:{ legend:{ position:'top', labels:{ color:'#e8ecf1' } } },
-      scales:{
-        x:{ ticks:{ color:'#9fb0c3' }, grid:{ display:false }},
-        y:{ ticks:{ color:'#9fb0c3' }, grid:{ color:'rgba(255,255,255,.08)' } }
+    async function loadExpiries(){
+      const underId = dom.indexSel.value;
+      dom.expirySel.innerHTML = `<option>loading…</option>`;
+      try{
+        const url = `${API_BASE}/optionchain/expirylist?under_security_id=${underId}&under_exchange_segment=${SEGMENT}`;
+        const js = await fetchJSON(url);
+        const list = (js && js.data) || [];
+        dom.expirySel.innerHTML = list.map(d => `<option value="${d}">${d}</option>`).join("") || `<option>No expiry</option>`;
+      }catch(e){
+        dom.expirySel.innerHTML = `<option>error</option>`;
+        console.error(e);
       }
     }
-  });
-}
 
-/** ---- Wiring ---- **/
-symbolSelect.addEventListener('change', async ()=>{
-  currentSymbol = symbolSelect.value;
-  await loadExpiries();
-  await loadChain();
-});
-expirySelect.addEventListener('change', async ()=>{
-  currentExpiry = expirySelect.value;
-  titleExpiry.textContent = currentExpiry || '—';
-  await loadChain();
-});
-refreshBtn.addEventListener('click', async ()=>{ await loadChain(); });
+    async function loadChain(){
+      const underId = dom.indexSel.value;
+      const expiry  = dom.expirySel.value;
+      dom.expShow.textContent = expiry || "—";
+      dom.chainBody.innerHTML = `
+        <tr><td colspan="9" style="text-align:center;color:#9fb1d6;padding:18px"><span class="spinner"></span> Loading…</td></tr>`;
+      dom.chainBadge.innerHTML = `<span class="spinner"></span> loading…`;
 
-(async function init(){
-  try{
-    await loadExpiries();
-    await loadChain();
-  }catch(e){
-    console.error(e);
-  }
-})();
-</script>
+      try{
+        // show_all=true so the chart represents the whole surface; table still shows the returned list (window/full from API)
+        const url = `${API_BASE}/optionchain?under_security_id=${underId}&under_exchange_segment=${SEGMENT}&expiry=${encodeURIComponent(expiry)}&show_all=true`;
+        const js = await fetchJSON(url);
+
+        if(js.status!=="success"){ setBadgeErr("api failed"); return; }
+
+        const spot = js.spot || 0;
+        dom.spot.textContent = fmtNum(spot);
+        dom.pcr.textContent  = (js.summary?.pcr ?? 0).toFixed(2);
+        dom.maxPain.textContent = fmtNum(js.summary?.max_pain ?? 0);
+        dom.windowInfo.textContent = js.meta?.window || "full";
+        dom.countInfo.textContent  = `${js.meta?.count_window ?? 0} / ${js.meta?.count_full ?? 0}`;
+        dom.totCE.textContent = fmtNum(js.summary?.total_call_oi ?? 0);
+        dom.totPE.textContent = fmtNum(js.summary?.total_put_oi ?? 0);
+
+        const chain = js.chain || [];
+        drawTable(chain, spot);
+        drawChart(chain);
+
+        setBadgeOk("chain ok");
+      }catch(e){
+        console.error(e);
+        setBadgeErr("load error");
+        dom.chainBody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:#ef9a9a;padding:18px">Failed to load chain</td></tr>`;
+      }
+    }
+
+    // Events
+    dom.indexSel.addEventListener("change", async ()=>{
+      await loadExpiries();
+      await loadChain();
+    });
+    dom.expirySel.addEventListener("change", loadChain);
+    dom.btnRefresh.addEventListener("click", loadChain);
+
+    // Init
+    (async function init(){
+      await loadExpiries();
+      await loadChain();
+    })();
+  </script>
 </body>
 </html>
