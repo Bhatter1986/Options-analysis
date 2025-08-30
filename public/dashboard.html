@@ -3,155 +3,71 @@
 <head>
   <meta charset="UTF-8">
   <title>Options Analysis Dashboard</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
   <style>
-    body { background:#111; color:#eee; font-family: Arial, sans-serif; }
-    select, input, button { margin:4px; padding:6px; }
-    table { width:100%; border-collapse:collapse; margin-top:12px; }
-    th, td { padding:6px; text-align:center; border:1px solid #333; }
-    th { background:#222; }
-    .error { color:red; }
+    body {
+      background-color: #111;
+      color: #eee;
+    }
+    .container {
+      margin-top: 20px;
+    }
+    select, input, button {
+      margin: 5px;
+    }
+    table {
+      font-size: 14px;
+    }
+    thead {
+      background-color: #222;
+    }
   </style>
 </head>
 <body>
-  <h2>Options Analysis Dashboard</h2>
+  <div class="container">
+    <h2>Options Analysis Dashboard</h2>
 
-  <div>
-    <label>Instrument</label>
-    <select id="instrument"></select>
+    <!-- Controls -->
+    <div class="d-flex align-items-center mb-3">
+      <label class="me-2">Instrument</label>
+      <select id="instrument" class="form-select form-select-sm" style="width:200px;"></select>
 
-    <label>Expiry</label>
-    <select id="expiry"></select>
+      <label class="ms-3 me-2">Expiry</label>
+      <select id="expiry" class="form-select form-select-sm" style="width:150px;"></select>
 
-    <label>Window (±)</label>
-    <input id="window" type="number" value="15" min="1" max="50"/>
+      <label class="ms-3 me-2">Window (±)</label>
+      <input id="window" type="number" value="15" class="form-control form-control-sm" style="width:80px;">
 
-    <label>Show full chain</label>
-    <input id="showAll" type="checkbox"/>
+      <div class="form-check ms-3">
+        <input type="checkbox" id="show-full" class="form-check-input">
+        <label for="show-full" class="form-check-label">Show full chain</label>
+      </div>
 
-    <button id="refresh">Refresh</button>
+      <button id="refresh" class="btn btn-primary btn-sm ms-3">Refresh</button>
+    </div>
+
+    <!-- Chain Table -->
+    <table class="table table-dark table-bordered table-sm">
+      <thead>
+        <tr>
+          <th>CE LTP</th>
+          <th>CE IV</th>
+          <th>CE OI</th>
+          <th>Δ OI</th>
+          <th>STRIKE</th>
+          <th>Δ OI</th>
+          <th>PE OI</th>
+          <th>PE IV</th>
+          <th>PE LTP</th>
+        </tr>
+      </thead>
+      <tbody id="chain-body">
+        <tr><td colspan="9">Select instrument and expiry, then click Refresh</td></tr>
+      </tbody>
+    </table>
   </div>
 
-  <div id="summary"></div>
-  <div id="error" class="error"></div>
-
-  <table id="chainTable">
-    <thead>
-      <tr>
-        <th>CE LTP</th><th>CE IV</th><th>CE OI</th><th>Δ OI</th>
-        <th>STRIKE</th>
-        <th>Δ OI</th><th>PE OI</th><th>PE IV</th><th>PE LTP</th>
-      </tr>
-    </thead>
-    <tbody></tbody>
-  </table>
-
-<script>
-async function fetchJSON(url) {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
-}
-
-const $inst = document.getElementById('instrument');
-const $expiry = document.getElementById('expiry');
-const $window = document.getElementById('window');
-const $showAll = document.getElementById('showAll');
-const $summary = document.getElementById('summary');
-const $error = document.getElementById('error');
-const $tableBody = document.querySelector('#chainTable tbody');
-
-let CURRENT = { id:null, seg:null, step:50 };
-
-async function loadInstruments() {
-  try {
-    const res = await fetchJSON('/instruments');
-    const items = res.data || [];
-    $inst.innerHTML = "";
-    for (const it of items) {
-      const opt = document.createElement('option');
-      opt.value = JSON.stringify({ id: it.id, seg: it.segment, step: it.step });
-      opt.textContent = it.name;
-      $inst.appendChild(opt);
-    }
-    if (items.length) {
-      $inst.selectedIndex = 0;
-      onInstrumentChange();
-    }
-  } catch (e) {
-    console.error(e);
-    $error.textContent = "Failed to load instruments.";
-  }
-}
-
-async function onInstrumentChange() {
-  const v = JSON.parse($inst.value);
-  CURRENT = { id:v.id, seg:v.seg, step:v.step };
-  $expiry.innerHTML = "";
-  if (!CURRENT.id) return;
-
-  try {
-    const res = await fetchJSON(`/optionchain/expirylist?under_security_id=${CURRENT.id}&under_exchange_segment=${CURRENT.seg}`);
-    const dates = res.data || [];
-    for (const d of dates) {
-      const opt = document.createElement('option');
-      opt.value = d;
-      opt.textContent = d;
-      $expiry.appendChild(opt);
-    }
-  } catch (e) {
-    console.error(e);
-    $error.textContent = "Failed to load expiries.";
-  }
-}
-
-async function loadChain() {
-  $error.textContent = "";
-  $summary.textContent = "";
-  $tableBody.innerHTML = "";
-  const expiry = $expiry.value;
-  const win = parseInt($window.value || "15", 10);
-  const showAll = $showAll.checked;
-  if (!CURRENT.id || !expiry) return;
-
-  const url = `/optionchain?under_security_id=${CURRENT.id}`
-            + `&under_exchange_segment=${CURRENT.seg}`
-            + `&expiry=${encodeURIComponent(expiry)}`
-            + `&strikes_window=${win}`
-            + `&step=${CURRENT.step}`
-            + `&show_all=${showAll}`;
-
-  try {
-    const res = await fetchJSON(url);
-    if (res.status !== "success") throw new Error(res.detail||"API failed");
-
-    const s = res.summary;
-    $summary.textContent = `LTP: ${res.spot.toFixed(2)} | PCR: ${s.pcr} | Max Pain: ${s.max_pain} | rows: ${res.meta.count_window}`;
-
-    for (const row of res.chain) {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td>${row.call.price}</td>
-        <td>${row.call.iv.toFixed(2)}%</td>
-        <td>${row.call.oi}</td>
-        <td>${row.call.chgOi}</td>
-        <td>${row.strike}</td>
-        <td>${row.put.chgOi}</td>
-        <td>${row.put.oi}</td>
-        <td>${row.put.iv.toFixed(2)}%</td>
-        <td>${row.put.price}</td>
-      `;
-      $tableBody.appendChild(tr);
-    }
-  } catch (e) {
-    console.error(e);
-    $error.textContent = "Error loading chain";
-  }
-}
-
-$inst.addEventListener('change', onInstrumentChange);
-document.getElementById('refresh').addEventListener('click', loadChain);
-
-loadInstruments();
-</script>
+  <!-- Attach Dashboard JS -->
+  <script src="js/dashboard.js"></script>
 </body>
 </html>
