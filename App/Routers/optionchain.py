@@ -1,50 +1,40 @@
 from __future__ import annotations
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
-
 from App.Services.dhan_client import get_expiry_list, get_option_chain_raw
 
 router = APIRouter(prefix="/optionchain", tags=["Option Chain"])
 
 @router.get("/expirylist")
-def expiry_list(under_security_id: int, under_exchange_segment: str):
-    expiries = get_expiry_list(under_security_id, under_exchange_segment)
+async def expiry_list(under_security_id: int, under_exchange_segment: str):
+    expiries = await get_expiry_list(under_security_id, under_exchange_segment)
     return {"status": "success", "data": expiries}
 
 @router.get("")
-def option_chain(
+async def option_chain(
     under_security_id: int,
     under_exchange_segment: str,
     expiry: str,
     show_all: Optional[bool] = False,
     strikes_window: int = Query(15, ge=1, le=50),
-    step: int = Query(100, ge=1)
+    step: int = Query(100, ge=1),
 ):
-    """
-    Return option chain with expiry validation
-    """
-    # ✅ Validate expiry first
-    valid_expiries = get_expiry_list(under_security_id, under_exchange_segment)
-    if expiry not in valid_expiries:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "Invalid expiry",
-                "passed": expiry,
-                "valid": valid_expiries
-            }
-        )
+    # validate expiry against live list from Dhan
+    valid = await get_expiry_list(under_security_id, under_exchange_segment)
+    if not valid:
+        raise HTTPException(502, "No expiries returned from Dhan")
+    if expiry not in valid:
+        raise HTTPException(400, f"Invalid expiry: {expiry}. Use one of: {', '.join(valid[:6])}…")
 
-    # Now fetch raw chain
-    raw = get_option_chain_raw(under_security_id, under_exchange_segment, expiry)
-    if not raw or "oc" not in raw:
+    raw = await get_option_chain_raw(under_security_id, under_exchange_segment, expiry)
+    if not raw or "data" not in raw or "oc" not in raw["data"]:
         raise HTTPException(502, "Empty chain returned from Dhan")
 
-    spot: float = float(raw.get("last_price", 0) or 0)
-    oc: Dict[str, Any] = raw["oc"]
+    spot = float(raw["data"].get("last_price", 0) or 0)
+    oc: Dict[str, Any] = raw["data"]["oc"]
 
     def _to_row(strike_str: str) -> Dict[str, Any]:
-        row = oc.get(strike_str, {})
+        row = oc.get(strike_str, {}) or {}
         ce = row.get("ce", {}) or {}
         pe = row.get("pe", {}) or {}
         return {
@@ -69,18 +59,16 @@ def option_chain(
     total_call_oi = sum(x["call"]["oi"] for x in chain_all)
     total_put_oi  = sum(x["put"]["oi"]  for x in chain_all)
     pcr = round(total_put_oi / total_call_oi, 2) if total_call_oi else 0.0
-
-    max_pain_strike = (
-        min(chain_all, key=lambda r: abs(r["call"]["oi"] - r["put"]["oi"]))["strike"]
-        if chain_all else 0.0
-    )
+    max_pain_strike = min(chain_all, key=lambda r: abs(r["call"]["oi"] - r["put"]["oi"]))["strike"] if chain_all else 0.0
 
     if show_all or not spot or not strikes_sorted:
         chain_window = chain_all
     else:
+        # infer default step if not provided
+        step_used = step or (50 if strikes_sorted and (strikes_sorted[1]-strikes_sorted[0] <= 50) else 100)
         atm = min(strikes_sorted, key=lambda s: abs(s - spot))
-        lo = atm - strikes_window * step
-        hi = atm + strikes_window * step
+        lo = atm - strikes_window * step_used
+        hi = atm + strikes_window * step_used
         chain_window = [r for r in chain_all if lo <= r["strike"] <= hi]
 
     return {
