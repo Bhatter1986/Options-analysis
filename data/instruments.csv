@@ -14,10 +14,9 @@ def _load_watchlist() -> List[Dict[str, Any]]:
     try:
         obj = json.loads(WATCHLIST_PATH.read_text(encoding="utf-8"))
         items = obj.get("items", [])
-        # basic sanitize + filter out items with invalid structure
         out = []
         for x in items:
-            if not isinstance(x, dict): 
+            if not isinstance(x, dict):
                 continue
             id_ = int(x.get("id", 0) or 0)
             name = str(x.get("name", "")).strip()
@@ -31,11 +30,6 @@ def _load_watchlist() -> List[Dict[str, Any]]:
 
 @router.get("")
 def list_instruments():
-    """
-    Return instruments for dashboard dropdown.
-    Fields: id (security id), name (label), segment, step (strike step)
-    id can be 0 for stocks until you fill actual Security ID.
-    """
     items = _load_watchlist()
     return {"status": "success", "data": items}
 
