@@ -1,219 +1,284 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Options Analysis Dashboard</title>
-<style>
-  :root { color-scheme: dark; }
-  body { margin:0; background:#0d1117; color:#e6edf3; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Arial; }
-  .wrap { max-width:1280px; margin:24px auto; padding:0 16px; }
-  header { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:16px; }
-  h1 { font-size:22px; margin:0; }
-  .panel { background:#161b22; border:1px solid #30363d; border-radius:12px; padding:16px; }
-  .grid { display:grid; grid-template-columns: 1fr 420px; gap:16px; }
-  .controls { display:flex; gap:10px; flex-wrap:wrap; }
-  select, button {
-    background:#0b1220; color:#e6edf3; border:1px solid #30363d; border-radius:8px; padding:8px 10px; font-size:14px;
-  }
-  button { background:#1f6feb; border-color:#1f6feb; cursor:pointer; }
-  button:disabled { opacity:.6; cursor:not-allowed; }
-  .tag { font-size:12px; opacity:.85; padding:2px 8px; background:#0b1220; border:1px solid #233; border-radius:999px; }
-  table { width:100%; border-collapse:collapse; font-size:13px; }
-  th, td { padding:8px 10px; border-bottom:1px solid #30363d; text-align:right; white-space:nowrap; }
-  th { position:sticky; top:0; background:#0f1523; z-index:1; }
-  td.strike, th.strike, th.left, td.left { text-align:left; }
-  tr.atm { background:rgba(31,111,235,.15); }
-  .muted { opacity:.7; }
-  .kpi { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin-top:12px; }
-  .kpi .box { background:#0b1220; border:1px solid #233; border-radius:10px; padding:12px; }
-  .kpi .val { font-size:18px; font-weight:700; }
-  footer { margin-top:18px; display:flex; gap:10px; flex-wrap:wrap; }
-  .warn { color: #ffd33d; }
-  .ok { color:#3fb950; }
-  .err { color:#f85149; }
-  .tall { max-height:70vh; overflow:auto; }
-</style>
+  <meta charset="utf-8" />
+  <title>Options Analysis Dashboard</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root {
+      --bg: #0e1621;
+      --panel: #121c27;
+      --panel-2: #0f1a24;
+      --text: #e8eef4;
+      --muted: #9bb0c2;
+      --ok: #18c36e;
+      --err: #ff6b6b;
+      --chip: #203040;
+      --chip-txt: #b4c6d8;
+      --accent: #2dd4bf;
+      --table-border: #223447;
+      --hl: #1f3a5a;
+    }
+    html, body { margin:0; padding:0; background:var(--bg); color:var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif; }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 16px; }
+    .titlebar { display:flex; align-items:center; gap:12px; justify-content: space-between; }
+    h1 { font-weight:700; font-size: 20px; margin: 0; }
+    .controls { display:flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .control { background: var(--panel); border: 1px solid #1b2a3a; border-radius: 10px; padding: 10px; display:flex; align-items:center; gap:8px; }
+    .control label { color: var(--muted); font-size: 12px; }
+    select, input[type="number"] { background: var(--panel-2); color: var(--text); border:1px solid #1c2b3b; border-radius: 8px; padding: 8px 10px; }
+    button { background: var(--accent); color:#062028; border:none; border-radius:10px; padding:10px 14px; font-weight:600; cursor:pointer; }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    .pill { padding:6px 10px; border-radius: 999px; background:var(--chip); color:var(--chip-txt); font-size:12px; display:inline-flex; gap:6px; align-items:center; }
+    .badge { padding:6px 10px; border-radius: 999px; font-size:12px; }
+    .badge-ok { background: #153e31; color:#8ff5c8; border:1px solid #1f6a53; }
+    .badge-err { background:#3a1a1a; color:#ffc9c9; border:1px solid #6b2b2b; }
+    .panel { margin-top:14px; background:var(--panel); border:1px solid #1b2a3a; border-radius:14px; }
+    .panel-hd { padding:14px 16px; display:flex; align-items:center; justify-content: space-between; border-bottom:1px solid #1b2a3a; }
+    .panel-ttl { font-weight:600; }
+    table { width:100%; border-collapse: collapse; }
+    th, td { padding:10px 12px; text-align:right; border-bottom:1px solid var(--table-border); }
+    th:first-child, td:first-child { text-align:left; }
+    tr.atm { background: rgba(45, 212, 191, 0.08); }
+    .muted { color: var(--muted); }
+    .note { padding: 18px; color: var(--muted); text-align:center; }
+  </style>
 </head>
 <body>
   <div class="wrap">
-    <header>
+    <div class="titlebar">
       <h1>Options Analysis Dashboard</h1>
-      <div class="controls">
-        <select id="under">
-          <!-- under_security_id|under_exchange_segment -->
-          <option value="25|IDX_I">BANKNIFTY (ID)</option>
-          <option value="2|IDX_I">NIFTY (ID)</option>
-        </select>
-        <select id="expiry"><option>Loading…</option></select>
-        <button id="refresh">Refresh</button>
-        <span id="status" class="tag muted">idle</span>
-      </div>
-    </header>
+      <div id="statusBadge" class="badge badge-ok">OK</div>
+    </div>
 
-    <div class="grid">
-      <div class="panel tall">
-        <div class="muted" id="metaTop">—</div>
-        <table id="chain">
+    <div class="controls" style="margin-top:12px">
+      <div class="control">
+        <label>Instrument</label>
+        <select id="instrument">
+          <!-- You can add more later; keeping BankNifty (IDX_I) stable for now -->
+          <option value="25|IDX_I" selected>BANKNIFTY (ID)</option>
+        </select>
+      </div>
+
+      <div class="control">
+        <label>Expiry</label>
+        <select id="expiry"></select>
+      </div>
+
+      <div class="control">
+        <label>Window (±)</label>
+        <input id="win" type="number" value="15" min="1" max="50" />
+      </div>
+
+      <div class="control">
+        <label>Show full chain</label>
+        <input id="full" type="checkbox" />
+      </div>
+
+      <button id="refresh">Refresh</button>
+    </div>
+
+    <div class="panel">
+      <div class="panel-hd">
+        <div class="panel-ttl">Options Chain</div>
+        <div class="muted" id="stamp">Updated —</div>
+      </div>
+
+      <div style="padding:10px 16px; display:flex; gap:8px; flex-wrap:wrap;">
+        <span class="pill">LTP: <b id="ltp">—</b></span>
+        <span class="pill">PCR: <b id="pcr">—</b></span>
+        <span class="pill">Max Pain: <b id="mp">—</b></span>
+        <span class="pill">rows: <b id="rows">—</b></span>
+      </div>
+
+      <div id="tableWrap">
+        <table id="chainTbl">
           <thead>
             <tr>
-              <th class="left">CE LTP</th>
+              <th>CE LTP</th>
               <th>CE IV</th>
               <th>CE OI</th>
               <th>Δ OI</th>
-              <th class="strike">STRIKE</th>
+              <th>STRIKE</th>
               <th>Δ OI</th>
               <th>PE OI</th>
               <th>PE IV</th>
               <th>PE LTP</th>
             </tr>
           </thead>
-          <tbody></tbody>
+          <tbody id="chainBody">
+            <tr><td class="note" colspan="9">Loading…</td></tr>
+          </tbody>
         </table>
       </div>
 
-      <div class="panel">
-        <h3 style="margin:0 0 8px 0;">Open Interest (summary)</h3>
-        <div class="kpi">
-          <div class="box">
-            <div class="muted">Total CE OI</div>
-            <div class="val" id="k_ceoi">—</div>
-          </div>
-          <div class="box">
-            <div class="muted">Total PE OI</div>
-            <div class="val" id="k_peoi">—</div>
-          </div>
-          <div class="box">
-            <div class="muted">PCR</div>
-            <div class="val" id="k_pcr">—</div>
-          </div>
-          <div class="box">
-            <div class="muted">Max Pain*</div>
-            <div class="val" id="k_maxpain">—</div>
-          </div>
-        </div>
-        <footer class="muted">
-          <div>ATM row is highlighted.</div>
-          <div><span class="warn">PCR &amp; Max-Pain are quick approximations</span> for feel.</div>
-          <div id="meta" class="muted"></div>
-        </footer>
-      </div>
+      <div class="note">Tip: ATM row is highlighted. Use “Show full chain” for all strikes.</div>
     </div>
   </div>
 
-<script>
-const el = (id) => document.getElementById(id);
-const fmt = (n) => Number(n||0).toLocaleString('en-IN');
+  <script>
+    const $ = sel => document.querySelector(sel);
+    const instrumentEl = $('#instrument');
+    const expiryEl     = $('#expiry');
+    const winEl        = $('#win');
+    const fullEl       = $('#full');
+    const refreshBtn   = $('#refresh');
+    const badge        = $('#statusBadge');
 
-const state = {
-  underId: 25, seg: 'IDX_I', expiry: null, spot: 0
-};
+    const el = {
+      ltp: $('#ltp'), pcr: $('#pcr'), mp: $('#mp'), rows: $('#rows'),
+      body: $('#chainBody'), stamp: $('#stamp')
+    };
 
-function setStatus(msg, cls='muted') {
-  const s = el('status');
-  s.className = 'tag ' + cls;
-  s.textContent = msg;
-}
+    const state = {
+      underId: 25,
+      segment: 'IDX_I',
+      expiry: null,
+      step: 100,     // BankNifty
+    };
 
-function parseUnder(val) {
-  const [id, seg] = val.split('|');
-  state.underId = Number(id);
-  state.seg = seg;
-}
+    function setBadgeOk(msg='OK')  { badge.className='badge badge-ok';  badge.textContent=msg; }
+    function setBadgeErr(msg='Error') { badge.className='badge badge-err'; badge.textContent=msg; }
 
-async function loadExpiries() {
-  setStatus('loading expiries…');
-  const r = await fetch(`/optionchain/expirylist?under_security_id=${state.underId}&under_exchange_segment=${state.seg}`);
-  const j = await r.json();
-  if (j.status !== 'success') throw new Error('expiry list failed');
-  const list = j.data || [];
-  const ex = el('expiry');
-  ex.innerHTML = '';
-  list.forEach((d, i) => {
-    const o = document.createElement('option');
-    o.value = d; o.textContent = d;
-    if (i===0) o.selected = true;
-    ex.appendChild(o);
-  });
-  state.expiry = ex.value;
-  setStatus(`expiries: ${list.length}`, 'ok');
-}
+    function parseInstrument(value) {
+      const [id, seg] = value.split('|');
+      state.underId = Number(id);
+      state.segment = seg;
+      // simple step rule
+      state.step = (state.underId === 25 ? 100 : 50);
+    }
 
-async function loadChain() {
-  setStatus('loading chain…');
-  const url = `/optionchain?under_security_id=${state.underId}&under_exchange_segment=${state.seg}&expiry=${encodeURIComponent(state.expiry)}&show_all=true`;
-  const r = await fetch(url);
-  const j = await r.json();
+    async function fetchJson(url) {
+      const r = await fetch(url, { cache: 'no-store' });
+      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+      return r.json();
+    }
 
-  if (j.status !== 'success') throw new Error('chain failed');
-  const body = el('chain').querySelector('tbody');
-  body.innerHTML = '';
+    async function loadExpiries() {
+      try {
+        const url = `/optionchain/expirylist?under_security_id=${state.underId}&under_exchange_segment=${state.segment}`;
+        const j = await fetchJson(url);
+        const list = (j && j.status === 'success' && Array.isArray(j.data)) ? j.data : [];
+        expiryEl.innerHTML = '';
+        if (list.length === 0) {
+          state.expiry = null;
+          const opt = document.createElement('option');
+          opt.textContent = 'No expiries';
+          opt.value = '';
+          expiryEl.appendChild(opt);
+          setBadgeErr('No expiries');
+          return;
+        }
+        // Fill dropdown
+        for (const d of list) {
+          const opt = document.createElement('option');
+          opt.value = d;
+          opt.textContent = d;
+          expiryEl.appendChild(opt);
+        }
+        // Auto-pick first valid expiry
+        state.expiry = list[0];
+        expiryEl.value = state.expiry;
+        console.log('Using expiry:', state.expiry);
+        setBadgeOk('OK');
+      } catch (e) {
+        console.error('expiry error', e);
+        setBadgeErr('expiry error');
+        expiryEl.innerHTML = `<option value="">Error</option>`;
+        state.expiry = null;
+      }
+    }
 
-  state.spot = Number(j.spot || 0);
-  const chain = j.chain || [];
-  const closest = chain.reduce((best, row) => {
-    const d = Math.abs((row.strike||0) - state.spot);
-    return d < best.d ? {d, s: row.strike} : best;
-  }, {d: 1e18, s: 0}).s;
+    function renderRows(rows, spot) {
+      el.body.innerHTML = '';
+      if (!rows || rows.length === 0) {
+        el.body.innerHTML = `<tr><td class="note" colspan="9">No data</td></tr>`;
+        return;
+      }
+      // find ATM by closest strike to spot
+      let atmIndex = -1;
+      if (spot) {
+        let best = Number.MAX_VALUE;
+        rows.forEach((r, i) => {
+          const d = Math.abs(r.strike - spot);
+          if (d < best) { best = d; atmIndex = i; }
+        });
+      }
+      for (let i=0; i<rows.length; i++) {
+        const r = rows[i];
+        const tr = document.createElement('tr');
+        if (i === atmIndex) tr.classList.add('atm');
 
-  chain.forEach(row => {
-    const tr = document.createElement('tr');
-    if (Math.abs((row.strike||0) - closest) < 1e-9) tr.classList.add('atm');
+        const fmt = (x, digits=2) => (typeof x === 'number' && isFinite(x)) ? x.toFixed(digits) : '0';
+        const int = (x) => (typeof x === 'number' && isFinite(x)) ? x.toLocaleString() : '0';
 
-    const c = row.call || {}, p = row.put || {};
-    tr.innerHTML = `
-      <td class="left">${(c.price||0).toFixed(2)}</td>
-      <td>${(c.iv||0).toFixed(2)}%</td>
-      <td>${fmt(c.oi)}</td>
-      <td>${fmt(c.chgOi)}</td>
-      <td class="strike">${fmt(row.strike)}</td>
-      <td>${fmt(p.chgOi)}</td>
-      <td>${fmt(p.oi)}</td>
-      <td>${(p.iv||0).toFixed(2)}%</td>
-      <td>${(p.price||0).toFixed(2)}</td>
-    `;
-    body.appendChild(tr);
-  });
+        tr.innerHTML = `
+          <td>${fmt(r.call.price)}</td>
+          <td>${fmt(r.call.iv)}</td>
+          <td>${int(r.call.oi)}</td>
+          <td>${int(r.call.chgOi)}</td>
+          <td style="font-weight:600">${r.strike.toLocaleString()}</td>
+          <td>${int(r.put.chgOi)}</td>
+          <td>${int(r.put.oi)}</td>
+          <td>${fmt(r.put.iv)}</td>
+          <td>${fmt(r.put.price)}</td>
+        `;
+        el.body.appendChild(tr);
+      }
+    }
 
-  // KPIs
-  el('k_ceoi').textContent   = fmt(j.summary?.total_call_oi || 0);
-  el('k_peoi').textContent   = fmt(j.summary?.total_put_oi  || 0);
-  el('k_pcr').textContent    = (j.summary?.pcr ?? 0).toFixed(2);
-  el('k_maxpain').textContent= fmt(j.summary?.max_pain || 0);
+    async function loadChain() {
+      try {
+        if (!state.expiry) {
+          await loadExpiries(); // ensure we have one
+          if (!state.expiry) return;
+        }
+        const showAll = fullEl.checked ? 'true' : 'false';
+        const win = Number(winEl.value || 15);
+        const url = `/optionchain?under_security_id=${state.underId}&under_exchange_segment=${state.segment}&expiry=${encodeURIComponent(state.expiry)}&show_all=${showAll}&strikes_window=${win}&step=${state.step}`;
 
-  // meta
-  el('metaTop').textContent = `Expiry: ${j.expiry || '-'} · LTP: ${state.spot ? state.spot.toFixed(2) : '-'}`;
-  el('meta').textContent = `Rows: ${j.meta?.count_full || 0} · Window: ${j.meta?.show_all ? 'Full' : j.meta?.window || '-'}`;
+        const j = await fetchJson(url);
+        if (j.status !== 'success') throw new Error('API status failed');
 
-  setStatus('ok', 'ok');
-}
+        // Top stats
+        el.ltp.textContent  = (j.spot ?? 0).toFixed(2);
+        el.pcr.textContent  = j.summary?.pcr ?? '0.00';
+        el.mp.textContent   = j.summary?.max_pain ?? '—';
+        el.rows.textContent = j.meta?.count_window ?? '0';
+        el.stamp.textContent = `Updated — ${new Date().toLocaleTimeString()}`;
 
-async function init() {
-  parseUnder(el('under').value);
-  await loadExpiries();
-  await loadChain();
-}
+        renderRows(j.chain || [], j.spot || 0);
+        setBadgeOk('OK');
+      } catch (e) {
+        console.error('chain error', e);
+        setBadgeErr('chain error');
+        el.body.innerHTML = `<tr><td class="note" colspan="9">Error loading chain</td></tr>`;
+      }
+    }
 
-el('under').addEventListener('change', async (e) => {
-  parseUnder(e.target.value);
-  await loadExpiries();
-  await loadChain();
-});
+    // Events
+    instrumentEl.addEventListener('change', async () => {
+      parseInstrument(instrumentEl.value);
+      await loadExpiries();
+      loadChain();
+    });
+    expiryEl.addEventListener('change', () => {
+      state.expiry = expiryEl.value || null;
+      loadChain();
+    });
+    winEl.addEventListener('change', loadChain);
+    fullEl.addEventListener('change', loadChain);
+    refreshBtn.addEventListener('click', async () => {
+      if (!state.expiry) await loadExpiries();
+      loadChain();
+    });
 
-el('expiry').addEventListener('change', async (e) => {
-  state.expiry = e.target.value;
-  await loadChain();
-});
-
-el('refresh').addEventListener('click', async () => {
-  await loadChain();
-});
-
-init().catch(err => {
-  console.error(err);
-  setStatus('error', 'err');
-  alert('Failed: ' + err);
-});
-</script>
+    // Init
+    (async function init() {
+      parseInstrument(instrumentEl.value);
+      await loadExpiries();   // <-- makes sure expiry is always valid
+      loadChain();
+    })();
+  </script>
 </body>
 </html>
