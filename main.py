@@ -8,6 +8,7 @@ from typing import Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles   # 👈 added
 
 log = logging.getLogger("uvicorn.error")
 
@@ -90,8 +91,11 @@ _include_router("App.Routers.optionchain")
 _include_router("App.Routers.marketfeed")
 _include_router("App.Routers.ai")
 _include_router("App.Routers.optionchain_auto")
-_include_router("App.Routers.admin_refresh")   # 👈 NEW: instruments auto-refresh router
+_include_router("App.Routers.admin_refresh")
 _include_router("App.Routers.ui_api")
+
+# ---- Serve static files (dashboard, etc.)
+app.mount("/", StaticFiles(directory="public", html=True), name="static")
 
 # ---- Uvicorn entry (for local dev; Render uses gunicorn/uvicorn workers)
 # if __name__ == "__main__":
