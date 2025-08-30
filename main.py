@@ -1,23 +1,13 @@
-from __future__ import annotations
-
-import os
-import importlib
-import logging
-from typing import Optional
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
-log = logging.getLogger("uvicorn.error")
+# Routers import
+from App.Routers import health, instruments, optionchain, optionchain_auto, marketfeed, ai, admin_refresh, ui_api
 
-app = FastAPI(
-    title="Dhan Options Analysis API",
-    version="1.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
-)
+app = FastAPI(title="Options Analysis")
 
-# ---- CORS (open for all; tighten later if needed)
+# CORS (safe default)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -26,52 +16,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def _include_router(module_path: str, attr: str = "router") -> bool:
-    try:
-        module = importlib.import_module(module_path)
-    except ModuleNotFoundError as e:
-        log.warning(f"[main] Skipping {module_path}: {e}")
-        return False
-    router: Optional[object] = getattr(module, attr, None)
-    if router is None:
-        log.warning(f"[main] {module_path} has no attribute '{attr}', skipping.")
-        return False
-    app.include_router(router)  # type: ignore[arg-type]
-    log.info(f"[main] Included router: {module_path}")
-    return True
+# Routers include
+app.include_router(health.router)
+app.include_router(instruments.router)
+app.include_router(optionchain.router)
+app.include_router(optionchain_auto.router)
+app.include_router(marketfeed.router)
+app.include_router(ai.router)
+app.include_router(admin_refresh.router)
+app.include_router(ui_api.router)
 
-@app.get("/")
-def root():
-    return {"status": "ok", "name": "Dhan Options Analysis API"}
-
-@app.get("/__selftest")
-def selftest():
-    env = "Render" if os.getenv("RENDER") else "Local"
-    mode = os.getenv("APP_MODE", "SANDBOX")
-    dh_client = os.getenv("DHAN_CLIENT_ID", "")
-    dh_token  = os.getenv("DHAN_ACCESS_TOKEN", "")
-    openai_key = os.getenv("OPENAI_API_KEY", "")
-    ai_model   = os.getenv("OPENAI_MODEL", os.getenv("AI_MODEL", "gpt-4.1-mini"))
-    base_url   = os.getenv("OPENAI_BASE_URL", "default")
-    return {
-        "ok": True,
-        "status": {
-            "env": env,
-            "mode": mode,
-            "token_present": bool(dh_token),
-            "client_id_present": bool(dh_client),
-            "ai_present": bool(openai_key),
-            "ai_model": ai_model,
-            "base_url": base_url,
-        },
-    }
-
-# Routers
-_include_router("App.Routers.health")
-_include_router("App.Routers.instruments")
-_include_router("App.Routers.optionchain")       # <-- UPDATED
-_include_router("App.Routers.marketfeed")
-_include_router("App.Routers.ai")
-_include_router("App.Routers.optionchain_auto")
-_include_router("App.Routers.admin_refresh")
-_include_router("App.Routers.ui_api")
+# --- Static site (serve /public as root) ---
+app.mount("/", StaticFiles(directory="public", html=True), name="static")
