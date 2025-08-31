@@ -1,55 +1,39 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 import os
-import httpx
+from openai import OpenAI
 
 router = APIRouter(prefix="/ai", tags=["AI"])
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-OPENAI_TIMEOUT = int(os.getenv("OPENAI_TIMEOUT", "30"))
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-if not OPENAI_API_KEY:
-    print("⚠️ WARNING: OPENAI_API_KEY not set. AI endpoints will fail.")
+class AiRequest(BaseModel):
+    question: str | None = None
+    context: dict | None = None
 
-class AIRequest(BaseModel):
-    prompt: str
-
-@router.post("/ask")
-async def ask_ai(req: AIRequest):
+@router.post("/analyze")
+async def analyze(req: AiRequest, request: Request):
     """
-    Ask AI a question. Example:
-    POST /ai/ask { "prompt": "What is PCR in options?" }
+    Analyze option chain data with AI
     """
-    if not OPENAI_API_KEY:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY missing")
+    # Default prompt
+    user_q = req.question or "Summarize the option chain and give key insights."
+
+    # Context: option chain data if passed
+    ctx = req.context or {}
+
+    prompt = f"""
+    You are Vishnu AI, an Options Analysis assistant.
+    Question: {user_q}
+    Context (option chain snapshot): {ctx}
+    Give output in bullet points, short and clear.
+    """
 
     try:
-        headers = {
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": OPENAI_MODEL,
-            "messages": [
-                {"role": "system", "content": "You are an AI assistant for Options Analysis."},
-                {"role": "user", "content": req.prompt},
-            ],
-            "temperature": 0.3,
-        }
-
-        async with httpx.AsyncClient(timeout=OPENAI_TIMEOUT) as client:
-            resp = await client.post(f"{OPENAI_BASE_URL}/chat/completions",
-                                     headers=headers, json=payload)
-
-        if resp.status_code != 200:
-            raise HTTPException(status_code=resp.status_code, detail=resp.text)
-
-        data = resp.json()
-        answer = data["choices"][0]["message"]["content"]
-
-        return {"status": "success", "answer": answer}
-
+        resp = client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return {"status": "success", "answer": resp.choices[0].message.content}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"AI request failed: {str(e)}")
+        return {"status": "error", "detail": str(e)}
