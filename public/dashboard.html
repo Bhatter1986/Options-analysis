@@ -4,24 +4,31 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Options Analysis Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
   <style>
-    :root { color-scheme: dark; }
-    body { margin:0; font:14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:#0f1115; color:#e8e8e8; }
-    .wrap { max-width:1400px; margin:32px auto; padding:0 16px; }
-    h1 { font-size:26px; margin:0 0 16px; display:flex; gap:8px; align-items:center; }
-    .badge { font-size:12px; padding:2px 8px; border-radius:12px; background:#1f2430; border:1px solid #2b3242; }
-    .grid { display:grid; grid-template-columns: 1fr 400px; gap:16px; }
-    .card { background:#141925; border:1px solid #232b3b; border-radius:12px; padding:16px; }
-    .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:0 0 12px; }
-    select, input[type="number"] { background:#0f1320; color:#e8e8e8; border:1px solid #2b3242; border-radius:8px; padding:8px 10px; }
-    button { background:#1976d2; color:#fff; border:0; border-radius:10px; padding:10px 14px; cursor:pointer; }
-    button:disabled { opacity:.6; cursor:not-allowed; }
-    table { width:100%; border-collapse:collapse; font-size:12px; }
-    th, td { padding:6px 4px; border-bottom:1px solid #232b3b; text-align:right; }
-    th { background:#1d2232; position:sticky; top:0; }
-    th:first-child, td:first-child { text-align:center; }
-    textarea { width:100%; min-height:140px; background:#0f1320; color:#e8e8e8; border:1px solid #2b3242; border-radius:8px; padding:10px; }
-    .muted { opacity:.8; font-size:12px; }
+    :root{--bg:#0f172a;--card:#111827;--muted:#94a3b8;--txt:#e5e7eb;--accent:#2563eb;--ok:#22c55e;--warn:#f59e0b}
+    html,body{margin:0;background:var(--bg);color:var(--txt);font:14px system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+    .wrap{max-width:1200px;margin:24px auto;padding:0 16px}
+    h1{font-weight:700;letter-spacing:.3px;margin:0 0 16px}
+    .badge{font-size:12px;background:#1f2937;color:#9ca3af;padding:2px 8px;border-radius:999px;margin-left:8px}
+    .grid{display:grid;grid-template-columns:1fr 360px;gap:16px}
+    .card{background:var(--card);border:1px solid #1f2937;border-radius:14px;box-shadow:0 0 0 1px rgba(255,255,255,.02) inset}
+    .card h2{font-size:16px;margin:16px 16px 8px 16px}
+    .row{display:flex;gap:12px;align-items:center;padding:0 16px 12px 16px}
+    select,input,button,textarea{background:#0b1220;border:1px solid #1f2937;color:var(--txt);border-radius:10px;padding:10px 12px}
+    select,input{height:40px}
+    button{background:var(--accent);border:none;padding:10px 14px;border-radius:10px;color:white;font-weight:600;cursor:pointer}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    label{font-size:12px;color:var(--muted)}
+    .meta{font-size:12px;color:var(--muted);padding:0 16px 12px}
+    table{width:100%;border-collapse:collapse;border-spacing:0}
+    thead th{position:sticky;top:0;background:#0b1220;color:#a3aed0;font-weight:600;font-size:12px;letter-spacing:.4px;border-bottom:1px solid #1f2937;padding:10px}
+    tbody td{border-bottom:1px solid #1f2937;padding:10px;font-variant-numeric:tabular-nums}
+    .num{text-align:right}
+    .right{margin-left:auto}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;background:#0b1220;border:1px solid #1f2937;color:#cbd5e1}
+    .good{color:var(--ok)} .warn{color:var(--warn)}
+    textarea{width:100%;min-height:140px}
   </style>
 </head>
 <body>
@@ -32,70 +39,77 @@
     </h1>
 
     <div class="grid">
-      <!-- Left: Chain -->
+      <!-- Chain panel -->
       <div class="card">
-        <h3 style="margin:0 0 10px">Chain</h3>
+        <h2>Chain</h2>
         <div class="row">
           <div>
-            <div class="muted">Instrument</div>
+            <label>Instrument</label><br/>
             <select id="instrument"></select>
           </div>
           <div>
-            <div class="muted">Expiry</div>
+            <label>Expiry</label><br/>
             <select id="expiry"></select>
           </div>
           <div>
-            <div class="muted">Window (± strikes)</div>
-            <input id="window" type="number" value="15" min="1" max="50" />
+            <label>Window (± strikes)</label><br/>
+            <select id="window">
+              <option>5</option><option>10</option><option selected>15</option><option>20</option><option>25</option><option>30</option>
+            </select>
           </div>
-          <label style="display:flex;align-items:center;gap:8px">
-            <input type="checkbox" id="fullChain" />
-            Show full chain
-          </label>
-          <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
-            <div class="muted" id="spotMeta">Spot: — | Step: —</div>
-            <button id="refreshBtn">Refresh</button>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:18px">
+            <input type="checkbox" id="fullChain"/>
+            <label for="fullChain">Show full chain</label>
           </div>
+          <button id="refreshBtn" class="right">Refresh</button>
+        </div>
+        <div class="meta">
+          <span id="spotMeta">Spot: — | Step: —</span>
+          <span class="right pill">PCR: <span id="pcr">—</span></span>
         </div>
 
-        <div style="overflow:auto; max-height:65vh;">
-          <table id="chainTable">
+        <div style="overflow:auto;border-top:1px solid #1f2937;border-bottom-left-radius:14px;border-bottom-right-radius:14px">
+          <table id="chainTbl">
             <thead>
               <tr>
-                <th colspan="5">CALL</th>
-                <th>STRIKE</th>
-                <th colspan="5">PUT</th>
-              </tr>
-              <tr>
-                <th>LTP</th><th>IV</th><th>OI</th><th>ΔOI</th><th>Δ</th>
-                <th>STRIKE</th>
-                <th>Δ</th><th>ΔOI</th><th>OI</th><th>IV</th><th>LTP</th>
+                <th class="num">CE LTP</th>
+                <th class="num">CE IV</th>
+                <th class="num">CE Δ</th>
+                <th class="num">CE Γ</th>
+                <th class="num">CE Θ</th>
+                <th class="num">CE ν</th>
+                <th class="num">CE OI</th>
+                <th class="num">Δ OI</th>
+                <th class="num">STRIKE</th>
+                <th class="num">Δ OI</th>
+                <th class="num">PE OI</th>
+                <th class="num">PE ν</th>
+                <th class="num">PE Θ</th>
+                <th class="num">PE Γ</th>
+                <th class="num">PE Δ</th>
+                <th class="num">PE IV</th>
+                <th class="num">PE LTP</th>
               </tr>
             </thead>
-            <tbody></tbody>
+            <tbody id="chainBody"></tbody>
           </table>
         </div>
 
-        <div class="row">
-          <div class="muted" id="healthText">Health: …</div>
-          <div style="margin-left:auto" class="muted">
-            PCR: <span id="pcr">—</span> · Max Pain: <span id="maxPain">—</span>
-          </div>
-        </div>
+        <div class="meta" id="healthText">Health: …</div>
       </div>
 
-      <!-- Right: AI -->
+      <!-- AI panel -->
       <div class="card">
-        <h3 style="margin:0 0 10px">Vishnu · AI Analysis</h3>
-        <textarea id="aiPrompt" placeholder="e.g. Identify support/resistance from OI + Greeks, suggest trade idea..."></textarea>
-        <div class="row" style="justify-content:space-between;margin-top:10px">
+        <h2>Vishnu · AI Analysis</h2>
+        <div class="row" style="flex-direction:column;align-items:stretch">
+          <textarea id="aiPrompt" placeholder="e.g. Identify supports/resistances from OI and suggest a trade idea with strike & SL…"></textarea>
           <button id="aiBtn">Analyze Current Chain</button>
+          <div id="aiOut" style="white-space:pre-wrap;font-size:13px;color:#cbd5e1;"></div>
         </div>
-        <div id="aiOut" class="muted" style="margin-top:10px;white-space:pre-wrap"></div>
       </div>
     </div>
   </div>
 
-  <script src="/Js/dashboard.js"></script>
+  <script src="/Js/dashboard.js" defer></script>
 </body>
 </html>
