@@ -2,114 +2,168 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, maximum-scale=1"
+  />
   <title>Options Analysis Dashboard</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+    rel="stylesheet"
+  />
   <style>
-    :root{--bg:#0f172a;--card:#111827;--muted:#94a3b8;--txt:#e5e7eb;--accent:#2563eb;--ok:#22c55e;--warn:#f59e0b}
-    html,body{margin:0;background:var(--bg);color:var(--txt);font:14px system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-    .wrap{max-width:1200px;margin:24px auto;padding:0 16px}
-    h1{font-weight:700;letter-spacing:.3px;margin:0 0 16px}
-    .badge{font-size:12px;background:#1f2937;color:#9ca3af;padding:2px 8px;border-radius:999px;margin-left:8px}
-    .grid{display:grid;grid-template-columns:1fr 360px;gap:16px}
-    .card{background:var(--card);border:1px solid #1f2937;border-radius:14px;box-shadow:0 0 0 1px rgba(255,255,255,.02) inset}
-    .card h2{font-size:16px;margin:16px 16px 8px 16px}
-    .row{display:flex;gap:12px;align-items:center;padding:0 16px 12px 16px}
-    select,input,button,textarea{background:#0b1220;border:1px solid #1f2937;color:var(--txt);border-radius:10px;padding:10px 12px}
-    select,input{height:40px}
-    button{background:var(--accent);border:none;padding:10px 14px;border-radius:10px;color:white;font-weight:600;cursor:pointer}
-    button:disabled{opacity:.6;cursor:not-allowed}
-    label{font-size:12px;color:var(--muted)}
-    .meta{font-size:12px;color:var(--muted);padding:0 16px 12px}
-    table{width:100%;border-collapse:collapse;border-spacing:0}
-    thead th{position:sticky;top:0;background:#0b1220;color:#a3aed0;font-weight:600;font-size:12px;letter-spacing:.4px;border-bottom:1px solid #1f2937;padding:10px}
-    tbody td{border-bottom:1px solid #1f2937;padding:10px;font-variant-numeric:tabular-nums}
-    .num{text-align:right}
-    .right{margin-left:auto}
-    .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;background:#0b1220;border:1px solid #1f2937;color:#cbd5e1}
-    .good{color:var(--ok)} .warn{color:var(--warn)}
-    textarea{width:100%;min-height:140px}
+    :root {
+      --bg: #0f1720;
+      --panel: #111827;
+      --muted: #94a3b8;
+      --text: #e5e7eb;
+      --accent: #2396f3;
+      --accent-2: #22c55e;
+      --table-border: #1f2937;
+      --chip: #0b1220;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
+    }
+    .wrap {
+      max-width: 1200px; margin: 24px auto; padding: 0 12px;
+    }
+    h1 {
+      margin: 0 0 16px; font-weight: 700; letter-spacing: 0.2px;
+      display:flex; gap:8px; align-items:center;
+    }
+    .badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; background:#0b1220; border:1px solid #1f2937; color:#a5b4fc; }
+    .grid {
+      display: grid; gap: 16px; grid-template-columns: 1fr 380px;
+    }
+    .card {
+      background: var(--panel); border: 1px solid #1f2937; border-radius: 14px;
+    }
+    .card h3 { margin: 0; padding: 14px 16px; border-bottom: 1px solid #1f2937; font-size: 16px; }
+    .card .body { padding: 12px 16px 16px; }
+    label { font-size: 12px; color: var(--muted); display:block; margin-bottom: 6px; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; }
+    select, input[type="number"], textarea {
+      background: #0b1220; color: var(--text); border: 1px solid #1f2937;
+      padding: 10px 12px; border-radius: 10px; outline: none; width: 100%;
+    }
+    .chk { display:flex; align-items:center; gap:8px; color: var(--muted); font-size: 12px; }
+    .btn {
+      background: var(--accent); color:white; border:none; padding: 10px 14px;
+      border-radius:10px; cursor:pointer; font-weight:600;
+    }
+    .btn:disabled { opacity: .6; cursor:not-allowed; }
+    .meta { color: var(--muted); font-size: 12px; padding: 6px 0 0; }
+    .table-wrap { border:1px solid var(--table-border); border-radius:12px; overflow:auto; }
+    table { border-collapse: collapse; width: 100%; min-width: 1100px; }
+    thead th {
+      position: sticky; top: 0;
+      background:#0f172a; color:#cbd5e1; font-weight:600; font-size:12px;
+      text-transform:uppercase; letter-spacing:.04em; padding:10px 8px; border-bottom:1px solid var(--table-border);
+      white-space:nowrap;
+    }
+    tbody td {
+      padding: 10px 8px; border-bottom:1px solid var(--table-border); font-variant-numeric: tabular-nums;
+    }
+    tbody tr:hover { background: #0b1220; }
+    .num { text-align:right; }
+    .strike { font-weight: 600; color:#e5e7eb; }
+    .good { color: #22c55e; }
+    .bad  { color: #ef4444; }
+    .pill { background:var(--chip); border:1px solid #1f2937; padding:3px 8px; border-radius:999px; font-size:12px; }
+    @media (max-width: 1100px){ .grid{ grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>Options Analysis Dashboard
-      <span class="badge" id="modeBadge">LIVE</span>
-      <span class="badge" id="aiBadge">AI: on</span>
+    <h1>
+      Options Analysis Dashboard
+      <span id="liveBadge" class="badge">LIVE</span>
+      <span id="aiBadge" class="badge">AI: on</span>
     </h1>
 
     <div class="grid">
       <!-- Chain panel -->
       <div class="card">
-        <h2>Chain</h2>
-        <div class="row">
-          <div>
-            <label>Instrument</label><br/>
-            <select id="instrument"></select>
+        <h3>Chain</h3>
+        <div class="body">
+          <div class="row">
+            <div style="flex:1 1 220px">
+              <label>Instrument</label>
+              <select id="instrument"></select>
+            </div>
+            <div style="flex:1 1 180px">
+              <label>Expiry</label>
+              <select id="expiry"></select>
+            </div>
+            <div style="flex:0 0 140px">
+              <label>Window (± strikes)</label>
+              <input id="window" type="number" min="1" max="50" value="15" />
+            </div>
+            <div class="chk" style="flex:0 0 auto; padding-top:22px;">
+              <input id="fullChain" type="checkbox" />
+              <span>Show full chain</span>
+            </div>
+            <div style="flex:0 0 auto; padding-top:18px;">
+              <button id="refreshBtn" class="btn">Refresh</button>
+            </div>
           </div>
-          <div>
-            <label>Expiry</label><br/>
-            <select id="expiry"></select>
-          </div>
-          <div>
-            <label>Window (± strikes)</label><br/>
-            <select id="window">
-              <option>5</option><option>10</option><option selected>15</option><option>20</option><option>25</option><option>30</option>
-            </select>
-          </div>
-          <div style="display:flex;align-items:center;gap:8px;margin-top:18px">
-            <input type="checkbox" id="fullChain"/>
-            <label for="fullChain">Show full chain</label>
-          </div>
-          <button id="refreshBtn" class="right">Refresh</button>
-        </div>
-        <div class="meta">
-          <span id="spotMeta">Spot: — | Step: —</span>
-          <span class="right pill">PCR: <span id="pcr">—</span></span>
-        </div>
 
-        <div style="overflow:auto;border-top:1px solid #1f2937;border-bottom-left-radius:14px;border-bottom-right-radius:14px">
-          <table id="chainTbl">
-            <thead>
-              <tr>
-                <th class="num">CE LTP</th>
-                <th class="num">CE IV</th>
-                <th class="num">CE Δ</th>
-                <th class="num">CE Γ</th>
-                <th class="num">CE Θ</th>
-                <th class="num">CE ν</th>
-                <th class="num">CE OI</th>
-                <th class="num">Δ OI</th>
-                <th class="num">STRIKE</th>
-                <th class="num">Δ OI</th>
-                <th class="num">PE OI</th>
-                <th class="num">PE ν</th>
-                <th class="num">PE Θ</th>
-                <th class="num">PE Γ</th>
-                <th class="num">PE Δ</th>
-                <th class="num">PE IV</th>
-                <th class="num">PE LTP</th>
-              </tr>
-            </thead>
-            <tbody id="chainBody"></tbody>
-          </table>
-        </div>
+          <div id="meta" class="meta">Spot: — | Step: — <span class="pill" style="margin-left:8px">PCR: —</span></div>
 
-        <div class="meta" id="healthText">Health: …</div>
+          <div class="table-wrap" style="margin-top:10px">
+            <table id="chainTbl">
+              <thead>
+                <tr>
+                  <th>CE LTP</th>
+                  <th>CE IV</th>
+                  <th>CE Δ</th>
+                  <th>CE Γ</th>
+                  <th>CE Θ</th>
+                  <th>CE ν</th>
+                  <th>CE OI</th>
+                  <th>Δ OI</th>
+                  <th>STRIKE</th>
+                  <th>Δ OI</th>
+                  <th>PE OI</th>
+                  <th>PE ν</th>
+                  <th>PE Θ</th>
+                  <th>PE Γ</th>
+                  <th>PE Δ</th>
+                  <th>PE IV</th>
+                  <th>PE LTP</th>
+                </tr>
+              </thead>
+              <tbody id="chainBody"></tbody>
+            </table>
+          </div>
+
+          <div id="health" class="meta" style="margin-top:8px;">Health: …</div>
+        </div>
       </div>
 
       <!-- AI panel -->
       <div class="card">
-        <h2>Vishnu · AI Analysis</h2>
-        <div class="row" style="flex-direction:column;align-items:stretch">
-          <textarea id="aiPrompt" placeholder="e.g. Identify supports/resistances from OI and suggest a trade idea with strike & SL…"></textarea>
-          <button id="aiBtn">Analyze Current Chain</button>
-          <div id="aiOut" style="white-space:pre-wrap;font-size:13px;color:#cbd5e1;"></div>
+        <h3>Vishnu · AI Analysis</h3>
+        <div class="body">
+          <label for="aiPrompt">e.g. Identify supports/resistances from OI and suggest a trade idea with strike &amp; SL…</label>
+          <textarea id="aiPrompt" rows="8"></textarea>
+          <div style="display:flex; gap:10px; align-items:center; margin-top:10px">
+            <button id="aiBtn" class="btn" style="flex:0 0 auto">Analyze Current Chain</button>
+            <div id="pcr" class="pill">PCR: —</div>
+          </div>
+          <pre id="aiOut" style="white-space:pre-wrap; margin-top:10px; font-size:13px; color:#cbd5e1"></pre>
         </div>
       </div>
     </div>
   </div>
 
-  <script src="/Js/dashboard.js" defer></script>
+  <script src="/Js/dashboard.js"></script>
 </body>
 </html>
