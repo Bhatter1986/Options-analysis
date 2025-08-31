@@ -36,11 +36,7 @@ def _load_watchlist() -> List[Dict[str, Any]]:
 
 @router.get("")
 def list_instruments():
-    """
-    Your curated watchlist (file: data/watchlist.json)
-    """
-    items = _load_watchlist()
-    return {"status": "success", "data": items}
+    return {"status": "success", "data": _load_watchlist()}
 
 @router.get("/filter")
 def filter_instruments(q: str = Query("", description="case-insensitive contains match")):
@@ -48,16 +44,10 @@ def filter_instruments(q: str = Query("", description="case-insensitive contains
     ql = q.lower().strip()
     if not ql:
         return {"status": "success", "data": items}
-    filtered = [x for x in items if ql in x["name"].lower()]
-    return {"status": "success", "data": filtered}
+    return {"status": "success", "data": [x for x in items if ql in x["name"].lower()]}
 
 @router.get("/dhan-live")
 def dhan_live_indices():
-    """
-    Directly read ORIGINAL Dhan CSV and return well-known indices
-    (NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY) with id/segment/step.
-    No reformatting of CSV done.
-    """
     try:
         items = list_indices_from_master()
         if not items:
@@ -70,12 +60,7 @@ def dhan_live_indices():
 
 @router.get("/search_dhan")
 def search_dhan(q: str = Query(..., min_length=2), limit: int = Query(10, ge=1, le=50)):
-    """
-    Fuzzy search equities (stocks) in ORIGINAL Dhan CSV.
-    Returns minimal fields required by /optionchain API.
-    """
     try:
-        items = search_equities_from_master(q, limit=limit)
-        return {"status": "success", "data": items}
+        return {"status": "success", "data": search_equities_from_master(q, limit=limit)}
     except Exception as e:
         raise HTTPException(500, f"search failed: {e}")
