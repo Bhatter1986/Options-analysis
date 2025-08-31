@@ -1,113 +1,110 @@
-# App/Services/instruments_loader.py
 from __future__ import annotations
 
-import os, io, csv, time
-import httpx
+import csv
+import os
+import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import List, Dict
+import requests
 
-CSV_URL = os.getenv(
-    "DHAN_INSTRUMENTS_CSV_URL",
-    "https://images.dhan.co/api-data/api-scrip-master-detailed.csv",
-)
+# ENV
+MASTER_URL = os.getenv("DHAN_INSTRUMENTS_CSV_URL", "").strip()
 CACHE_PATH = Path(os.getenv("DHAN_INSTRUMENTS_CACHE", "data/dhan_master_cache.csv"))
-CACHE_TTL_SEC = 60 * 30  # 30 min
 
-def _norm_key(s: str) -> str:
-    return (s or "").strip().lower().replace(" ", "_").replace("-", "_").replace("/", "_").replace(".", "")
+# How long to re-use cache (seconds). 10 mins is plenty.
+CACHE_TTL = int(os.getenv("DHAN_INSTRUMENTS_CACHE_TTL", "600"))
 
-def _row_get(row: Dict[str, Any], *candidates: str) -> str:
-    nmap = getattr(row, "__nmap", None)
-    if nmap is None:
-        nmap = {_norm_key(k): v for k, v in row.items()}
-        row.__nmap = nmap  # type: ignore[attr-defined]
-    for c in candidates:
-        v = nmap.get(_norm_key(c))
-        if v is not None:
-            return str(v).strip()
-    return ""
 
-def _guess_step(name: str, segment: str) -> int:
-    n = (name or "").lower()
-    if segment == "IDX_I":
-        return 100 if "bank" in n else 50
-    return 10
+def _ensure_cached() -> Path:
+    """
+    Download CSV to CACHE_PATH if cache is missing or stale.
+    """
+    if not MASTER_URL:
+        raise RuntimeError("DHAN_INSTRUMENTS_CSV_URL not set")
 
-def _fetch_csv_text() -> str:
+    # Use cache if fresh
+    if CACHE_PATH.exists():
+        age = time.time() - CACHE_PATH.stat().st_mtime
+        if age < CACHE_TTL and CACHE_PATH.stat().st_size > 0:
+            return CACHE_PATH
+
+    CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    resp = requests.get(MASTER_URL, timeout=60)
+    resp.raise_for_status()
+    CACHE_PATH.write_bytes(resp.content)
+    return CACHE_PATH
+
+
+def _step_for_segment(seg: str) -> int:
+    """
+    Reasonable default tick step by segment.
+    """
+    seg = (seg or "").upper().strip()
+    if seg in ("IDX_I", "NSE_I", "IDX_FO"):
+        return 50
+    if seg in ("BANKNIFTY", "FINNIFTY"):  # safeguard if names leak in segment
+        return 100
+    return 10  # equities default
+
+
+def _compact_row(row: Dict[str, str]) -> Dict[str, str | int]:
+    """
+    Convert Dhan master CSV row → minimal fields our UI needs.
+    Dhan master columns (superset) me 'security_id', 'name', 'exchange_segment' present hote hain.
+    """
+    # Try common headers with fallbacks
+    sid = row.get("security_id") or row.get("securityId") or row.get("id") or ""
+    name = row.get("name") or row.get("tradingsymbol") or row.get("symbol") or ""
+    seg  = row.get("exchange_segment") or row.get("segment") or ""
+
+    sid = str(sid).strip()
+    name = str(name).strip()
+    seg  = str(seg).strip().upper()
+
+    if not sid or not name or not seg:
+        # skip incomplete lines
+        return {}
+
+    # numeric id
     try:
-        if CACHE_PATH.exists():
-            age = time.time() - CACHE_PATH.stat().st_mtime
-            if age < CACHE_TTL_SEC:
-                return CACHE_PATH.read_text(encoding="utf-8", errors="ignore")
+        _id = int(sid)
     except Exception:
-        pass
-    with httpx.Client(timeout=30.0) as client:
-        r = client.get(CSV_URL)
-        r.raise_for_status()
-        txt = r.text
-    try:
-        CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        CACHE_PATH.write_text(txt, encoding="utf-8")
-    except Exception:
-        pass
-    return txt
+        return {}
 
-def load_dhan_master() -> List[Dict[str, str]]:
-    txt = _fetch_csv_text()
-    f = io.StringIO(txt)
-    rdr = csv.DictReader(f)
-    return [row for row in rdr]
+    return {
+        "id": _id,
+        "name": name,
+        "segment": seg,
+        "step": _step_for_segment(seg),
+    }
 
-def list_indices_from_master() -> List[Dict[str, Any]]:
-    rows = load_dhan_master()
-    out: List[Dict[str, Any]] = []
-    for row in rows:
-        secid  = _row_get(row, "Security Id", "security_id", "securityid")
-        symbol = _row_get(row, "Trading Symbol", "Symbol", "Scrip Name", "Name")
-        inst   = _row_get(row, "Instrument", "Instrument Type")
-        if not secid or not symbol: 
+
+def load_dhan_master() -> List[Dict[str, str | int]]:
+    """
+    Return compact list for all supported rows.
+    """
+    path = _ensure_cached()
+    out: List[Dict[str, str | int]] = []
+    with path.open("r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            item = _compact_row(row)
+            if item:
+                out.append(item)
+    # Deduplicate by id (keep first)
+    seen = set()
+    uniq: List[Dict[str, str | int]] = []
+    for x in out:
+        if x["id"] in seen:
             continue
-        low_sym, low_inst = symbol.lower(), inst.lower()
-        is_index = ("index" in low_inst) or any(x in low_sym for x in ["nifty", "banknifty", "finnifty", "midcpnifty"])
-        if not is_index:
-            continue
-        seg = "IDX_I"
-        try:
-            sid = int(secid)
-        except ValueError:
-            continue
-        if "banknifty" in low_sym and not any("BANKNIFTY" in x["name"] for x in out):
-            out.append({"id": sid, "name": symbol, "segment": seg, "step": _guess_step(symbol, seg)})
-        elif "finnifty" in low_sym and not any("FINNIFTY" in x["name"] for x in out):
-            out.append({"id": sid, "name": symbol, "segment": seg, "step": _guess_step(symbol, seg)})
-        elif "midcpnifty" in low_sym and not any("MIDCPNIFTY" in x["name"] for x in out):
-            out.append({"id": sid, "name": symbol, "segment": seg, "step": _guess_step(symbol, seg)})
-        elif "nifty" in low_sym and not any("NIFTY" in x["name"] for x in out):
-            out.append({"id": sid, "name": symbol, "segment": seg, "step": _guess_step(symbol, seg)})
-    return [x for x in out if x.get("id")]
-    
-def search_equities_from_master(q: str, limit: int = 10) -> List[Dict[str, Any]]:
-    if not q: 
+        seen.add(x["id"])
+        uniq.append(x)
+    return uniq
+
+
+def search_dhan_master(q: str) -> List[Dict[str, str | int]]:
+    ql = (q or "").lower().strip()
+    if not ql:
         return []
-    ql = q.strip().lower()
-    rows = load_dhan_master()
-    res: List[Dict[str, Any]] = []
-    for row in rows:
-        secid  = _row_get(row, "Security Id", "security_id", "securityid")
-        symbol = _row_get(row, "Trading Symbol", "Symbol", "Scrip Name", "Name")
-        inst   = _row_get(row, "Instrument", "Instrument Type")
-        if not secid or not symbol:
-            continue
-        low_sym, low_inst = symbol.lower(), inst.lower()
-        is_equity_like = ("eq" in low_inst) or ("equity" in low_inst) or ("stock" in low_inst)
-        if ql in low_sym and (is_equity_like or True):
-            try:
-                sid = int(secid)
-            except ValueError:
-                continue
-            item = {"id": sid, "name": symbol, "segment": "NSE_I", "step": _guess_step(symbol, "NSE_I")}
-            if item not in res:
-                res.append(item)
-            if len(res) >= limit:
-                break
-    return res
+    data = load_dhan_master()
+    return [x for x in data if ql in x["name"].lower()]
