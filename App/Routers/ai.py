@@ -1,70 +1,79 @@
-import json, time
-from fastapi import APIRouter, Body, Depends
-from App.common import OPENAI_API_KEY, OPENAI_MODEL, OPENAI_BASE_URL, verify_secret, logger
+# App/Routers/ai.py
+from __future__ import annotations
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Query
 
-router = APIRouter(prefix="/ai", tags=["ai"])
-_ai_client_cached = None
+from App.Services.dhan_client import get_option_chain_raw
+from App.Services.ai_vishnu import analyze
 
-def _get_ai():
-    global _ai_client_cached
-    if _ai_client_cached is not None: return _ai_client_cached
-    if not OPENAI_API_KEY:
-        logger.warning("OPENAI_API_KEY not set; using mock AI.")
-        return None
-    try:
-        from openai import OpenAI
-        _ai_client_cached = OpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_BASE_URL or None)
-    except Exception as e:
-        logger.error(f"OpenAI init failed: {e}")
-        _ai_client_cached = None
-    return _ai_client_cached
+router = APIRouter(prefix="/ai", tags=["AI / Vishnu"])
 
-def _complete(system_prompt: str, user_prompt: str) -> str:
-    client = _get_ai()
-    if client is None:
-        return "AI (mock): Markets look range-bound; consider neutral spreads near ATM with tight risk."
-    # Responses API
-    try:
-        t0 = time.time()
-        resp = client.responses.create(
-            model=OPENAI_MODEL,
-            input=[{"role":"system","content":system_prompt},{"role":"user","content":user_prompt}],
-            temperature=0.3,
-        )
-        txt = (resp.output_text or "").strip()
-        logger.info(f"OpenAI responses in {(time.time()-t0)*1000:.0f}ms")
-        if txt: return txt
-    except Exception as e:
-        logger.warning(f"responses API failed → fallback chat.completions: {e}")
-    # Chat completions
-    try:
-        t0 = time.time()
-        resp = client.chat.completions.create(
-            model=OPENAI_MODEL,
-            messages=[{"role":"system","content":system_prompt},{"role":"user","content":user_prompt}],
-            temperature=0.3,
-        )
-        logger.info(f"OpenAI chat.completions in {(time.time()-t0)*1000:.0f}ms")
-        return (resp.choices[0].message.content or "").strip()
-    except Exception as e:
-        logger.error(f"OpenAI completion failed: {e}")
-        return "AI error. Please check OPENAI_API_KEY or model availability."
+@router.get("/analyze")
+def ai_analyze(
+    under_security_id: int,
+    under_exchange_segment: str,
+    expiry: str,
+    strikes_window: int = Query(15, ge=1, le=50),
+    step: Optional[int] = Query(None, ge=1),
+    show_all: bool = False,
+):
+    """
+    Combine Dhan option chain + Vishnu rules → AI advice
+    """
+    raw = get_option_chain_raw(under_security_id, under_exchange_segment, expiry)
+    if not raw or "oc" not in raw:
+        raise HTTPException(502, "Empty chain from Dhan")
 
-@router.post("/marketview")
-def marketview(req: dict = Body(...), _ok: bool = Depends(verify_secret)):
-    sys_p = "You are an options market analyst. Be concise and actionable."
-    usr_p = "Analyze this context and give an intraday view in bullets:\n" + json.dumps(req)[:4000]
-    return {"ai_reply": _complete(sys_p, usr_p)}
+    spot = float(raw.get("last_price", 0) or 0)
+    oc = raw["oc"]
 
-@router.post("/strategy")
-def strategy(req: dict = Body(...), _ok: bool = Depends(verify_secret)):
-    bias = req.get("bias","neutral"); risk=req.get("risk","moderate"); capital=req.get("capital",50000)
-    sys_p = "You are an expert options strategist for Indian markets."
-    usr_p = f"Give 1-2 structures for bias={bias}, risk={risk}, capital≈₹{capital}. Include entry, stop, target, payoff, risk/lot, adjustments."
-    return {"ai_strategy": _complete(sys_p, usr_p)}
+    # Convert raw oc → list of rows (same shape your /optionchain returns)
+    def _row(strike: float):
+        s = f"{strike:.6f}"
+        node = oc.get(s, {}) or {}
+        ce = node.get("ce", {}) or {}
+        pe = node.get("pe", {}) or {}
+        return {
+            "strike": strike,
+            "call": {
+                "oi": int(ce.get("oi", 0) or 0),
+                "chgOi": int(ce.get("oi", 0) or 0) - int(ce.get("previous_oi", 0) or 0),
+                "iv": float(ce.get("implied_volatility", 0) or 0),
+                "price": float(ce.get("last_price", 0) or 0),
+            },
+            "put": {
+                "oi": int(pe.get("oi", 0) or 0),
+                "chgOi": int(pe.get("oi", 0) or 0) - int(pe.get("previous_oi", 0) or 0),
+                "iv": float(pe.get("implied_volatility", 0) or 0),
+                "price": float(pe.get("last_price", 0) or 0),
+            },
+        }
 
-@router.post("/payoff")
-def payoff(req: dict = Body(...), _ok: bool = Depends(verify_secret)):
-    sys_p = "You compute payoff summaries and turning points for multi-leg option strategies."
-    usr_p = "Summarize max profit/loss, breakevens and short commentary for legs:\n" + json.dumps(req)[:4000]
-    return {"ai_payoff": _complete(sys_p, usr_p)}
+    strikes = sorted(float(k) for k in oc.keys())
+    chain_all = [_row(s) for s in strikes]
+
+    # Windowing like /optionchain (ATM ± N * step)
+    if show_all or not spot or not strikes:
+        chain_window = chain_all
+    else:
+        # infer step if missing
+        step_val = step or (100 if (max(strikes) - min(strikes)) > 2000 else 50)
+        atm = min(strikes, key=lambda s: abs(s - spot))
+        lo = atm - strikes_window * step_val
+        hi = atm + strikes_window * step_val
+        chain_window = [r for r in chain_all if lo <= r["strike"] <= hi]
+
+    payload = {
+        "spot": spot,
+        "chain": chain_window,
+        "meta": {"count_full": len(chain_all)},
+    }
+
+    result = analyze(payload, step_hint=step)
+    return {
+        "status": "success",
+        "instrument": under_security_id,
+        "segment": under_exchange_segment,
+        "expiry": expiry,
+        "ai": result,
+    }
