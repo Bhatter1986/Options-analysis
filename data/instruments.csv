@@ -1,43 +1,10 @@
-from __future__ import annotations
-from fastapi import APIRouter, HTTPException, Query
-from typing import Any, Dict, List
-import json
-from pathlib import Path
-
-router = APIRouter(prefix="/instruments", tags=["Instruments"])
-
-WATCHLIST_PATH = Path("data/watchlist.json")
-
-def _load_watchlist() -> List[Dict[str, Any]]:
-    if not WATCHLIST_PATH.exists():
-        raise HTTPException(500, f"watchlist file missing: {WATCHLIST_PATH}")
-    try:
-        obj = json.loads(WATCHLIST_PATH.read_text(encoding="utf-8"))
-        items = obj.get("items", [])
-        out = []
-        for x in items:
-            if not isinstance(x, dict):
-                continue
-            id_ = int(x.get("id", 0) or 0)
-            name = str(x.get("name", "")).strip()
-            seg  = str(x.get("segment", "")).strip()
-            step = int(x.get("step", 50) or 50)
-            if name and seg:
-                out.append({"id": id_, "name": name, "segment": seg, "step": step})
-        return out
-    except Exception as e:
-        raise HTTPException(500, f"invalid watchlist: {e}")
-
-@router.get("")
-def list_instruments():
-    items = _load_watchlist()
-    return {"status": "success", "data": items}
-
-@router.get("/filter")
-def filter_instruments(q: str = Query("", description="case-insensitive contains match")):
-    items = _load_watchlist()
-    ql = q.lower().strip()
-    if not ql:
-        return {"status": "success", "data": items}
-    filtered = [x for x in items if ql in x["name"].lower()]
-    return {"status": "success", "data": filtered}
+id,name,segment,step
+13,NIFTY 50 (ID),IDX_I,50
+25,BANKNIFTY (ID),IDX_I,100
+1594,FINNIFTY (ID),IDX_I,50
+1660,RELIANCE EQ,NSE_E,10
+1333,HDFCBANK EQ,NSE_E,10
+11536,INFY EQ,NSE_E,10
+3045,TCS EQ,NSE_E,10
+5258,ICICIBANK EQ,NSE_E,10
+467,SBIN EQ,NSE_E,10
