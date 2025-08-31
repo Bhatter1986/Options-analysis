@@ -1,106 +1,152 @@
-/* Dashboard JS */
-const selInstrument=document.getElementById('instrument');
-const selExpiry=document.getElementById('expiry');
-const inpWindow=document.getElementById('window');
-const chkFull=document.getElementById('fullChain');
-const btnRefresh=document.getElementById('refreshBtn');
-const spotMeta=document.getElementById('spotMeta');
-const bodyChain=document.querySelector('#chainTable tbody');
-const pcrEl=document.getElementById('pcr');
-const maxPainEl=document.getElementById('maxPain');
-const healthText=document.getElementById('healthText');
-const aiBtn=document.getElementById('aiBtn');
-const aiPrompt=document.getElementById('aiPrompt');
-const aiOut=document.getElementById('aiOut');
+/* Dashboard (vanilla JS) */
+const selInstrument = document.getElementById('instrument');
+const selExpiry     = document.getElementById('expiry');
+const selWindow     = document.getElementById('window');
+const chkFull       = document.getElementById('fullChain');
+const btnRefresh    = document.getElementById('refreshBtn');
+const spotMeta      = document.getElementById('spotMeta');
+const pcrEl         = document.getElementById('pcr');
+const bodyChain     = document.getElementById('chainBody');
+const healthText    = document.getElementById('healthText');
 
-const API=(path)=>`${location.origin}${path}`;
-let current={instrument:13,segment:'IDX_I',step:50};
+const aiBtn    = document.getElementById('aiBtn');
+const aiPrompt = document.getElementById('aiPrompt');
+const aiOut    = document.getElementById('aiOut');
 
-async function getJSON(url){const r=await fetch(url);if(!r.ok)throw new Error(r.status);return r.json();}
-function opt(v,t=v){const o=document.createElement('option');o.value=v;o.textContent=t;return o;}
+const API = location.origin;
 
-async function loadInstruments(){
-  const data=await getJSON(API('/instruments'));
-  selInstrument.innerHTML='';
-  for(const x of data.data) selInstrument.appendChild(opt(JSON.stringify({id:x.id,seg:x.segment,step:x.step}),x.name));
-  const idx=Array.from(selInstrument.options).findIndex(o=>o.text.includes('NIFTY'));
-  selInstrument.selectedIndex=idx>=0?idx:0;
-  applyInstrument();
-}
-function applyInstrument(){const v=JSON.parse(selInstrument.value);current.instrument=v.id;current.segment=v.seg;current.step=v.step||50;loadExpiries();}
-async function loadExpiries(){
-  selExpiry.innerHTML='';
-  const q=new URLSearchParams({under_security_id:current.instrument,under_exchange_segment:current.segment});
-  const data=await getJSON(API(`/optionchain/expirylist?${q}`));
-  for(const ex of data.data) selExpiry.appendChild(opt(ex));
-  if(selExpiry.options.length)selExpiry.selectedIndex=0;
-  renderChain();
-}
+const fmt = (n, d=2) => {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  return Number(n).toFixed(d);
+};
+const fmt0 = (n) => fmt(n,0);
 
-function rowHTML(r){
-  const ce=r.call,pe=r.put;
-  return `<tr>
-    <td>${ce.price?.toFixed?.(2)??'-'}</td>
-    <td>${ce.iv?.toFixed?.(2)??'-'}</td>
-    <td>${ce.oi}</td>
-    <td>${ce.chgOi}</td>
-    <td>${ce.delta?.toFixed?.(2)??'-'}</td>
-    <td>${r.strike}</td>
-    <td>${pe.delta?.toFixed?.(2)??'-'}</td>
-    <td>${pe.chgOi}</td>
-    <td>${pe.oi}</td>
-    <td>${pe.iv?.toFixed?.(2)??'-'}</td>
-    <td>${pe.price?.toFixed?.(2)??'-'}</td>
-  </tr>`;
-}
-
-async function renderChain(){
-  bodyChain.innerHTML=`<tr><td colspan="11">Loading…</td></tr>`;
-  pcrEl.textContent='—';maxPainEl.textContent='—';aiOut.textContent='';
-  const params=new URLSearchParams({
-    under_security_id:String(current.instrument),
-    under_exchange_segment:current.segment,
-    expiry:selExpiry.value,
-    show_all:chkFull.checked?'true':'false',
-    strikes_window:String(inpWindow.value||15),
-    step:String(current.step)
-  });
-  try{
-    const data=await getJSON(API(`/optionchain?${params}`));
-    spotMeta.textContent=`Spot: ${data.spot?.toFixed?.(2)??'—'} | Step: ${current.step}`;
-    pcrEl.textContent=data.summary?.pcr??'—';
-    maxPainEl.textContent=data.summary?.max_pain??'—';
-    const rows=(data.chain||[]).map(rowHTML).join('');
-    bodyChain.innerHTML=rows||`<tr><td colspan="11">No rows.</td></tr>`;
-    healthText.textContent=`Health: OK • ${data.meta?.count_window} rows (full: ${data.meta?.count_full})`;
-  }catch(e){
-    bodyChain.innerHTML=`<tr><td colspan="11">Error: ${e.message}</td></tr>`;
-    healthText.textContent=`Health: ERROR • ${e.message}`;
+/* 1) load instruments (only indices needed for OC) */
+async function loadInstruments() {
+  try {
+    const r = await fetch(`${API}/instruments/dhan-live`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    // Expect: {status:'success', data:[{id,name,segment,step}, ...]}
+    const data = (j.data || []).filter(x => x.segment === 'IDX_I'); // Index options
+    selInstrument.innerHTML = data.map(d =>
+      `<option value="${d.id}|${d.segment}|${d.step}">${d.name}</option>`).join('');
+  } catch (e) {
+    console.error(e);
+    healthText.textContent = `Health: Failed to load instruments (${e.message})`;
   }
 }
 
-async function runAI(){
-  aiOut.textContent='Thinking…';aiBtn.disabled=true;
-  try{
-    const prompt=aiPrompt.value?.trim()||'Summarize the option chain with support/resistance + Greeks.';
-    const r=await fetch(API('/ai/analyze'),{
-      method:'POST',headers:{'content-type':'application/json'},
-      body:JSON.stringify({prompt})
-    });
-    const j=await r.json();
-    if(!r.ok)throw new Error(j.detail||'AI error');
-    aiOut.textContent=j.answer||JSON.stringify(j);
-  }catch(e){aiOut.textContent=`AI error: ${e.message}`;}
-  finally{aiBtn.disabled=false;}
+/* 2) load expiries for selected instrument */
+async function loadExpiries() {
+  const [id, seg] = selInstrument.value.split('|');
+  try {
+    const r = await fetch(`${API}/optionchain/expirylist?under_security_id=${id}&under_exchange_segment=${seg}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    const exps = j.data || [];
+    selExpiry.innerHTML = exps.map(x => `<option>${x}</option>`).join('');
+  } catch (e) {
+    console.error(e);
+    healthText.textContent = `Health: Failed to load expiries (${e.message})`;
+  }
 }
 
-/* events */
-selInstrument.addEventListener('change',applyInstrument);
-selExpiry.addEventListener('change',renderChain);
-inpWindow.addEventListener('change',renderChain);
-chkFull.addEventListener('change',renderChain);
-btnRefresh.addEventListener('click',renderChain);
-aiBtn.addEventListener('click',runAI);
+/* 3) pull chain (with Greeks already computed by backend) */
+async function refreshChain() {
+  const [id, seg, step] = selInstrument.value.split('|');
+  const expiry = selExpiry.value;
+  const win = parseInt(selWindow.value || '15', 10);
+  const showAll = chkFull.checked;
 
-/* init */
-loadInstruments();
+  btnRefresh.disabled = true;
+  bodyChain.innerHTML = '';
+  aiOut.textContent = '';
+
+  try {
+    const url = new URL(`${API}/optionchain`);
+    url.searchParams.set('under_security_id', id);
+    url.searchParams.set('under_exchange_segment', seg);
+    url.searchParams.set('expiry', expiry);
+    url.searchParams.set('show_all', showAll ? 'true' : 'false');
+    url.searchParams.set('strikes_window', String(win));
+    url.searchParams.set('step', step);
+
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+
+    const spot = j.spot ?? null;
+    const pcr  = j.summary?.pcr ?? null;
+    spotMeta.textContent = `Spot: ${fmt(spot,2)} | Step: ${step}`;
+    pcrEl.textContent = fmt(pcr, 2);
+
+    const rows = j.chain || [];
+    const frag = document.createDocumentFragment();
+
+    for (const it of rows) {
+      const ce = it.call || {};
+      const pe = it.put  || {};
+      const tr = document.createElement('tr');
+
+      const cells = [
+        fmt(ce.price,2),  fmt(ce.iv,2),
+        fmt(ce.delta,2),  fmt(ce.gamma,4),
+        fmt(ce.theta,2),  fmt(ce.vega,2),
+        fmt0(ce.oi),      fmt0(ce.chgOi),
+        fmt0(it.strike),  fmt0(pe.chgOi),
+        fmt0(pe.oi),      fmt(pe.vega,2),
+        fmt(pe.theta,2),  fmt(pe.gamma,4),
+        fmt(pe.delta,2),  fmt(pe.iv,2),
+        fmt(pe.price,2),
+      ];
+
+      for (const v of cells) {
+        const td = document.createElement('td');
+        td.className = 'num';
+        td.textContent = v;
+        tr.appendChild(td);
+      }
+      frag.appendChild(tr);
+    }
+    bodyChain.appendChild(frag);
+    healthText.textContent = `Health: ok · ${rows.length} rows (window: ±${win}${showAll ? ', full' : ''})`;
+  } catch (e) {
+    console.error(e);
+    healthText.textContent = `Health: error · ${e.message}`;
+  } finally {
+    btnRefresh.disabled = false;
+  }
+}
+
+/* 4) simple AI helper (uses /ai/analyze) */
+async function runAI() {
+  aiOut.textContent = 'Analyzing…';
+  try {
+    const req = { prompt: aiPrompt.value?.trim() || 'Summarize supports/resistances from current chain.' };
+    const r = await fetch(`${API}/ai/analyze`, {
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      body: JSON.stringify(req)
+    });
+    const j = await r.json();
+    aiOut.textContent = j.answer || JSON.stringify(j);
+  } catch (e) {
+    aiOut.textContent = `AI error: ${e.message}`;
+  }
+}
+
+/* wire up */
+selInstrument.addEventListener('change', async () => { await loadExpiries(); await refreshChain(); });
+selExpiry.addEventListener('change', refreshChain);
+selWindow.addEventListener('change', refreshChain);
+chkFull.addEventListener('change', refreshChain);
+btnRefresh.addEventListener('click', refreshChain);
+aiBtn.addEventListener('click', runAI);
+
+/* boot */
+(async function init(){
+  await loadInstruments();
+  await loadExpiries();
+  await refreshChain();
+})();
