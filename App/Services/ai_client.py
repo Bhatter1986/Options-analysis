@@ -1,35 +1,19 @@
-# App/Services/ai_client.py
 import os
 from typing import Optional
 from openai import OpenAI
 
 _client: Optional[OpenAI] = None
 
-
 def get_ai_client() -> OpenAI:
-    """
-    Return a cached OpenAI client instance.
-    Requires OPENAI_API_KEY in environment.
-    Optionally uses OPENAI_BASE_URL (defaults to official API).
-    """
     global _client
     if _client is None:
-        api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
-        base_url = (os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").strip()
-
+        api_key = os.getenv("OPENAI_API_KEY", "").strip()
+        base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip()
         if not api_key:
-            raise RuntimeError("OPENAI_API_KEY is missing in environment")
-
-        # 👇 important: no proxies, only required args
+            raise RuntimeError("OPENAI_API_KEY missing")
+        # No proxies arg -> compatible with httpx 0.27.2
         _client = OpenAI(api_key=api_key, base_url=base_url)
-
     return _client
 
-
 def get_model() -> str:
-    """
-    Return the OpenAI model name from environment.
-    Defaults to gpt-4.1-mini if not set.
-    """
-    model = (os.getenv("OPENAI_MODEL") or "gpt-4.1-mini").strip()
-    return model or "gpt-4.1-mini"
+    return os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini"
