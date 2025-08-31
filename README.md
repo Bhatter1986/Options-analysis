@@ -29,7 +29,7 @@ A FastAPI application that integrates Dhan's trading API with OpenAI for options
 ## API Endpoints
 
 See the interactive documentation at `/docs` when the server is running.
-
+q
 ## Deployment
 
 The application can be deployed to Render using the provided `render.yaml` file.
