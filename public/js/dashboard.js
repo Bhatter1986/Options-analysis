@@ -1,178 +1,106 @@
-/* Dashboard JS (no framework) */
-const selInstrument = document.getElementById('instrument');
-const selExpiry     = document.getElementById('expiry');
-const inpWindow     = document.getElementById('window');
-const chkFull       = document.getElementById('fullChain');
-const btnRefresh    = document.getElementById('refreshBtn');
-const spotMeta      = document.getElementById('spotMeta');
-const stepMeta      = document.getElementById('stepMeta');
-const bodyChain     = document.getElementById('chainBody');
-const pcrEl         = document.getElementById('pcr');
-const healthText    = document.getElementById('healthText');
-const aiBtn         = document.getElementById('aiBtn');
-const aiPrompt      = document.getElementById('aiPrompt');
-const aiOut         = document.getElementById('aiOut');
-const aiBadge       = document.getElementById('aiBadge');
+/* Dashboard JS */
+const selInstrument=document.getElementById('instrument');
+const selExpiry=document.getElementById('expiry');
+const inpWindow=document.getElementById('window');
+const chkFull=document.getElementById('fullChain');
+const btnRefresh=document.getElementById('refreshBtn');
+const spotMeta=document.getElementById('spotMeta');
+const bodyChain=document.querySelector('#chainTable tbody');
+const pcrEl=document.getElementById('pcr');
+const maxPainEl=document.getElementById('maxPain');
+const healthText=document.getElementById('healthText');
+const aiBtn=document.getElementById('aiBtn');
+const aiPrompt=document.getElementById('aiPrompt');
+const aiOut=document.getElementById('aiOut');
 
-function setHealth(msg, ok=true){ healthText.textContent = msg; healthText.className = ok? 'ok' : 'err'; }
+const API=(path)=>`${location.origin}${path}`;
+let current={instrument:13,segment:'IDX_I',step:50};
 
-async function selftest() {
-  try {
-    const r = await fetch('/__selftest');
-    const j = await r.json();
-    const aiOn = !!j?.status?.ai_present && !!j?.status?.base_url;
-    aiBadge.textContent = `AI: ${aiOn ? 'on' : 'off'}`;
-    setHealth(`${j?.status?.mode ?? '-'} · OpenAI:${aiOn?'ok':'off'}`, true);
-  } catch (e) {
-    setHealth('health: failed', false);
-  }
+async function getJSON(url){const r=await fetch(url);if(!r.ok)throw new Error(r.status);return r.json();}
+function opt(v,t=v){const o=document.createElement('option');o.value=v;o.textContent=t;return o;}
+
+async function loadInstruments(){
+  const data=await getJSON(API('/instruments'));
+  selInstrument.innerHTML='';
+  for(const x of data.data) selInstrument.appendChild(opt(JSON.stringify({id:x.id,seg:x.segment,step:x.step}),x.name));
+  const idx=Array.from(selInstrument.options).findIndex(o=>o.text.includes('NIFTY'));
+  selInstrument.selectedIndex=idx>=0?idx:0;
+  applyInstrument();
+}
+function applyInstrument(){const v=JSON.parse(selInstrument.value);current.instrument=v.id;current.segment=v.seg;current.step=v.step||50;loadExpiries();}
+async function loadExpiries(){
+  selExpiry.innerHTML='';
+  const q=new URLSearchParams({under_security_id:current.instrument,under_exchange_segment:current.segment});
+  const data=await getJSON(API(`/optionchain/expirylist?${q}`));
+  for(const ex of data.data) selExpiry.appendChild(opt(ex));
+  if(selExpiry.options.length)selExpiry.selectedIndex=0;
+  renderChain();
 }
 
-function parseInstrumentValue() {
-  try { return JSON.parse(selInstrument.value); } catch { return null; }
-}
-
-async function loadInstruments() {
-  selInstrument.innerHTML = `<option>Loading…</option>`;
-  try {
-    const r = await fetch('/instruments');
-    const j = await r.json();
-    const items = j?.data || [];
-    selInstrument.innerHTML = "";
-    for (const it of items) {
-      const opt = document.createElement('option');
-      opt.value = JSON.stringify({ id: it.id, segment: it.segment, step: it.step });
-      opt.textContent = it.name;
-      selInstrument.appendChild(opt);
-    }
-    if (items.length) {
-      stepMeta.textContent = items[0].step ?? '—';
-      await loadExpiries();
-    }
-  } catch (e) {
-    selInstrument.innerHTML = `<option>Error loading instruments</option>`;
-    console.error(e);
-  }
-}
-
-async function loadExpiries() {
-  const sel = parseInstrumentValue();
-  if (!sel) return;
-  selExpiry.innerHTML = `<option>Loading…</option>`;
-  try {
-    const url = `/optionchain/expirylist?under_security_id=${sel.id}&under_exchange_segment=${sel.segment}`;
-    const r = await fetch(url);
-    const j = await r.json();
-    const arr = j?.data || [];
-    selExpiry.innerHTML = "";
-    for (const d of arr) {
-      const opt = document.createElement('option');
-      opt.value = d; opt.textContent = d;
-      selExpiry.appendChild(opt);
-    }
-  } catch (e) {
-    selExpiry.innerHTML = `<option>Error loading expiries</option>`;
-    console.error(e);
-  }
-}
-
-function clearTable(msg='No rows.') {
-  bodyChain.innerHTML = `<tr><td colspan="9" class="muted" style="text-align:center">${msg}</td></tr>`;
-  pcrEl.textContent = '—';
-  spotMeta.textContent = '—';
-}
-
-function fmt(x, d=2) { if (x===null || x===undefined || Number.isNaN(+x)) return '—'; return (+x).toFixed(d); }
-function rowHtml(o){
-  const ce = o.call || o.ce || {};
-  const pe = o.put  || o.pe || {};
+function rowHTML(r){
+  const ce=r.call,pe=r.put;
   return `<tr>
-    <td>${fmt(ce.price)}</td>
-    <td>${fmt(ce.iv)}</td>
-    <td>${fmt(ce.oi,0)}</td>
-    <td>${fmt(ce.chgOi,0)}</td>
-    <td class="strike">${fmt(o.strike,0)}</td>
-    <td>${fmt(pe.chgOi,0)}</td>
-    <td>${fmt(pe.oi,0)}</td>
-    <td>${fmt(pe.iv)}</td>
-    <td>${fmt(pe.price)}</td>
+    <td>${ce.price?.toFixed?.(2)??'-'}</td>
+    <td>${ce.iv?.toFixed?.(2)??'-'}</td>
+    <td>${ce.oi}</td>
+    <td>${ce.chgOi}</td>
+    <td>${ce.delta?.toFixed?.(2)??'-'}</td>
+    <td>${r.strike}</td>
+    <td>${pe.delta?.toFixed?.(2)??'-'}</td>
+    <td>${pe.chgOi}</td>
+    <td>${pe.oi}</td>
+    <td>${pe.iv?.toFixed?.(2)??'-'}</td>
+    <td>${pe.price?.toFixed?.(2)??'-'}</td>
   </tr>`;
 }
 
-async function refreshChain() {
-  const sel = parseInstrumentValue();
-  if (!sel) return;
-  const exp = selExpiry.value;
-  const full = chkFull.checked;
-  const win = Math.max(1, Math.min(200, +inpWindow.value || 15));
-
-  clearTable('Loading…'); btnRefresh.disabled = true;
-
-  try {
-    const url = `/optionchain?under_security_id=${sel.id}&under_exchange_segment=${sel.segment}&expiry=${encodeURIComponent(exp)}${full?'&full=true':''}&window=${win}`;
-    const r = await fetch(url);
-    const j = await r.json();
-
-    // spot/step/pcr
-    spotMeta.textContent = j?.spot ? fmt(j.spot,2) : '—';
-    stepMeta.textContent = sel.step ?? '—';
-    const pcr = j?.summary?.pcr ?? j?.pcr;
-    pcrEl.textContent = pcr!==undefined ? fmt(pcr,2) : '—';
-
-    // rows list — support multiple shapes: j.rows | j.data | j.chain
-    const rows = j?.rows || j?.data || j?.chain || [];
-    if (!rows.length) { clearTable('No data.'); return; }
-
-    // window trim if server sent full
-    let out = rows;
-    if (!full && win && rows.length>1) {
-      const atmIdx = Math.floor(rows.length/2);
-      const lo = Math.max(0, atmIdx - win);
-      const hi = Math.min(rows.length, atmIdx + win + 1);
-      out = rows.slice(lo, hi);
-    }
-
-    bodyChain.innerHTML = out.map(rowHtml).join('');
-  } catch (e) {
-    console.error(e);
-    clearTable('Failed to load.');
-  } finally {
-    btnRefresh.disabled = false;
+async function renderChain(){
+  bodyChain.innerHTML=`<tr><td colspan="11">Loading…</td></tr>`;
+  pcrEl.textContent='—';maxPainEl.textContent='—';aiOut.textContent='';
+  const params=new URLSearchParams({
+    under_security_id:String(current.instrument),
+    under_exchange_segment:current.segment,
+    expiry:selExpiry.value,
+    show_all:chkFull.checked?'true':'false',
+    strikes_window:String(inpWindow.value||15),
+    step:String(current.step)
+  });
+  try{
+    const data=await getJSON(API(`/optionchain?${params}`));
+    spotMeta.textContent=`Spot: ${data.spot?.toFixed?.(2)??'—'} | Step: ${current.step}`;
+    pcrEl.textContent=data.summary?.pcr??'—';
+    maxPainEl.textContent=data.summary?.max_pain??'—';
+    const rows=(data.chain||[]).map(rowHTML).join('');
+    bodyChain.innerHTML=rows||`<tr><td colspan="11">No rows.</td></tr>`;
+    healthText.textContent=`Health: OK • ${data.meta?.count_window} rows (full: ${data.meta?.count_full})`;
+  }catch(e){
+    bodyChain.innerHTML=`<tr><td colspan="11">Error: ${e.message}</td></tr>`;
+    healthText.textContent=`Health: ERROR • ${e.message}`;
   }
 }
 
-async function analyzeAI() {
-  aiBtn.disabled = true; aiOut.textContent = 'Thinking…';
-  try {
-    const sel = parseInstrumentValue();
-    const exp = selExpiry.value;
-    const url = `/optionchain?under_security_id=${sel.id}&under_exchange_segment=${sel.segment}&expiry=${encodeURIComponent(exp)}&full=true`;
-    const r = await fetch(url); const j = await r.json();
-    const prompt = aiPrompt.value?.trim() || 'Analyze OI for supports/resistances and suggest one trade idea with strike and stoploss.';
-    const payload = { prompt: `${prompt}\n\nData:\n${JSON.stringify(j).slice(0, 5000)}` };
-
-    const a = await fetch('/ai/analyze', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) });
-    const aj = await a.json();
-    aiOut.textContent = aj?.answer || aj?.detail || JSON.stringify(aj, null, 2);
-  } catch (e) {
-    aiOut.textContent = 'AI call failed.';
-  } finally {
-    aiBtn.disabled = false;
-  }
+async function runAI(){
+  aiOut.textContent='Thinking…';aiBtn.disabled=true;
+  try{
+    const prompt=aiPrompt.value?.trim()||'Summarize the option chain with support/resistance + Greeks.';
+    const r=await fetch(API('/ai/analyze'),{
+      method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({prompt})
+    });
+    const j=await r.json();
+    if(!r.ok)throw new Error(j.detail||'AI error');
+    aiOut.textContent=j.answer||JSON.stringify(j);
+  }catch(e){aiOut.textContent=`AI error: ${e.message}`;}
+  finally{aiBtn.disabled=false;}
 }
 
-// events
-selInstrument.addEventListener('change', async () => { 
-  const obj = parseInstrumentValue(); stepMeta.textContent = obj?.step ?? '—'; 
-  await loadExpiries(); 
-});
-btnRefresh.addEventListener('click', refreshChain);
-aiBtn.addEventListener('click', analyzeAI);
+/* events */
+selInstrument.addEventListener('change',applyInstrument);
+selExpiry.addEventListener('change',renderChain);
+inpWindow.addEventListener('change',renderChain);
+chkFull.addEventListener('change',renderChain);
+btnRefresh.addEventListener('click',renderChain);
+aiBtn.addEventListener('click',runAI);
 
-// boot
-(async function init(){
-  await selftest();
-  await loadInstruments();
-  // auto initial refresh after expiries load (small delay)
-  setTimeout(()=>btnRefresh.click(), 300);
-})();
+/* init */
+loadInstruments();
