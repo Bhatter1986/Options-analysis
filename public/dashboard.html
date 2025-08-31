@@ -2,125 +2,100 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Options Analysis Dashboard</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root { color-scheme: dark; }
-    * { box-sizing: border-box; }
-    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:#0f1115; color:#e6e6e6; }
-    .wrap { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
-    h1 { font-size: 26px; margin: 0 0 12px; }
-    .badge { font-size:12px; padding: 2px 8px; border-radius: 999px; background:#1e2633; margin-left:8px; }
-    .grid { display:grid; gap:16px; grid-template-columns: 1.3fr .9fr; }
-    .card { background:#121722; border:1px solid #1f2937; border-radius: 12px; }
-    .card .hd { padding:14px 16px; border-bottom:1px solid #1f2937; font-weight:600; }
-    .card .bd { padding:14px 16px; }
-    .row { display:flex; gap:10px; flex-wrap: wrap; align-items:center; }
-    select, input[type="number"], input[type="checkbox"], textarea {
-      background:#0f1420; color:#e6e6e6; border:1px solid #273244; border-radius:8px; padding:8px 10px; outline:none;
-    }
-    select, input[type="number"] { height:36px; }
-    textarea { width:100%; min-height:120px; resize:vertical; }
-    button {
-      height:36px; padding:0 14px; border-radius:10px; border:1px solid #2b415f; background:#1d4ed8; color:#fff; cursor:pointer;
-    }
-    button[disabled] { opacity:.6; cursor:not-allowed; }
-    .meta { font-size:12px; opacity:.8; }
-    .table-wrap { overflow:auto; border-radius:10px; border:1px solid #1f2937; }
-    table { width:100%; border-collapse: collapse; background:#0f1420; }
-    th, td { padding:8px 10px; border-bottom:1px solid #141b26; text-align:right; white-space:nowrap; }
-    th { position:sticky; top:0; background:#101827; text-align:center; font-weight:600; }
-    td.strike, th.strike { text-align:center; }
-    .muted { opacity:.7 }
-    .ok { color:#10b981; }
-    .err { color:#ef4444; }
-    .flex-end { display:flex; justify-content:flex-end; align-items:center; gap:12px; }
-    .foot { margin-top:8px; display:flex; justify-content:space-between; align-items:center; font-size:13px; }
-    .health { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    body { margin:0; font:14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:#0f1115; color:#e8e8e8; }
+    .wrap { max-width:1400px; margin:32px auto; padding:0 16px; }
+    h1 { font-size:26px; margin:0 0 16px; display:flex; gap:8px; align-items:center; }
+    .badge { font-size:12px; padding:2px 8px; border-radius:12px; background:#1f2430; border:1px solid #2b3242; }
+    .grid { display:grid; grid-template-columns: 1fr 400px; gap:16px; }
+    .card { background:#141925; border:1px solid #232b3b; border-radius:12px; padding:16px; }
+    .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:0 0 12px; }
+    select, input[type="number"] { background:#0f1320; color:#e8e8e8; border:1px solid #2b3242; border-radius:8px; padding:8px 10px; }
+    button { background:#1976d2; color:#fff; border:0; border-radius:10px; padding:10px 14px; cursor:pointer; }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    table { width:100%; border-collapse:collapse; font-size:12px; }
+    th, td { padding:6px 4px; border-bottom:1px solid #232b3b; text-align:right; }
+    th { background:#1d2232; position:sticky; top:0; }
+    th:first-child, td:first-child { text-align:center; }
+    textarea { width:100%; min-height:140px; background:#0f1320; color:#e8e8e8; border:1px solid #2b3242; border-radius:8px; padding:10px; }
+    .muted { opacity:.8; font-size:12px; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <h1>Options Analysis Dashboard
-      <span id="liveBadge" class="badge">LIVE</span>
-      <span id="aiBadge" class="badge">AI: off</span>
+      <span class="badge" id="modeBadge">LIVE</span>
+      <span class="badge" id="aiBadge">AI: on</span>
     </h1>
 
     <div class="grid">
-      <!-- Chain card -->
+      <!-- Left: Chain -->
       <div class="card">
-        <div class="hd">Chain</div>
-        <div class="bd">
-          <div class="row" style="gap:12px;margin-bottom:8px">
-            <div>
-              <div class="muted" style="font-size:12px;margin-bottom:4px">Instrument</div>
-              <select id="instrument" style="min-width:190px"></select>
-            </div>
-
-            <div>
-              <div class="muted" style="font-size:12px;margin-bottom:4px">Expiry</div>
-              <select id="expiry" style="min-width:150px"></select>
-            </div>
-
-            <div>
-              <div class="muted" style="font-size:12px;margin-bottom:4px">Window (± strikes)</div>
-              <input id="window" type="number" value="15" min="1" max="200" style="width:90px" />
-            </div>
-
-            <label class="row" style="gap:6px;align-items:center;margin-top:18px">
-              <input id="fullChain" type="checkbox" />
-              <span class="muted">Show full chain</span>
-            </label>
-
-            <div class="flex-end" style="margin-left:auto">
-              <div class="meta">Spot: <span id="spotMeta">—</span> | Step: <span id="stepMeta">—</span></div>
-              <button id="refreshBtn">Refresh</button>
-            </div>
+        <h3 style="margin:0 0 10px">Chain</h3>
+        <div class="row">
+          <div>
+            <div class="muted">Instrument</div>
+            <select id="instrument"></select>
           </div>
-
-          <div class="table-wrap" id="tableWrap">
-            <table id="chainTable">
-              <thead>
-                <tr>
-                  <th>CE LTP</th>
-                  <th>CE IV</th>
-                  <th>CE OI</th>
-                  <th>Δ OI</th>
-                  <th class="strike">STRIKE</th>
-                  <th>Δ OI</th>
-                  <th>PE OI</th>
-                  <th>PE IV</th>
-                  <th>PE LTP</th>
-                </tr>
-              </thead>
-              <tbody id="chainBody">
-                <tr><td colspan="9" class="muted" style="text-align:center">No rows.</td></tr>
-              </tbody>
-            </table>
+          <div>
+            <div class="muted">Expiry</div>
+            <select id="expiry"></select>
           </div>
+          <div>
+            <div class="muted">Window (± strikes)</div>
+            <input id="window" type="number" value="15" min="1" max="50" />
+          </div>
+          <label style="display:flex;align-items:center;gap:8px">
+            <input type="checkbox" id="fullChain" />
+            Show full chain
+          </label>
+          <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
+            <div class="muted" id="spotMeta">Spot: — | Step: —</div>
+            <button id="refreshBtn">Refresh</button>
+          </div>
+        </div>
 
-          <div class="foot">
-            <div class="health">Health: <span id="healthText" class="muted">…</span></div>
-            <div class="meta">PCR: <span id="pcr">—</span></div>
+        <div style="overflow:auto; max-height:65vh;">
+          <table id="chainTable">
+            <thead>
+              <tr>
+                <th colspan="5">CALL</th>
+                <th>STRIKE</th>
+                <th colspan="5">PUT</th>
+              </tr>
+              <tr>
+                <th>LTP</th><th>IV</th><th>OI</th><th>ΔOI</th><th>Δ</th>
+                <th>STRIKE</th>
+                <th>Δ</th><th>ΔOI</th><th>OI</th><th>IV</th><th>LTP</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div class="row">
+          <div class="muted" id="healthText">Health: …</div>
+          <div style="margin-left:auto" class="muted">
+            PCR: <span id="pcr">—</span> · Max Pain: <span id="maxPain">—</span>
           </div>
         </div>
       </div>
 
-      <!-- AI -->
+      <!-- Right: AI -->
       <div class="card">
-        <div class="hd">Vishnu · AI Analysis</div>
-        <div class="bd">
-          <textarea id="aiPrompt" placeholder="e.g. Identify supports/resistances from OI and suggest a trade idea with strike & SL…"></textarea>
-          <div class="flex-end" style="margin-top:10px">
-            <button id="aiBtn">Analyze Current Chain</button>
-          </div>
-          <div id="aiOut" class="muted" style="margin-top:12px;white-space:pre-wrap"></div>
+        <h3 style="margin:0 0 10px">Vishnu · AI Analysis</h3>
+        <textarea id="aiPrompt" placeholder="e.g. Identify support/resistance from OI + Greeks, suggest trade idea..."></textarea>
+        <div class="row" style="justify-content:space-between;margin-top:10px">
+          <button id="aiBtn">Analyze Current Chain</button>
         </div>
+        <div id="aiOut" class="muted" style="margin-top:10px;white-space:pre-wrap"></div>
       </div>
     </div>
   </div>
 
-  <!-- IMPORTANT: path + defer -->
-  <script src="/js/dashboard.js" defer></script>
+  <script src="/Js/dashboard.js"></script>
 </body>
 </html>
