@@ -1,147 +1,115 @@
 from __future__ import annotations
-
 from fastapi import APIRouter, HTTPException, Query
+from typing import Any, Dict, List
 from pathlib import Path
-from typing import Optional, List, Dict, Any
-import pandas as pd
-import time
+import csv
+import json
 
-router = APIRouter(prefix="/instruments", tags=["instruments"])
+router = APIRouter(prefix="/instruments", tags=["Instruments"])
 
-# Prefer local repo CSV; no external fetch here.
-LOCAL_CSV = Path("data/instruments.csv")
+CSV_PATH       = Path("data/instruments.csv")
+WATCHLIST_JSON = Path("data/watchlist.json")           # legacy (backend private)
+PUBLIC_JSON    = Path("public/data/watchlist.json")    # optional (static served)
 
-# In-memory cache
-_df_cache: Optional[pd.DataFrame] = None
-_last_loaded_ts: Optional[float] = None
+# sensible defaults (used if "step" missing)
+DEFAULT_STEPS = {
+    "IDX_I": 50,   # NIFTY-type indices
+    "NSE_I": 50,
+    "IDX_FO": 50,
+    "NSE_E": 10,   # equities
+    "BSE_E": 10,
+}
+# known ID-specific overrides (optional)
+ID_STEPS = {
+    13: 50,   # NIFTY 50 (ID)
+    25: 100,  # BANKNIFTY (ID)
+}
 
-def _csv_exists() -> bool:
-    return LOCAL_CSV.exists() and LOCAL_CSV.is_file()
-
-def _load_df(force: bool = False) -> pd.DataFrame:
-    """Load instruments CSV with robust dtypes and basic validation."""
-    global _df_cache, _last_loaded_ts
-    if not _csv_exists():
-        raise FileNotFoundError(f"CSV not found at {LOCAL_CSV}")
-    if not force and _df_cache is not None:
-        return _df_cache
-
-    df = pd.read_csv(
-        LOCAL_CSV,
-        dtype=str,
-        keep_default_na=False,
-        na_filter=False,
-    )
-
-    expected = ["security_id", "symbol_name", "underlying_symbol", "segment", "instrument_type"]
-    lower_map = {c.lower(): c for c in df.columns}
-    for col in expected:
-        if col not in lower_map:
-            raise ValueError(f"CSV missing column '{col}'. Found: {list(df.columns)}")
-    df = df[[lower_map[c] for c in expected]]
-    df.columns = expected
-    df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
-
-    _df_cache = df
-    _last_loaded_ts = time.time()
-    return _df_cache
-
-def _rows_dict(df: pd.DataFrame) -> List[Dict[str, Any]]:
-    return df.to_dict(orient="records")
-
-def _contains_ci(series: pd.Series, q: str) -> pd.Series:
-    q = q.strip().lower()
-    return series.str.lower().str.contains(q, na=False)
-
-@router.get("/_debug")
-def instruments_debug() -> Dict[str, Any]:
-    info: Dict[str, Any] = {
-        "exists": _csv_exists(),
-        "path": str(LOCAL_CSV),
-        "rows": 0,
-        "cols": [],
-        "ready": False,
-    }
-    if not info["exists"]:
-        return info
+def _norm_row(id_: int, name: str, seg: str, step_raw: str | int | None) -> Dict[str, Any]:
+    seg = (seg or "").strip()
+    name = (name or "").strip()
+    step: int
     try:
-        df = _load_df(force=True)
-        info["rows"] = int(df.shape[0])
-        info["cols"] = list(df.columns)
-        info["ready"] = info["rows"] > 0
-        info["loaded_at"] = _last_loaded_ts
-    except Exception as e:
-        info["error"] = str(e)
-    return info
+        step = int(step_raw) if step_raw not in (None, "",) else 0
+    except Exception:
+        step = 0
+    if not step:
+        step = ID_STEPS.get(id_) or DEFAULT_STEPS.get(seg, 50)
+    return {"id": id_, "name": name, "segment": seg, "step": step}
 
-@router.post("/_refresh")
-def instruments_refresh() -> Dict[str, Any]:
-    global _df_cache
-    _df_cache = None
+def _load_from_csv() -> List[Dict[str, Any]]:
+    if not CSV_PATH.exists():
+        return []
+    items: List[Dict[str, Any]] = []
     try:
-        df = _load_df(force=True)
-        return {
-            "ok": True,
-            "rows": int(df.shape[0]),
-            "cols": list(df.columns),
-            "path": str(LOCAL_CSV),
-            "reloaded": True,
-        }
+        with CSV_PATH.open("r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            # expect at least: id,name,segment ; optional: step
+            for row in reader:
+                if not isinstance(row, dict):
+                    continue
+                try:
+                    id_ = int((row.get("id") or "0").strip() or "0")
+                except Exception:
+                    id_ = 0
+                name = (row.get("name") or "").strip()
+                seg  = (row.get("segment") or "").strip()
+                step = row.get("step")
+                if name and seg:
+                    items.append(_norm_row(id_, name, seg, step))
+        return items
     except Exception as e:
-        return {"ok": False, "reloaded": False, "detail": str(e), "path": str(LOCAL_CSV)}
+        raise HTTPException(500, f"CSV load failed: {e}")
+
+def _load_from_json(path: Path) -> List[Dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+        raw = obj.get("items", [])
+        items: List[Dict[str, Any]] = []
+        for x in raw:
+            if not isinstance(x, dict):
+                continue
+            try:
+                id_ = int(x.get("id", 0) or 0)
+            except Exception:
+                id_ = 0
+            name = str(x.get("name", "")).strip()
+            seg  = str(x.get("segment", "")).strip()
+            step = x.get("step")
+            if name and seg:
+                items.append(_norm_row(id_, name, seg, step))
+        return items
+    except Exception as e:
+        raise HTTPException(500, f"JSON load failed ({path}): {e}")
+
+def _load_instruments() -> List[Dict[str, Any]]:
+    """
+    Priority:
+      1) data/instruments.csv  (recommended)
+      2) data/watchlist.json   (legacy backend)
+      3) public/data/watchlist.json (optional static)
+    """
+    items = _load_from_csv()
+    if not items:
+        items = _load_from_json(WATCHLIST_JSON)
+    if not items:
+        items = _load_from_json(PUBLIC_JSON)
+    if not items:
+        raise HTTPException(500, "No instruments found in CSV/JSON.")
+    return items
 
 @router.get("")
-def instruments_list(limit: int = Query(0, ge=0, le=10000)) -> Dict[str, Any]:
-    try:
-        df = _load_df()
-    except FileNotFoundError:
-        raise HTTPException(status_code=503, detail="Instrument CSV not present on server")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"CSV load failed: {e}")
-    if limit and limit > 0:
-        df = df.head(limit)
-    return {"data": _rows_dict(df)}
+def list_instruments():
+    items = _load_instruments()
+    return {"status": "success", "data": items}
 
-@router.get("/indices")
-def instruments_indices(q: Optional[str] = Query(None)) -> Dict[str, Any]:
-    try:
-        df = _load_df()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"CSV load failed: {e}")
-    df_idx = df[df["instrument_type"].str.upper() == "INDEX"]
-    if q:
-        mask = (
-            _contains_ci(df_idx["symbol_name"], q)
-            | _contains_ci(df_idx["underlying_symbol"], q)
-            | _contains_ci(df_idx["security_id"], q)
-        )
-        df_idx = df_idx[mask]
-    return {"data": _rows_dict(df_idx)}
-
-@router.get("/search")
-def instruments_search(
-    q: str = Query(..., min_length=1),
-    limit: int = Query(25, ge=1, le=500),
-) -> Dict[str, Any]:
-    try:
-        df = _load_df()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"CSV load failed: {e}")
-    mask = (
-        _contains_ci(df["symbol_name"], q)
-        | _contains_ci(df["underlying_symbol"], q)
-        | _contains_ci(df["security_id"], q)
-    )
-    out = df[mask].head(limit)
-    return {"data": _rows_dict(out)}
-
-@router.get("/by-id")
-def instruments_by_id(security_id: str = Query(...)) -> Dict[str, Any]:
-    try:
-        df = _load_df()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"CSV load failed: {e}")
-    row = df[df["security_id"] == str(security_id)]
-    if row.empty:
-        raise HTTPException(status_code=404, detail="Not Found")
-    return _rows_dict(row.head(1))[0]
+@router.get("/filter")
+def filter_instruments(q: str = Query("", description="case-insensitive contains match")):
+    items = _load_instruments()
+    ql = q.lower().strip()
+    if not ql:
+        return {"status": "success", "data": items}
+    filtered = [x for x in items if ql in x["name"].lower()]
+    return {"status": "success", "data": filtered}
