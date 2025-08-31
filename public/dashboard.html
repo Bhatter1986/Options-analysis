@@ -1,95 +1,94 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Options Analysis Dashboard</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <link rel="icon" href="/favicon.ico" />
   <style>
-    body { background-color: #111; color: #eee; }
-    .container { margin-top: 20px; }
-    select, input, button { margin: 5px; }
-    table { font-size: 14px; }
-    thead { background-color: #222; }
-    .card-dark { background:#161616; border:1px solid #2a2a2a; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-    .fade-small { opacity: .8; font-size: .9rem; }
+    :root{--bg:#0e0f12;--card:#17181d;--muted:#9aa0a6;--text:#e8eaed;--accent:#71c8ff;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;}
+    *{box-sizing:border-box;font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+    body{margin:0;background:var(--bg);color:var(--text)}
+    .wrap{max-width:1200px;margin:0 auto;padding:22px}
+    h1{font-weight:700;letter-spacing:.3px;margin:0 0 18px;font-size:26px}
+    .row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+    .card{background:var(--card);border-radius:14px;padding:14px}
+    select,input,button,textarea{background:#101217;border:1px solid #262a33;color:var(--text);border-radius:10px;padding:10px}
+    select,input{height:40px}
+    button{cursor:pointer}
+    button.primary{background:#19517a;border-color:#236393}
+    button.primary:hover{background:#1c5d8b}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{padding:8px 10px;border-bottom:1px solid #242730;text-align:right;white-space:nowrap}
+    th{text-align:right;color:var(--muted);font-weight:600}
+    th:first-child,td:first-child{text-align:left}
+    .pill{padding:.15rem .5rem;border-radius:999px;font-weight:600;font-size:12px}
+    .up{color:var(--ok)}
+    .dn{color:var(--bad)}
+    .muted{color:var(--muted)}
+    .two-col{display:grid;grid-template-columns:1fr 340px;gap:14px}
+    @media (max-width:980px){.two-col{grid-template-columns:1fr}}
+    .ai h3{margin:0 0 8px}
+    .help{font-size:12px;color:var(--muted)}
+    .badge{border:1px solid #2a2f3a;color:#b7c0ca;border-radius:999px;padding:2px 8px;font-size:12px}
   </style>
 </head>
 <body>
-  <div class="container">
-    <h2 class="mb-3">Options Analysis Dashboard</h2>
+  <div class="wrap">
+    <h1>Options Analysis Dashboard <span class="badge" id="modeBadge"></span></h1>
 
-    <!-- Controls -->
-    <div class="d-flex flex-wrap align-items-center mb-3">
-      <label class="me-2">Instrument</label>
-      <select id="instrument" class="form-select form-select-sm" style="width:220px;"></select>
-
-      <label class="ms-3 me-2">Expiry</label>
-      <select id="expiry" class="form-select form-select-sm" style="width:160px;"></select>
-
-      <label class="ms-3 me-2">Window (±)</label>
-      <input id="window" type="number" value="15" class="form-control form-control-sm" style="width:90px;">
-
-      <div class="form-check ms-3">
-        <input type="checkbox" id="show-full" class="form-check-input">
-        <label for="show-full" class="form-check-label">Show full chain</label>
+    <div class="row">
+      <div>
+        <div class="help">Instrument</div>
+        <select id="instrument"></select>
       </div>
-
-      <button id="refresh" class="btn btn-primary btn-sm ms-3">Refresh</button>
+      <div>
+        <div class="help">Expiry</div>
+        <select id="expiry"></select>
+      </div>
+      <div>
+        <div class="help">Window (± strikes)</div>
+        <input id="window" type="number" min="5" max="50" step="1" value="15" style="width:110px" />
+      </div>
+      <div style="display:flex;align-items:end;gap:10px">
+        <label class="help" style="display:flex;align-items:center;gap:6px">
+          <input id="fullchain" type="checkbox" /> Show full chain
+        </label>
+        <button id="refresh" class="primary">Refresh</button>
+      </div>
+      <div style="margin-left:auto;display:flex;align-items:end">
+        <span class="help" id="spotInfo">—</span>
+      </div>
     </div>
 
-    <!-- Summary badges auto-inject here -->
-
-    <div class="row g-3">
-      <div class="col-lg-8">
-        <!-- Chain Table -->
-        <table class="table table-dark table-bordered table-sm">
+    <div class="two-col">
+      <div class="card">
+        <table id="chain">
           <thead>
             <tr>
-              <th>CE LTP</th>
-              <th>CE IV</th>
-              <th>CE OI</th>
-              <th>Δ OI</th>
+              <th>CE LTP</th><th>CE IV</th><th>CE OI</th><th>Δ OI</th>
               <th>STRIKE</th>
-              <th>Δ OI</th>
-              <th>PE OI</th>
-              <th>PE IV</th>
-              <th>PE LTP</th>
+              <th>Δ OI</th><th>PE OI</th><th>PE IV</th><th>PE LTP</th>
             </tr>
           </thead>
-          <tbody id="chain-body">
-            <tr><td colspan="9">Select instrument and expiry, then click Refresh</td></tr>
+          <tbody id="tbody">
+            <tr><td class="muted" colspan="9">Select instrument & expiry, then click Refresh.</td></tr>
           </tbody>
         </table>
       </div>
 
-      <div class="col-lg-4">
-        <!-- Vishnu AI Panel -->
-        <div class="card card-dark">
-          <div class="card-header">
-            <strong>Vishnu • AI Analysis</strong>
-          </div>
-          <div class="card-body">
-            <div class="mb-2">
-              <label class="form-label">Prompt (optional)</label>
-              <textarea id="ai-prompt" rows="3" class="form-control mono" placeholder="e.g. Identify supports/resistances, give trade ideas with risk..."></textarea>
-            </div>
-            <div class="d-grid gap-2">
-              <button id="ai-analyze" class="btn btn-success btn-sm">Analyze Current Chain</button>
-            </div>
-            <hr>
-            <div class="fade-small mb-1">Result</div>
-            <div id="ai-output" class="mono" style="white-space:pre-wrap;">—</div>
-          </div>
-          <div class="card-footer fade-small">
-            Uses backend <span class="mono">POST /ai/analyze</span>. If chain not loaded, it will request server to fetch it.
-          </div>
+      <div class="card ai">
+        <h3>Vishnu · AI Analysis</h3>
+        <textarea id="prompt" rows="6" placeholder="e.g. Identify supports/resistances from OI, give trade ideas with strike & SL..."></textarea>
+        <div class="row" style="margin-top:8px">
+          <button id="analyze" class="primary">Analyze Current Chain</button>
+          <span id="pcr" class="help" style="align-self:center">PCR: —</span>
         </div>
+        <div id="airesult" class="help" style="margin-top:10px;white-space:pre-wrap"></div>
       </div>
     </div>
   </div>
 
-  <!-- Attach Dashboard JS -->
-  <script src="/js/dashboard.js"></script>
+  <script src="/Js/dashboard.js" defer></script>
 </body>
 </html>
