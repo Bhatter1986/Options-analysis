@@ -2,93 +2,113 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Options Analysis Dashboard</title>
-  <link rel="icon" href="/favicon.ico" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
   <style>
-    :root{--bg:#0e0f12;--card:#17181d;--muted:#9aa0a6;--text:#e8eaed;--accent:#71c8ff;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;}
-    *{box-sizing:border-box;font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
-    body{margin:0;background:var(--bg);color:var(--text)}
-    .wrap{max-width:1200px;margin:0 auto;padding:22px}
-    h1{font-weight:700;letter-spacing:.3px;margin:0 0 18px;font-size:26px}
-    .row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
-    .card{background:var(--card);border-radius:14px;padding:14px}
-    select,input,button,textarea{background:#101217;border:1px solid #262a33;color:var(--text);border-radius:10px;padding:10px}
-    select,input{height:40px}
-    button{cursor:pointer}
-    button.primary{background:#19517a;border-color:#236393}
-    button.primary:hover{background:#1c5d8b}
-    table{width:100%;border-collapse:collapse;font-size:13px}
-    th,td{padding:8px 10px;border-bottom:1px solid #242730;text-align:right;white-space:nowrap}
-    th{text-align:right;color:var(--muted);font-weight:600}
-    th:first-child,td:first-child{text-align:left}
-    .pill{padding:.15rem .5rem;border-radius:999px;font-weight:600;font-size:12px}
-    .up{color:var(--ok)}
-    .dn{color:var(--bad)}
-    .muted{color:var(--muted)}
-    .two-col{display:grid;grid-template-columns:1fr 340px;gap:14px}
-    @media (max-width:980px){.two-col{grid-template-columns:1fr}}
-    .ai h3{margin:0 0 8px}
-    .help{font-size:12px;color:var(--muted)}
-    .badge{border:1px solid #2a2f3a;color:#b7c0ca;border-radius:999px;padding:2px 8px;font-size:12px}
+    :root { --bg:#0f1115; --panel:#171a21; --text:#e6e6e6; --muted:#a9b0bb; --brand:#2eaadc; --ok:#3fb950; --bad:#f85149;}
+    * { box-sizing:border-box; }
+    body { margin:0; font:14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
+    header { display:flex; gap:12px; align-items:center; justify-content:space-between; padding:20px; border-bottom:1px solid #242938;}
+    .title { font-size:24px; font-weight:700; }
+    .pill { background:#243041; color:#b9d7ff; padding:3px 8px; border-radius:999px; font-size:12px; }
+    main { max-width:1200px; margin:24px auto; padding:0 16px; display:grid; grid-template-columns:1fr 340px; gap:16px; }
+    .card { background:var(--panel); border:1px solid #242938; border-radius:14px; box-shadow:0 0 0 1px rgba(0,0,0,.04) inset; }
+    .card h3 { margin:0; padding:14px 16px; border-bottom:1px solid #242938; font-size:15px; color:#d7dee9; }
+    .card .body { padding:14px 16px; }
+    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:12px;}
+    select, input, button, textarea {
+      background:#11161f; color:var(--text); border:1px solid #283142; border-radius:10px; padding:10px 12px;
+    }
+    button { background:#1b2737; cursor:pointer; }
+    button.primary { background:var(--brand); color:#04121b; font-weight:700; }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    label { color:var(--muted); font-size:12px; }
+    .muted { color:var(--muted); }
+    table { width:100%; border-collapse:collapse; }
+    th, td { padding:8px 10px; border-bottom:1px solid #222a36; text-align:right; white-space:nowrap; }
+    th { font-size:12px; color:#c7cfda; text-align:right; }
+    th:first-child, td:first-child { text-align:left; }
+    .number { font-variant-numeric:tabular-nums; }
+    .pos { color:var(--ok); } .neg{ color:var(--bad); }
+    .toolbar { display:flex; gap:12px; align-items:end; margin-bottom:8px;}
+    .health { font-size:12px; }
+    .health.ok { color:var(--ok); } .health.bad{ color:var(--bad); }
+    .footer { margin-top:6px; font-size:12px; color:#8fa3b8; display:flex; justify-content:space-between; align-items:center;}
+    .badge { padding:2px 6px; border-radius:6px; border:1px solid #283142; color:#b3c7e6;}
+    .right { text-align:right; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <h1>Options Analysis Dashboard <span class="badge" id="modeBadge"></span></h1>
+  <header>
+    <div class="title">Options Analysis Dashboard</div>
+    <div class="pill" id="liveBadge">LIVE • AI:on</div>
+  </header>
 
-    <div class="row">
-      <div>
-        <div class="help">Instrument</div>
-        <select id="instrument"></select>
-      </div>
-      <div>
-        <div class="help">Expiry</div>
-        <select id="expiry"></select>
-      </div>
-      <div>
-        <div class="help">Window (± strikes)</div>
-        <input id="window" type="number" min="5" max="50" step="1" value="15" style="width:110px" />
-      </div>
-      <div style="display:flex;align-items:end;gap:10px">
-        <label class="help" style="display:flex;align-items:center;gap:6px">
-          <input id="fullchain" type="checkbox" /> Show full chain
-        </label>
-        <button id="refresh" class="primary">Refresh</button>
-      </div>
-      <div style="margin-left:auto;display:flex;align-items:end">
-        <span class="help" id="spotInfo">—</span>
-      </div>
-    </div>
-
-    <div class="two-col">
-      <div class="card">
-        <table id="chain">
-          <thead>
-            <tr>
-              <th>CE LTP</th><th>CE IV</th><th>CE OI</th><th>Δ OI</th>
-              <th>STRIKE</th>
-              <th>Δ OI</th><th>PE OI</th><th>PE IV</th><th>PE LTP</th>
-            </tr>
-          </thead>
-          <tbody id="tbody">
-            <tr><td class="muted" colspan="9">Select instrument & expiry, then click Refresh.</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="card ai">
-        <h3>Vishnu · AI Analysis</h3>
-        <textarea id="prompt" rows="6" placeholder="e.g. Identify supports/resistances from OI, give trade ideas with strike & SL..."></textarea>
-        <div class="row" style="margin-top:8px">
-          <button id="analyze" class="primary">Analyze Current Chain</button>
-          <span id="pcr" class="help" style="align-self:center">PCR: —</span>
+  <main>
+    <!-- LEFT: chain -->
+    <section class="card" id="chainCard">
+      <h3>Chain</h3>
+      <div class="body">
+        <div class="toolbar">
+          <div>
+            <label>Instrument</label><br/>
+            <select id="instrument"></select>
+          </div>
+          <div>
+            <label>Expiry</label><br/>
+            <select id="expiry"></select>
+          </div>
+          <div>
+            <label>Window (± strikes)</label><br/>
+            <input id="window" type="number" value="15" min="1" max="100" style="width:100px">
+          </div>
+          <div>
+            <label>&nbsp;</label><br/>
+            <label><input type="checkbox" id="fullChain"> Show full chain</label>
+          </div>
+          <div class="right" style="margin-left:auto;">
+            <label class="muted" id="spotMeta">Spot: — | Step: —</label><br/>
+            <button class="primary" id="refreshBtn">Refresh</button>
+          </div>
         </div>
-        <div id="airesult" class="help" style="margin-top:10px;white-space:pre-wrap"></div>
-      </div>
-    </div>
-  </div>
 
-  <script src="/Js/dashboard.js" defer></script>
+        <div class="card" style="overflow:auto; max-height:58vh;">
+          <table>
+            <thead>
+              <tr>
+                <th>CE LTP</th><th>CE IV</th><th>CE OI</th><th>Δ OI</th>
+                <th>STRIKE</th>
+                <th>Δ OI</th><th>PE OI</th><th>PE IV</th><th>PE LTP</th>
+              </tr>
+            </thead>
+            <tbody id="chainBody">
+              <tr><td colspan="9" class="muted">No rows.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="footer">
+          <div class="health" id="healthText">Health: …</div>
+          <div><span class="badge">PCR: <span id="pcr">—</span></span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT: AI -->
+    <aside class="card">
+      <h3>Vishnu · AI Analysis</h3>
+      <div class="body">
+        <textarea id="aiPrompt" rows="7" style="width:100%;"
+          placeholder="e.g. Identify supports/resistances from OI and suggest a trade idea with strike & SL…"></textarea>
+        <div class="row">
+          <button id="aiBtn" class="primary" style="width:100%;">Analyze Current Chain</button>
+        </div>
+        <div id="aiOut" class="muted" style="white-space:pre-wrap;"></div>
+      </div>
+    </aside>
+  </main>
+
+  <script src="/js/dashboard.js"></script>
 </body>
 </html>
