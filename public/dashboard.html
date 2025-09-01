@@ -13,24 +13,25 @@
     .row { display:flex; gap:16px; }
     .grow { flex:1 1 0; }
     .tight { padding:8px 12px; }
-    table { font-variant-numeric: tabular-nums; }
-    thead th { position: sticky; top:0; background:#10161f; z-index:1; }
+    table { font-variant-numeric: tabular-nums; width:100%; }
+    thead th { position:sticky; top:0; background:#10161f; z-index:1; }
     .muted { opacity:.7; }
     .badge { background:#1f2a37; padding:2px 8px; border-radius:999px; font-size:.8rem; }
     .grid { display:grid; grid-template-columns:1.2fr 1.2fr .8fr .8fr .8fr; gap:12px; align-items:end; }
-    @media (max-width: 900px) { .row { flex-direction:column; } }
+    @media (max-width:900px){ .row{ flex-direction:column } }
     .btn { background:#1e88e5; border:none; color:#fff; padding:8px 14px; border-radius:8px; cursor:pointer; }
     .btn:disabled { opacity:.6; cursor:not-allowed; }
     .btn-alt { background:#263445; }
     .foot { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:12px; }
     .nowrap { white-space:nowrap; }
+    .right { text-align:right; }
   </style>
 </head>
 <body>
   <main>
     <header style="display:flex;justify-content:space-between;align-items:center;margin:24px 0 12px">
       <h2 style="margin:0">Options Analysis Dashboard</h2>
-      <div class="badge">LIVE</div>
+      <div class="badge">LIVE • AI: on</div>
     </header>
 
     <div class="row">
@@ -49,13 +50,13 @@
           </div>
           <div>
             <label>Window (± strikes)</label>
-            <input id="window" class="tight" type="number" min="1" max="50" value="5" />
+            <input id="window" class="tight" type="number" min="1" max="50" value="5">
           </div>
-          <div class="nowrap" style="display:flex;gap:8px;align-items:center;margin-top:28px">
-            <input id="fullChain" type="checkbox" />
+          <div class="nowrap" style="display:flex;gap:8px;align-items:center">
+            <input id="fullChain" type="checkbox">
             <label for="fullChain" class="muted">Show full chain</label>
           </div>
-          <div style="text-align:right">
+          <div class="right">
             <button id="refreshBtn" class="btn">Refresh</button>
           </div>
         </div>
@@ -84,25 +85,23 @@
                 <th>PE LTP</th>
               </tr>
             </thead>
-            <tbody id="chainBody">
-              <tr><td colspan="16" class="muted">Select instrument & expiry, then click Refresh</td></tr>
-            </tbody>
+            <tbody id="chainBody"></tbody>
           </table>
         </div>
 
         <div class="foot">
-          <span id="healthText" class="muted">Health: —</span>
+          <span id="healthText" class="muted">Health: …</span>
           <div style="display:flex; gap:8px;">
             <button id="loadMoreBtn" class="btn btn-alt">Load more (+5)</button>
           </div>
         </div>
       </section>
 
-      <!-- AI panel (optional; safe if /ai missing) -->
+      <!-- AI panel (optional – hooks ready) -->
       <section class="card" style="width:360px; max-width:100%;">
         <h5 style="margin-top:0">Vishnu · AI Analysis</h5>
         <textarea id="aiPrompt" class="tight" rows="8"
-          placeholder="Identify supports/resistances from OI & suggest trade idea…"></textarea>
+          placeholder="e.g. Identify supports/resistances from OI and suggest a trade idea with strike &amp; SL…"></textarea>
         <div class="foot">
           <span class="muted">PCR: <span id="pcrRight">—</span></span>
           <button id="aiBtn" class="btn">Analyze Current Chain</button>
@@ -112,7 +111,7 @@
     </div>
   </main>
 
-  <!-- IMPORTANT: path is /Js/ exactly (capital J) -->
-  <script src="/Js/dashboard.js"></script>
+  <!-- cache-bust v=5 to force latest JS -->
+  <script src="/Js/dashboard.js?v=5"></script>
 </body>
 </html>
