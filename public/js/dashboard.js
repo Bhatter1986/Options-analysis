@@ -1,117 +1,179 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Options Analysis Dashboard</title>
-  <link rel="stylesheet" href="https://unpkg.com/@picocss/pico@2/css/pico.min.css">
-  <style>
-    :root { color-scheme: dark; }
-    body { background: #0f141a; }
-    main { max-width: 1280px; margin-inline: auto; }
-    .card { background:#121923; border:1px solid #1f2a37; border-radius:12px; padding:16px; }
-    .row { display:flex; gap:16px; }
-    .grow { flex:1 1 0; }
-    .tight { padding:8px 12px; }
-    table { font-variant-numeric: tabular-nums; }
-    thead th { position: sticky; top:0; background:#10161f; z-index:1; }
-    .muted { opacity: .7; }
-    .badge { background:#1f2a37; padding:2px 8px; border-radius: 999px; font-size:.8rem; }
-    .grid { display:grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap:12px; }
-    @media (max-width: 900px) { .row { flex-direction:column; } }
-    .btn { background:#1e88e5; border:none; color:white; padding:8px 14px; border-radius:8px; cursor:pointer; }
-    .btn:disabled { opacity:.6; cursor:not-allowed; }
-    .btn-alt { background:#263445; }
-    .foot { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:12px; }
-    .nowrap { white-space: nowrap; }
-  </style>
-</head>
-<body>
-  <main>
-    <header style="display:flex;justify-content:space-between;align-items:center;margin:24px 0 12px">
-      <h2 style="margin:0">Options Analysis Dashboard</h2>
-      <div class="badge">LIVE • AI: on</div>
-    </header>
+// ====== Config ======
+const apiBase = window.location.origin; // e.g. https://options-analysis.onrender.com
 
-    <div class="row">
-      <!-- Chain panel -->
-      <section class="card grow">
-        <h5 style="margin-top:0">Chain</h5>
+// ====== Elements ======
+const selInstrument = document.getElementById("instrument");
+const selExpiry     = document.getElementById("expiry");
+const inpWindow     = document.getElementById("window");
+const chkFull       = document.getElementById("fullChain");
+const btnRefresh    = document.getElementById("refreshBtn");
+const bodyChain     = document.getElementById("chainBody");
+const metaLine      = document.getElementById("metaLine");
+const healthText    = document.getElementById("healthText");
+const pcrEl         = document.getElementById("pcr");
+const pcrRightEl    = document.getElementById("pcrRight");
+const btnLoadMore   = document.getElementById("loadMoreBtn");
 
-        <div class="grid" style="grid-template-columns: 1.2fr 1.2fr 0.8fr 0.8fr 0.8fr; align-items:end;">
-          <div>
-            <label>Instrument</label>
-            <select id="instrument" class="tight"></select>
-          </div>
-          <div>
-            <label>Expiry</label>
-            <select id="expiry" class="tight"></select>
-          </div>
-          <div>
-            <label>Window (± strikes)</label>
-            <input id="window" class="tight" type="number" min="1" max="50" value="15" />
-          </div>
-          <div class="nowrap" style="display:flex;gap:8px;align-items:center;margin-top:28px">
-            <input id="fullChain" type="checkbox" />
-            <label for="fullChain" class="muted">Show full chain</label>
-          </div>
-          <div style="text-align:right">
-            <button id="refreshBtn" class="btn">Refresh</button>
-          </div>
-        </div>
+// ====== State ======
+let instruments = [];     // [{id,name,segment,step}]
+let current = {
+  under_security_id: null,
+  under_exchange_segment: null,
+  expiry: null,
+  step: null,
+  strikes_window: 5       // default ATM ±5 (total ~11 rows)
+};
 
-        <p class="muted" id="metaLine" style="margin:10px 0 6px">Spot: — | Step: — | <span>PCR:</span> <span id="pcr">—</span></p>
+// ====== Helpers ======
+const fmt = (n, d = 2) => (n === null || n === undefined) ? "—" : Number(n).toFixed(d);
+const int = (n) => (n === null || n === undefined) ? "—" : Number(n).toLocaleString("en-IN");
 
-        <div style="overflow:auto; max-height:60vh; border:1px solid #1f2a37; border-radius:10px;">
-          <table id="chainTable" role="grid">
-            <thead>
-              <tr>
-                <th>CE LTP</th>
-                <th>CE IV</th>
-                <th>CE Δ</th>
-                <th>CE Γ</th>
-                <th>CE Θ</th>
-                <th>CE ν</th>
-                <th>CE OI</th>
-                <th>Δ OI</th>
-                <th>STRIKE</th>
-                <th>Δ OI</th>
-                <th>PE OI</th>
-                <th>PE ν</th>
-                <th>PE Γ</th>
-                <th>PE Δ</th>
-                <th>PE IV</th>
-                <th>PE LTP</th>
-              </tr>
-            </thead>
-            <tbody id="chainBody">
-              <!-- rows -->
-            </tbody>
-          </table>
-        </div>
+// Centered window: make sure ATM ± window (total rows = 2*window + 1)
+function centeredWindow(chain, spot, step, win) {
+  if (!Array.isArray(chain) || chain.length === 0 || !spot || !step) return chain;
+  const strikes = chain.map(r => r.strike);
+  const atm = strikes.reduce((a,b)=> Math.abs(b-spot)<Math.abs(a-spot)?b:a, strikes[0]);
+  const lo = atm - win * step;
+  const hi = atm + win * step;
+  return chain.filter(r => r.strike >= lo && r.strike <= hi);
+}
 
-        <div class="foot">
-          <span id="healthText" class="muted">Health: …</span>
-          <div style="display:flex; gap:8px;">
-            <button id="loadMoreBtn" class="btn btn-alt">Load more (+5)</button>
-          </div>
-        </div>
-      </section>
+function setHealth(msg, ok=true) {
+  healthText.textContent = ok ? msg : `⚠︎ ${msg}`;
+}
 
-      <!-- AI panel -->
-      <section class="card" style="width:360px; max-width:100%;">
-        <h5 style="margin-top:0">Vishnu · AI Analysis</h5>
-        <textarea id="aiPrompt" class="tight" rows="8"
-          placeholder="e.g. Identify supports/resistances from OI and suggest a trade idea with strike & SL…"></textarea>
-        <div class="foot">
-          <span class="muted">PCR: <span id="pcrRight">—</span></span>
-          <button id="aiBtn" class="btn">Analyze Current Chain</button>
-        </div>
-        <article id="aiOut" class="muted" style="margin-top:10px; white-space:pre-wrap"></article>
-      </section>
-    </div>
-  </main>
+// ====== API ======
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+}
 
-  <script src="/Js/dashboard.js"></script>
-</body>
-</html>
+async function loadInstruments() {
+  setHealth("Loading instruments…");
+  const data = await fetchJSON(`${apiBase}/instruments`);
+  instruments = data.data || [];
+  selInstrument.innerHTML = `<option value="">Select…</option>` +
+    instruments.map(i => `<option value="${i.id}" data-seg="${i.segment}" data-step="${i.step}">${i.name}</option>`).join("");
+  setHealth("Instruments ready.");
+}
+
+async function loadExpiries() {
+  selExpiry.innerHTML = `<option>Loading…</option>`;
+  const id  = Number(selInstrument.value);
+  const seg = selInstrument.selectedOptions[0]?.dataset.seg;
+  const step= Number(selInstrument.selectedOptions[0]?.dataset.step || 0);
+  current.under_security_id = id;
+  current.under_exchange_segment = seg;
+  current.step = step;
+
+  const data = await fetchJSON(
+    `${apiBase}/optionchain/expirylist?under_security_id=${id}&under_exchange_segment=${encodeURIComponent(seg)}`
+  );
+  const expiries = data.data || [];
+  selExpiry.innerHTML = expiries.map(e => `<option value="${e}">${e}</option>`).join("");
+  current.expiry = selExpiry.value;
+}
+
+async function loadChain() {
+  if (!current.under_security_id || !current.expiry) return;
+  setHealth("Loading chain…");
+
+  const qs = new URLSearchParams({
+    under_security_id: String(current.under_security_id),
+    under_exchange_segment: current.under_exchange_segment,
+    expiry: current.expiry,
+    strikes_window: String(current.strikes_window),
+    step: String(current.step || 100),
+    show_all: chkFull.checked ? "true" : "false",
+  });
+
+  const data = await fetchJSON(`${apiBase}/optionchain?${qs.toString()}`);
+  const spot = data.spot;
+  const step = current.step || 100;
+  const pcr  = data.summary?.pcr;
+
+  // if full not checked, ensure strictly ATM ± window (11 rows for window=5)
+  const rows = chkFull.checked ? (data.chain || []) : centeredWindow(data.chain || [], spot, step, current.strikes_window);
+
+  // meta lines
+  pcrEl.textContent = fmt(pcr, 2);
+  pcrRightEl.textContent = fmt(pcr, 2);
+  metaLine.textContent = `Spot: ${fmt(spot,2)} | Step: ${step} | PCR: ${fmt(pcr,2)}`;
+
+  // render table
+  bodyChain.innerHTML = rows.map(r => `
+    <tr>
+      <td>${fmt(r.call.price)}</td>
+      <td>${fmt(r.call.iv)}</td>
+      <td>${fmt(r.call.delta, 4)}</td>
+      <td>${fmt(r.call.gamma, 6)}</td>
+      <td>${fmt(r.call.theta, 2)}</td>
+      <td>${fmt(r.call.vega, 2)}</td>
+
+      <td>${int(r.call.oi)}</td>
+      <td>${int(r.call.chgOi)}</td>
+
+      <td><strong>${int(r.strike)}</strong></td>
+
+      <td>${int(r.put.chgOi)}</td>
+      <td>${int(r.put.oi)}</td>
+
+      <td>${fmt(r.put.vega, 2)}</td>
+      <td>${fmt(r.put.gamma, 6)}</td>
+      <td>${fmt(r.put.delta, 4)}</td>
+      <td>${fmt(r.put.iv)}</td>
+      <td>${fmt(r.put.price)}</td>
+    </tr>
+  `).join("");
+
+  setHealth(`Loaded ${rows.length} rows (window ±${current.strikes_window}).`);
+}
+
+// ====== Events ======
+selInstrument.addEventListener("change", async () => {
+  try {
+    await loadExpiries();
+    await loadChain();
+  } catch (e) {
+    setHealth(e.message, false);
+  }
+});
+
+selExpiry.addEventListener("change", () => {
+  current.expiry = selExpiry.value;
+});
+
+inpWindow.addEventListener("change", () => {
+  const v = Math.max(1, Math.min(50, Number(inpWindow.value) || 5));
+  current.strikes_window = v;      // this keeps “11 rows” default (±5)
+});
+
+chkFull.addEventListener("change", () => {
+  // just triggers re-render on next refresh
+});
+
+btnRefresh.addEventListener("click", async () => {
+  try { await loadChain(); } catch (e) { setHealth(e.message, false); }
+});
+
+btnLoadMore.addEventListener("click", async () => {
+  current.strikes_window += 5;     // +5 on each click ⇒ more rows around ATM
+  inpWindow.value = String(current.strikes_window);
+  try { await loadChain(); } catch (e) { setHealth(e.message, false); }
+});
+
+// ====== Init ======
+(async function init() {
+  try {
+    await loadInstruments();
+    // Optionally preselect first instrument if you want
+    if (selInstrument.options.length > 1) {
+      selInstrument.selectedIndex = 1;
+      await loadExpiries();
+      await loadChain();
+    }
+  } catch (e) {
+    setHealth(e.message, false);
+  }
+})();
