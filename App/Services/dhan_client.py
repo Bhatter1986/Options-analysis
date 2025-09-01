@@ -87,3 +87,27 @@ async def get_quote(req_body: Dict[str, Any]):
         r = await client.post(url, headers=_headers(), json=req_body)
         r.raise_for_status()
         return r.json()
+
+# ------------------ Historical Data APIs ------------------
+
+async def get_historical_daily(payload: dict):
+    """
+    Calls Dhan v2 POST /charts/historical
+    Body keys: securityId, exchangeSegment, instrument, expiryCode, oi, fromDate, toDate
+    """
+    url = f"{DHAN_BASE}/charts/historical"
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(url, headers=_headers(), json=payload)
+        r.raise_for_status()
+        return r.json()
+
+async def get_historical_intraday(payload: dict):
+    """
+    Calls Dhan v2 POST /charts/intraday
+    Body keys: securityId, exchangeSegment, instrument, interval, oi, fromDate, toDate
+    """
+    url = f"{DHAN_BASE}/charts/intraday"
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(url, headers=_headers(), json=payload)
+        r.raise_for_status()
+        return r.json()
