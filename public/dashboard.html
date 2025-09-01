@@ -17,7 +17,7 @@
     thead th { position: sticky; top:0; background:#10161f; z-index:1; }
     .muted { opacity: .7; }
     .badge { background:#1f2a37; padding:2px 8px; border-radius: 999px; font-size:.8rem; }
-    .grid { display:grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap:12px; }
+    .grid { display:grid; grid-template-columns: 1.2fr 1.2fr 0.8fr 0.8fr 0.8fr; gap:12px; align-items:end; }
     @media (max-width: 900px) { .row { flex-direction:column; } }
     .btn { background:#1e88e5; border:none; color:white; padding:8px 14px; border-radius:8px; cursor:pointer; }
     .btn:disabled { opacity:.6; cursor:not-allowed; }
@@ -38,7 +38,7 @@
       <section class="card grow">
         <h5 style="margin-top:0">Chain</h5>
 
-        <div class="grid" style="grid-template-columns: 1.2fr 1.2fr 0.8fr 0.8fr 0.8fr; align-items:end;">
+        <div class="grid">
           <div>
             <label>Instrument</label>
             <select id="instrument" class="tight"></select>
@@ -49,9 +49,9 @@
           </div>
           <div>
             <label>Window (± strikes)</label>
-            <input id="window" class="tight" type="number" min="1" max="50" value="15" />
+            <input id="window" class="tight" type="number" min="1" max="50" value="5" />
           </div>
-          <div class="nowrap" style="display:flex;gap:8px;align-items:center;margin-top:28px">
+          <div class="nowrap" style="display:flex;gap:8px;align-items:center;">
             <input id="fullChain" type="checkbox" />
             <label for="fullChain" class="muted">Show full chain</label>
           </div>
@@ -60,33 +60,20 @@
           </div>
         </div>
 
-        <p class="muted" id="metaLine" style="margin:10px 0 6px">Spot: — | Step: — | <span>PCR:</span> <span id="pcr">—</span></p>
+        <p class="muted" id="metaLine" style="margin:10px 0 6px">
+          Spot: — | Step: — | <span>PCR:</span> <span id="pcr">—</span>
+        </p>
 
         <div style="overflow:auto; max-height:60vh; border:1px solid #1f2a37; border-radius:10px;">
           <table id="chainTable" role="grid">
             <thead>
               <tr>
-                <th>CE LTP</th>
-                <th>CE IV</th>
-                <th>CE Δ</th>
-                <th>CE Γ</th>
-                <th>CE Θ</th>
-                <th>CE ν</th>
-                <th>CE OI</th>
-                <th>Δ OI</th>
-                <th>STRIKE</th>
-                <th>Δ OI</th>
-                <th>PE OI</th>
-                <th>PE ν</th>
-                <th>PE Γ</th>
-                <th>PE Δ</th>
-                <th>PE IV</th>
-                <th>PE LTP</th>
+                <th>CE LTP</th><th>CE IV</th><th>CE Δ</th><th>CE Γ</th><th>CE Θ</th><th>CE ν</th>
+                <th>CE OI</th><th>Δ OI</th><th>STRIKE</th>
+                <th>Δ OI</th><th>PE OI</th><th>PE ν</th><th>PE Γ</th><th>PE Δ</th><th>PE IV</th><th>PE LTP</th>
               </tr>
             </thead>
-            <tbody id="chainBody">
-              <!-- rows -->
-            </tbody>
+            <tbody id="chainBody"></tbody>
           </table>
         </div>
 
@@ -98,7 +85,7 @@
         </div>
       </section>
 
-      <!-- AI panel -->
+      <!-- AI panel (wired later) -->
       <section class="card" style="width:360px; max-width:100%;">
         <h5 style="margin-top:0">Vishnu · AI Analysis</h5>
         <textarea id="aiPrompt" class="tight" rows="8"
