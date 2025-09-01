@@ -83,9 +83,10 @@ def selftest():
 
 # ---- Include available routers
 _include_router("App.Routers.health")
-_include_router("App.Routers.instruments")       # <- will use original Dhan CSV
+_include_router("App.Routers.instruments")       # Instruments CSV based
 _include_router("App.Routers.optionchain")
 _include_router("App.Routers.marketfeed")
+_include_router("App.Routers.marketquote")       # ✅ NEW Market Quote router
 _include_router("App.Routers.ai")
 _include_router("App.Routers.optionchain_auto")
 _include_router("App.Routers.admin_refresh")
