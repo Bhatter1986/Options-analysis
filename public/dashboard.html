@@ -7,30 +7,30 @@
   <link rel="stylesheet" href="https://unpkg.com/@picocss/pico@2/css/pico.min.css">
   <style>
     :root { color-scheme: dark; }
-    body { background: #0f141a; }
-    main { max-width: 1280px; margin-inline: auto; }
+    body { background:#0f141a; }
+    main { max-width:1280px; margin-inline:auto; }
     .card { background:#121923; border:1px solid #1f2a37; border-radius:12px; padding:16px; }
     .row { display:flex; gap:16px; }
     .grow { flex:1 1 0; }
     .tight { padding:8px 12px; }
     table { font-variant-numeric: tabular-nums; }
     thead th { position: sticky; top:0; background:#10161f; z-index:1; }
-    .muted { opacity: .7; }
+    .muted { opacity:.7; }
     .badge { background:#1f2a37; padding:2px 8px; border-radius:999px; font-size:.8rem; }
-    .grid { display:grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap:12px; }
+    .grid { display:grid; grid-template-columns:1.2fr 1.2fr .8fr .8fr .8fr; gap:12px; align-items:end; }
     @media (max-width: 900px) { .row { flex-direction:column; } }
-    .btn { background:#1e88e5; border:none; color:white; padding:8px 14px; border-radius:8px; cursor:pointer; }
+    .btn { background:#1e88e5; border:none; color:#fff; padding:8px 14px; border-radius:8px; cursor:pointer; }
     .btn:disabled { opacity:.6; cursor:not-allowed; }
     .btn-alt { background:#263445; }
     .foot { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:12px; }
-    .nowrap { white-space: nowrap; }
+    .nowrap { white-space:nowrap; }
   </style>
 </head>
 <body>
   <main>
     <header style="display:flex;justify-content:space-between;align-items:center;margin:24px 0 12px">
       <h2 style="margin:0">Options Analysis Dashboard</h2>
-      <div class="badge">LIVE • AI: on</div>
+      <div class="badge">LIVE</div>
     </header>
 
     <div class="row">
@@ -38,7 +38,7 @@
       <section class="card grow">
         <h5 style="margin-top:0">Chain</h5>
 
-        <div class="grid" style="grid-template-columns: 1.2fr 1.2fr 0.8fr 0.8fr 0.8fr; align-items:end;">
+        <div class="grid">
           <div>
             <label>Instrument</label>
             <select id="instrument" class="tight"></select>
@@ -49,7 +49,7 @@
           </div>
           <div>
             <label>Window (± strikes)</label>
-            <input id="window" class="tight" type="number" min="1" max="50" value="15" />
+            <input id="window" class="tight" type="number" min="1" max="50" value="5" />
           </div>
           <div class="nowrap" style="display:flex;gap:8px;align-items:center;margin-top:28px">
             <input id="fullChain" type="checkbox" />
@@ -60,7 +60,7 @@
           </div>
         </div>
 
-        <p class="muted" id="metaLine" style="margin:10px 0 6px">Spot: — | Step: — | <span>PCR:</span> <span id="pcr">—</span></p>
+        <p class="muted" id="metaLine" style="margin:10px 0 6px">Spot: — | Step: — | PCR: —</p>
 
         <div style="overflow:auto; max-height:60vh; border:1px solid #1f2a37; border-radius:10px;">
           <table id="chainTable" role="grid">
@@ -85,24 +85,24 @@
               </tr>
             </thead>
             <tbody id="chainBody">
-              <!-- rows injected by JS -->
+              <tr><td colspan="16" class="muted">Select instrument & expiry, then click Refresh</td></tr>
             </tbody>
           </table>
         </div>
 
         <div class="foot">
-          <span id="healthText" class="muted">Health: …</span>
+          <span id="healthText" class="muted">Health: —</span>
           <div style="display:flex; gap:8px;">
             <button id="loadMoreBtn" class="btn btn-alt">Load more (+5)</button>
           </div>
         </div>
       </section>
 
-      <!-- AI panel -->
+      <!-- AI panel (optional; safe if /ai missing) -->
       <section class="card" style="width:360px; max-width:100%;">
         <h5 style="margin-top:0">Vishnu · AI Analysis</h5>
         <textarea id="aiPrompt" class="tight" rows="8"
-          placeholder="e.g. Identify supports/resistances from OI and suggest a trade idea with strike & SL…"></textarea>
+          placeholder="Identify supports/resistances from OI & suggest trade idea…"></textarea>
         <div class="foot">
           <span class="muted">PCR: <span id="pcrRight">—</span></span>
           <button id="aiBtn" class="btn">Analyze Current Chain</button>
@@ -112,8 +112,7 @@
     </div>
   </main>
 
-  <!-- IMPORTANT: lowercase path -->
-  <script src="/js/dashboard.js"></script>
+  <!-- IMPORTANT: path is /Js/ exactly (capital J) -->
+  <script src="/Js/dashboard.js"></script>
 </body>
 </html>
-```0
