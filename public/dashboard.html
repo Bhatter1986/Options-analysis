@@ -2,167 +2,115 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1, maximum-scale=1"
-  />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Options Analysis Dashboard</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
-    rel="stylesheet"
-  />
+  <link rel="stylesheet" href="https://unpkg.com/@picocss/pico@2/css/pico.min.css">
   <style>
-    :root {
-      --bg: #0f1720;
-      --panel: #111827;
-      --muted: #94a3b8;
-      --text: #e5e7eb;
-      --accent: #2396f3;
-      --accent-2: #22c55e;
-      --table-border: #1f2937;
-      --chip: #0b1220;
-    }
-    * { box-sizing: border-box; }
-    html, body { height: 100%; }
-    body {
-      margin: 0;
-      background: var(--bg);
-      color: var(--text);
-      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
-    }
-    .wrap {
-      max-width: 1200px; margin: 24px auto; padding: 0 12px;
-    }
-    h1 {
-      margin: 0 0 16px; font-weight: 700; letter-spacing: 0.2px;
-      display:flex; gap:8px; align-items:center;
-    }
-    .badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; background:#0b1220; border:1px solid #1f2937; color:#a5b4fc; }
-    .grid {
-      display: grid; gap: 16px; grid-template-columns: 1fr 380px;
-    }
-    .card {
-      background: var(--panel); border: 1px solid #1f2937; border-radius: 14px;
-    }
-    .card h3 { margin: 0; padding: 14px 16px; border-bottom: 1px solid #1f2937; font-size: 16px; }
-    .card .body { padding: 12px 16px 16px; }
-    label { font-size: 12px; color: var(--muted); display:block; margin-bottom: 6px; }
-    .row { display:flex; gap:12px; flex-wrap:wrap; }
-    select, input[type="number"], textarea {
-      background: #0b1220; color: var(--text); border: 1px solid #1f2937;
-      padding: 10px 12px; border-radius: 10px; outline: none; width: 100%;
-    }
-    .chk { display:flex; align-items:center; gap:8px; color: var(--muted); font-size: 12px; }
-    .btn {
-      background: var(--accent); color:white; border:none; padding: 10px 14px;
-      border-radius:10px; cursor:pointer; font-weight:600;
-    }
-    .btn:disabled { opacity: .6; cursor:not-allowed; }
-    .meta { color: var(--muted); font-size: 12px; padding: 6px 0 0; }
-    .table-wrap { border:1px solid var(--table-border); border-radius:12px; overflow:auto; }
-    table { border-collapse: collapse; width: 100%; min-width: 1100px; }
-    thead th {
-      position: sticky; top: 0;
-      background:#0f172a; color:#cbd5e1; font-weight:600; font-size:12px;
-      text-transform:uppercase; letter-spacing:.04em; padding:10px 8px; border-bottom:1px solid var(--table-border);
-      white-space:nowrap;
-    }
-    tbody td {
-      padding: 10px 8px; border-bottom:1px solid var(--table-border); font-variant-numeric: tabular-nums;
-    }
-    tbody tr:hover { background: #0b1220; }
-    .num { text-align:right; }
-    .strike { font-weight: 600; color:#e5e7eb; }
-    .good { color: #22c55e; }
-    .bad  { color: #ef4444; }
-    .pill { background:var(--chip); border:1px solid #1f2937; padding:3px 8px; border-radius:999px; font-size:12px; }
-    @media (max-width: 1100px){ .grid{ grid-template-columns: 1fr; } }
+    :root { color-scheme: dark; }
+    body { background: #0f141a; }
+    main { max-width: 1280px; margin-inline: auto; }
+    .card { background:#121923; border:1px solid #1f2a37; border-radius:12px; padding:16px; }
+    .row { display:flex; gap:16px; }
+    .grow { flex:1 1 0; }
+    .tight { padding:8px 12px; }
+    table { font-variant-numeric: tabular-nums; }
+    thead th { position: sticky; top:0; background:#10161f; z-index:1; }
+    .muted { opacity: .7; }
+    .badge { background:#1f2a37; padding:2px 8px; border-radius: 999px; font-size:.8rem; }
+    .grid { display:grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap:12px; }
+    @media (max-width: 900px) { .row { flex-direction:column; } }
+    .btn { background:#1e88e5; border:none; color:white; padding:8px 14px; border-radius:8px; cursor:pointer; }
+    .btn:disabled { opacity:.6; cursor:not-allowed; }
+    .btn-alt { background:#263445; }
+    .foot { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:12px; }
+    .nowrap { white-space: nowrap; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <h1>
-      Options Analysis Dashboard
-      <span id="liveBadge" class="badge">LIVE</span>
-      <span id="aiBadge" class="badge">AI: on</span>
-    </h1>
+  <main>
+    <header style="display:flex;justify-content:space-between;align-items:center;margin:24px 0 12px">
+      <h2 style="margin:0">Options Analysis Dashboard</h2>
+      <div class="badge">LIVE • AI: on</div>
+    </header>
 
-    <div class="grid">
+    <div class="row">
       <!-- Chain panel -->
-      <div class="card">
-        <h3>Chain</h3>
-        <div class="body">
-          <div class="row">
-            <div style="flex:1 1 220px">
-              <label>Instrument</label>
-              <select id="instrument"></select>
-            </div>
-            <div style="flex:1 1 180px">
-              <label>Expiry</label>
-              <select id="expiry"></select>
-            </div>
-            <div style="flex:0 0 140px">
-              <label>Window (± strikes)</label>
-              <input id="window" type="number" min="1" max="50" value="15" />
-            </div>
-            <div class="chk" style="flex:0 0 auto; padding-top:22px;">
-              <input id="fullChain" type="checkbox" />
-              <span>Show full chain</span>
-            </div>
-            <div style="flex:0 0 auto; padding-top:18px;">
-              <button id="refreshBtn" class="btn">Refresh</button>
-            </div>
+      <section class="card grow">
+        <h5 style="margin-top:0">Chain</h5>
+
+        <div class="grid" style="grid-template-columns: 1.2fr 1.2fr 0.8fr 0.8fr 0.8fr; align-items:end;">
+          <div>
+            <label>Instrument</label>
+            <select id="instrument" class="tight"></select>
           </div>
-
-          <div id="meta" class="meta">Spot: — | Step: — <span class="pill" style="margin-left:8px">PCR: —</span></div>
-
-          <div class="table-wrap" style="margin-top:10px">
-            <table id="chainTbl">
-              <thead>
-                <tr>
-                  <th>CE LTP</th>
-                  <th>CE IV</th>
-                  <th>CE Δ</th>
-                  <th>CE Γ</th>
-                  <th>CE Θ</th>
-                  <th>CE ν</th>
-                  <th>CE OI</th>
-                  <th>Δ OI</th>
-                  <th>STRIKE</th>
-                  <th>Δ OI</th>
-                  <th>PE OI</th>
-                  <th>PE ν</th>
-                  <th>PE Θ</th>
-                  <th>PE Γ</th>
-                  <th>PE Δ</th>
-                  <th>PE IV</th>
-                  <th>PE LTP</th>
-                </tr>
-              </thead>
-              <tbody id="chainBody"></tbody>
-            </table>
+          <div>
+            <label>Expiry</label>
+            <select id="expiry" class="tight"></select>
           </div>
-
-          <div id="health" class="meta" style="margin-top:8px;">Health: …</div>
+          <div>
+            <label>Window (± strikes)</label>
+            <input id="window" class="tight" type="number" min="1" max="50" value="15" />
+          </div>
+          <div class="nowrap" style="display:flex;gap:8px;align-items:center;margin-top:28px">
+            <input id="fullChain" type="checkbox" />
+            <label for="fullChain" class="muted">Show full chain</label>
+          </div>
+          <div style="text-align:right">
+            <button id="refreshBtn" class="btn">Refresh</button>
+          </div>
         </div>
-      </div>
+
+        <p class="muted" id="metaLine" style="margin:10px 0 6px">Spot: — | Step: — | <span>PCR:</span> <span id="pcr">—</span></p>
+
+        <div style="overflow:auto; max-height:60vh; border:1px solid #1f2a37; border-radius:10px;">
+          <table id="chainTable" role="grid">
+            <thead>
+              <tr>
+                <th>CE LTP</th>
+                <th>CE IV</th>
+                <th>CE Δ</th>
+                <th>CE Γ</th>
+                <th>CE Θ</th>
+                <th>CE ν</th>
+                <th>CE OI</th>
+                <th>Δ OI</th>
+                <th>STRIKE</th>
+                <th>Δ OI</th>
+                <th>PE OI</th>
+                <th>PE ν</th>
+                <th>PE Γ</th>
+                <th>PE Δ</th>
+                <th>PE IV</th>
+                <th>PE LTP</th>
+              </tr>
+            </thead>
+            <tbody id="chainBody">
+              <!-- rows -->
+            </tbody>
+          </table>
+        </div>
+
+        <div class="foot">
+          <span id="healthText" class="muted">Health: …</span>
+          <div style="display:flex; gap:8px;">
+            <button id="loadMoreBtn" class="btn btn-alt">Load more (+5)</button>
+          </div>
+        </div>
+      </section>
 
       <!-- AI panel -->
-      <div class="card">
-        <h3>Vishnu · AI Analysis</h3>
-        <div class="body">
-          <label for="aiPrompt">e.g. Identify supports/resistances from OI and suggest a trade idea with strike &amp; SL…</label>
-          <textarea id="aiPrompt" rows="8"></textarea>
-          <div style="display:flex; gap:10px; align-items:center; margin-top:10px">
-            <button id="aiBtn" class="btn" style="flex:0 0 auto">Analyze Current Chain</button>
-            <div id="pcr" class="pill">PCR: —</div>
-          </div>
-          <pre id="aiOut" style="white-space:pre-wrap; margin-top:10px; font-size:13px; color:#cbd5e1"></pre>
+      <section class="card" style="width:360px; max-width:100%;">
+        <h5 style="margin-top:0">Vishnu · AI Analysis</h5>
+        <textarea id="aiPrompt" class="tight" rows="8"
+          placeholder="e.g. Identify supports/resistances from OI and suggest a trade idea with strike & SL…"></textarea>
+        <div class="foot">
+          <span class="muted">PCR: <span id="pcrRight">—</span></span>
+          <button id="aiBtn" class="btn">Analyze Current Chain</button>
         </div>
-      </div>
+        <article id="aiOut" class="muted" style="margin-top:10px; white-space:pre-wrap"></article>
+      </section>
     </div>
-  </div>
+  </main>
 
   <script src="/Js/dashboard.js"></script>
 </body>
