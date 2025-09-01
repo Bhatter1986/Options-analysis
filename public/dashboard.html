@@ -4,85 +4,45 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Options Analysis Dashboard</title>
-
+  <link rel="stylesheet" href="https://unpkg.com/@picocss/pico@2/css/pico.min.css">
   <style>
-    :root{
-      color-scheme:dark;
-      --bg:#0c1117;
-      --card:#0f1621;
-      --muted:#8aa0b3;
-      --line:#1b2836;
-      --accent:#1e88e5;
-      --accent-2:#263445;
-      --chip:#142133;
-      --shadow: 0 6px 24px rgba(0,0,0,.35);
-      --radius:14px;
-    }
-    html,body{height:100%}
-    body{
-      margin:0; background:var(--bg); color:#e6edf3;
-      font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif;
-      -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
-    }
-    main{ max-width:1280px; margin-inline:auto; padding:28px 16px 40px }
-    .topbar{display:flex; align-items:center; justify-content:space-between; gap:16px; margin:6px 0 18px}
-    .title{font-size:clamp(20px,3.4vw,28px); font-weight:700; letter-spacing:.2px; margin:0}
-    .badges{display:flex; gap:8px}
-    .badge{ background:var(--chip); color:#9fb4c7; border:1px solid var(--line);
-      padding:6px 10px; border-radius:999px; font-weight:600; font-size:.78rem; }
-
-    .row{ display:grid; grid-template-columns: 1fr 360px; gap:18px }
-    @media (max-width: 980px){ .row{ grid-template-columns:1fr } }
-    .card{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
-      box-shadow:var(--shadow); padding:16px 16px 12px; }
-
-    .grid-controls{ display:grid; gap:12px; align-items:end; grid-template-columns: 1.1fr 1.1fr .8fr .7fr auto; }
-    @media (max-width: 760px){ .grid-controls{ grid-template-columns:1fr 1fr 1fr } .grid-controls .col-span{ grid-column:1 / -1 } }
-    label{ font-size:.86rem; color:var(--muted); margin-bottom:6px; display:block }
-    .tight{ padding:10px 12px; background:#0c131e; color:#e6edf3; border:1px solid var(--line); border-radius:10px }
-    .muted{ color:var(--muted) }
-
-    .btn{ background:var(--accent); color:white; border:none; border-radius:10px;
-      padding:10px 14px; font-weight:600; cursor:pointer; transition:transform .05s ease, filter .15s ease; }
-    .btn:hover{ filter:brightness(1.07) } .btn:active{ transform:translateY(1px) }
-    .btn-alt{ background:var(--accent-2) }
-
-    .meta{ margin:12px 0 6px; font-size:.92rem; color:var(--muted) }
-
-    .tbl-wrap{ overflow:auto; max-height:60vh; border:1px solid var(--line); border-radius:12px; background:#0c131e; }
-    table{ width:100%; border-collapse:separate; border-spacing:0; font-variant-numeric:tabular-nums; }
-    thead th{ position:sticky; top:0; z-index:2; background:#0f1824; color:#b9c7d6;
-      font-size:.78rem; letter-spacing:.3px; text-transform:uppercase; padding:10px 12px; border-bottom:1px solid var(--line); }
-    tbody td{ padding:10px 12px; border-bottom:1px solid #0e1822; }
-    tbody tr:nth-child(even){ background:#0d1520 } tbody tr:hover{ background:#0f1c2b }
-
-    .foot{ display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:12px }
-    .nowrap{ white-space:nowrap }
-
-    textarea.tight{ resize:vertical; min-height:160px }
-    .ai-out{ margin-top:10px; white-space:pre-wrap; color:#c7d7e5 }
-
-    *{ scrollbar-width:thin; scrollbar-color:#334b63 transparent }
-    *::-webkit-scrollbar{ height:10px; width:10px }
-    *::-webkit-scrollbar-thumb{ background:#2a3c50; border-radius:12px }
+    :root { color-scheme: dark; }
+    body { background:#0f141a; }
+    main { max-width:1280px; margin-inline:auto; }
+    .card { background:#121923; border:1px solid #1f2a37; border-radius:12px; padding:16px; }
+    .row { display:flex; gap:16px; }
+    .grow { flex:1 1 0; }
+    .tight { padding:8px 12px; }
+    table { font-variant-numeric: tabular-nums; }
+    thead th { position: sticky; top:0; background:#10161f; z-index:1; }
+    .muted { opacity:.7; }
+    .badge { background:#1f2a37; padding:2px 8px; border-radius:999px; font-size:.8rem; }
+    .grid { display:grid; grid-template-columns: 1.2fr 1.2fr 1fr 1fr 1fr; gap:12px; align-items:end; }
+    @media (max-width: 900px) { .row { flex-direction:column; } }
+    .btn { background:#1e88e5; border:none; color:#fff; padding:8px 14px; border-radius:8px; cursor:pointer; }
+    .btn:disabled { opacity:.55; cursor:not-allowed; }
+    .btn-alt { background:#263445; }
+    .foot { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:12px; }
+    .nowrap { white-space:nowrap; }
+    .legend { display:flex; gap:8px; flex-wrap:wrap; margin:6px 0 10px; }
+    .legend .badge { background:#253144; }
+    .kpi { display:flex; gap:12px; flex-wrap:wrap; margin:8px 0; }
+    .kpi .pill { background:#1c2735; border:1px solid #2a394c; border-radius:999px; padding:6px 10px; font-size:.9rem; }
   </style>
 </head>
 <body>
   <main>
-    <header class="topbar">
-      <h2 class="title">Options Analysis Dashboard</h2>
-      <div class="badges">
-        <span class="badge">LIVE</span>
-        <span class="badge">AI: on</span>
-      </div>
+    <header style="display:flex;justify-content:space-between;align-items:center;margin:24px 0 12px">
+      <h2 style="margin:0">Options Analysis Dashboard</h2>
+      <div class="badge" id="aiBadge">AI: off</div>
     </header>
 
     <div class="row">
-      <!-- Chain -->
-      <section class="card">
-        <h5 style="margin:0 0 8px">Chain</h5>
+      <!-- Chain panel -->
+      <section class="card grow">
+        <h5 style="margin-top:0">Option Chain</h5>
 
-        <div class="grid-controls">
+        <div class="grid">
           <div>
             <label>Instrument</label>
             <select id="instrument" class="tight"></select>
@@ -92,58 +52,87 @@
             <select id="expiry" class="tight"></select>
           </div>
           <div>
-            <label>Window (± strikes)</label>
-            <input id="window" type="number" min="1" max="50" value="5" class="tight" />
+            <label>Window (ATM ± strikes)</label>
+            <input id="window" class="tight" type="number" min="1" max="50" value="5" />
           </div>
-          <div class="nowrap">
-            <label>&nbsp;</label>
-            <div style="display:flex;align-items:center;gap:8px">
-              <input id="fullChain" type="checkbox" />
-              <span class="muted">Show full chain</span>
-            </div>
+          <div class="nowrap" style="display:flex;gap:8px;align-items:center">
+            <input id="fullChain" type="checkbox" />
+            <label for="fullChain" class="muted">Show full chain</label>
           </div>
-          <div class="col-span" style="text-align:right">
+          <div style="text-align:right">
             <button id="refreshBtn" class="btn">Refresh</button>
           </div>
         </div>
 
-        <p id="metaLine" class="meta">Spot: — | Step: — | PCR: <span id="pcr">—</span></p>
+        <div class="kpi" id="kpis">
+          <span class="pill">Spot: <b id="spotKpi">—</b></span>
+          <span class="pill">Step: <b id="stepKpi">—</b></span>
+          <span class="pill">PCR (OI): <b id="pcrKpi">—</b></span>
+          <span class="pill">Max Pain: <b id="maxPainKpi">—</b></span>
+          <span class="pill">Total CE OI: <b id="tcoiKpi">—</b></span>
+          <span class="pill">Total PE OI: <b id="tpoiKpi">—</b></span>
+        </div>
 
-        <div class="tbl-wrap">
+        <div class="legend">
+          <span class="badge">Δ = Delta</span>
+          <span class="badge">Γ = Gamma</span>
+          <span class="badge">Θ = Theta</span>
+          <span class="badge">ν = Vega</span>
+          <span class="badge">ΔOI = Change in Open Interest</span>
+          <span class="badge">OI ≥ 0 (never negative)</span>
+        </div>
+
+        <div style="overflow:auto; max-height:62vh; border:1px solid #1f2a37; border-radius:10px;">
           <table id="chainTable" role="grid">
             <thead>
               <tr>
-                <th>CE LTP</th><th>CE IV</th><th>CE Δ</th><th>CE Γ</th><th>CE Θ</th><th>CE ν</th>
-                <th>CE OI</th><th>Δ OI</th><th>STRIKE</th><th>Δ OI</th><th>PE OI</th>
-                <th>PE ν</th><th>PE Γ</th><th>PE Δ</th><th>PE IV</th><th>PE LTP</th>
+                <th>CE LTP</th>
+                <th>CE IV</th>
+                <th>CE Δ</th>
+                <th>CE Γ</th>
+                <th>CE Θ</th>
+                <th>CE ν</th>
+                <th>CE OI</th>
+                <th>ΔOI (CE)</th>
+                <th>STRIKE</th>
+                <th>ΔOI (PE)</th>
+                <th>PE OI</th>
+                <th>PE ν</th>
+                <th>PE Γ</th>
+                <th>PE Δ</th>
+                <th>PE IV</th>
+                <th>PE LTP</th>
               </tr>
             </thead>
-            <tbody id="chainBody"></tbody>
+            <tbody id="chainBody">
+              <tr><td colspan="16" class="muted">Select instrument & expiry, then Refresh.</td></tr>
+            </tbody>
           </table>
         </div>
 
         <div class="foot">
           <span id="healthText" class="muted">Health: …</span>
-          <div style="display:flex; gap:8px">
+          <div style="display:flex; gap:8px;">
             <button id="loadMoreBtn" class="btn btn-alt">Load more (+5)</button>
           </div>
         </div>
       </section>
 
-      <!-- AI -->
-      <section class="card" style="max-height:max(60vh, 420px);">
-        <h5 style="margin:0 0 8px">Vishnu · AI Analysis</h5>
-        <textarea id="aiPrompt" class="tight" placeholder="e.g. Identify supports/resistances from OI and suggest a trade idea with strike &amp; SL…"></textarea>
+      <!-- AI panel -->
+      <section class="card" style="width:360px; max-width:100%;">
+        <h5 style="margin-top:0">Vishnu · AI Analysis</h5>
+        <textarea id="aiPrompt" class="tight" rows="8"
+          placeholder="Explain supports/resistances from OI & Greeks; suggest a trade idea with strike & SL…"></textarea>
         <div class="foot">
-          <span class="muted">PCR: <span id="pcrRight">—</span></span>
+          <span class="muted">PCR (OI): <span id="pcrRight">—</span></span>
           <button id="aiBtn" class="btn">Analyze Current Chain</button>
         </div>
-        <article id="aiOut" class="ai-out muted"></article>
+        <article id="aiOut" class="muted" style="margin-top:10px; white-space:pre-wrap"></article>
       </section>
     </div>
   </main>
 
-  <!-- IMPORTANT: lowercase 'js' -->
-  <script src="/js/dashboard.js?v=10"></script>
+  <!-- IMPORTANT: path is /Js/ (capital J) per your server logs -->
+  <script src="/Js/dashboard.js?v=9"></script>
 </body>
 </html>
