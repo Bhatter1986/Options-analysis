@@ -13,126 +13,120 @@
     .row { display:flex; gap:16px; }
     .grow { flex:1 1 0; }
     .tight { padding:8px 12px; }
-    table { font-variant-numeric: tabular-nums; }
-    thead th { position: sticky; top:0; background:#10161f; z-index:1; }
     .muted { opacity:.7; }
-    .badge { background:#1f2a37; padding:2px 8px; border-radius:999px; font-size:.8rem; }
-    .grid { display:grid; grid-template-columns: 1.2fr 1.2fr 1fr 1fr 1fr; gap:12px; align-items:end; }
-    @media (max-width: 900px) { .row { flex-direction:column; } }
-    .btn { background:#1e88e5; border:none; color:#fff; padding:8px 14px; border-radius:8px; cursor:pointer; }
-    .btn:disabled { opacity:.55; cursor:not-allowed; }
-    .btn-alt { background:#263445; }
+    .badge { background:#1f2a37; padding:2px 8px; border-radius:999px; font-size:.8rem }
+    .chip { background:#0f1b2a; border:1px solid #1f2a37; padding:4px 10px; border-radius:999px; font-size:.85rem; white-space:nowrap }
+    table { font-variant-numeric:tabular-nums; }
+    thead th { position:sticky; top:0; background:#10161f; z-index:1; }
     .foot { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:12px; }
     .nowrap { white-space:nowrap; }
-    .legend { display:flex; gap:8px; flex-wrap:wrap; margin:6px 0 10px; }
-    .legend .badge { background:#253144; }
-    .kpi { display:flex; gap:12px; flex-wrap:wrap; margin:8px 0; }
-    .kpi .pill { background:#1c2735; border:1px solid #2a394c; border-radius:999px; padding:6px 10px; font-size:.9rem; }
+    .btn { background:#1e88e5; border:none; color:white; padding:8px 14px; border-radius:8px; cursor:pointer; }
+    .btn:disabled { opacity:.6; cursor:not-allowed; }
+    .btn-alt { background:#263445; }
+    @media (max-width: 900px){ .row{flex-direction:column;} }
   </style>
 </head>
 <body>
-  <main>
-    <header style="display:flex;justify-content:space-between;align-items:center;margin:24px 0 12px">
-      <h2 style="margin:0">Options Analysis Dashboard</h2>
-      <div class="badge" id="aiBadge">AI: off</div>
-    </header>
+<main>
+  <header style="display:flex;justify-content:space-between;align-items:center;margin:24px 0 12px">
+    <h2 style="margin:0">Options Analysis Dashboard</h2>
+    <div class="badge">LIVE • AI: on</div>
+  </header>
 
-    <div class="row">
-      <!-- Chain panel -->
-      <section class="card grow">
-        <h5 style="margin-top:0">Option Chain</h5>
+  <div class="row">
+    <!-- ========= Chain panel ========= -->
+    <section class="card grow">
+      <h5 style="margin-top:0">Option Chain</h5>
 
-        <div class="grid">
-          <div>
-            <label>Instrument</label>
-            <select id="instrument" class="tight"></select>
-          </div>
-          <div>
-            <label>Expiry</label>
-            <select id="expiry" class="tight"></select>
-          </div>
-          <div>
-            <label>Window (ATM ± strikes)</label>
-            <input id="window" class="tight" type="number" min="1" max="50" value="5" />
-          </div>
-          <div class="nowrap" style="display:flex;gap:8px;align-items:center">
-            <input id="fullChain" type="checkbox" />
-            <label for="fullChain" class="muted">Show full chain</label>
-          </div>
-          <div style="text-align:right">
-            <button id="refreshBtn" class="btn">Refresh</button>
-          </div>
+      <div class="row" style="gap:12px; align-items:flex-end;">
+        <div class="grow">
+          <label for="instrument">Instrument</label>
+          <select id="instrument" class="tight"></select>
         </div>
-
-        <div class="kpi" id="kpis">
-          <span class="pill">Spot: <b id="spotKpi">—</b></span>
-          <span class="pill">Step: <b id="stepKpi">—</b></span>
-          <span class="pill">PCR (OI): <b id="pcrKpi">—</b></span>
-          <span class="pill">Max Pain: <b id="maxPainKpi">—</b></span>
-          <span class="pill">Total CE OI: <b id="tcoiKpi">—</b></span>
-          <span class="pill">Total PE OI: <b id="tpoiKpi">—</b></span>
+        <div class="grow">
+          <label for="expiry">Expiry</label>
+          <select id="expiry" class="tight"></select>
         </div>
-
-        <div class="legend">
-          <span class="badge">Δ = Delta</span>
-          <span class="badge">Γ = Gamma</span>
-          <span class="badge">Θ = Theta</span>
-          <span class="badge">ν = Vega</span>
-          <span class="badge">ΔOI = Change in Open Interest</span>
-          <span class="badge">OI ≥ 0 (never negative)</span>
+        <div style="width:240px">
+          <label for="window">Window (ATM ± strikes)</label>
+          <input id="window" class="tight" type="number" min="1" max="50" value="5" />
         </div>
-
-        <div style="overflow:auto; max-height:62vh; border:1px solid #1f2a37; border-radius:10px;">
-          <table id="chainTable" role="grid">
-            <thead>
-              <tr>
-                <th>CE LTP</th>
-                <th>CE IV</th>
-                <th>CE Δ</th>
-                <th>CE Γ</th>
-                <th>CE Θ</th>
-                <th>CE ν</th>
-                <th>CE OI</th>
-                <th>ΔOI (CE)</th>
-                <th>STRIKE</th>
-                <th>ΔOI (PE)</th>
-                <th>PE OI</th>
-                <th>PE ν</th>
-                <th>PE Γ</th>
-                <th>PE Δ</th>
-                <th>PE IV</th>
-                <th>PE LTP</th>
-              </tr>
-            </thead>
-            <tbody id="chainBody">
-              <tr><td colspan="16" class="muted">Select instrument & expiry, then Refresh.</td></tr>
-            </tbody>
-          </table>
+        <div class="nowrap" style="display:flex;gap:8px;align-items:center;">
+          <input id="fullChain" type="checkbox" />
+          <label for="fullChain" class="muted">Show full chain</label>
         </div>
-
-        <div class="foot">
-          <span id="healthText" class="muted">Health: …</span>
-          <div style="display:flex; gap:8px;">
-            <button id="loadMoreBtn" class="btn btn-alt">Load more (+5)</button>
-          </div>
+        <div style="text-align:right">
+          <button id="refreshBtn" class="btn">Refresh</button>
         </div>
-      </section>
+      </div>
 
-      <!-- AI panel -->
-      <section class="card" style="width:360px; max-width:100%;">
-        <h5 style="margin-top:0">Vishnu · AI Analysis</h5>
-        <textarea id="aiPrompt" class="tight" rows="8"
-          placeholder="Explain supports/resistances from OI & Greeks; suggest a trade idea with strike & SL…"></textarea>
-        <div class="foot">
-          <span class="muted">PCR (OI): <span id="pcrRight">—</span></span>
-          <button id="aiBtn" class="btn">Analyze Current Chain</button>
-        </div>
-        <article id="aiOut" class="muted" style="margin-top:10px; white-space:pre-wrap"></article>
-      </section>
-    </div>
-  </main>
+      <!-- Summary chips -->
+      <div class="row" style="gap:8px; margin:10px 0 6px; flex-wrap:wrap">
+        <span class="chip">Spot: <strong id="spot">—</strong></span>
+        <span class="chip">Step: <strong id="step">—</strong></span>
+        <span class="chip">PCR (OI): <strong id="pcr">—</strong></span>
+        <span class="chip">Max Pain: <strong id="maxPain">—</strong></span>
+        <span class="chip">Total CE OI: <strong id="totCeOi">—</strong></span>
+        <span class="chip">Total PE OI: <strong id="totPeOi">—</strong></span>
+      </div>
 
-  <!-- IMPORTANT: path is /Js/ (capital J) per your server logs -->
-  <script src="/Js/dashboard.js?v=9"></script>
+      <!-- Legend -->
+      <div class="row" style="gap:8px; flex-wrap:wrap; margin-bottom:6px">
+        <span class="chip">Δ = Delta</span>
+        <span class="chip">Γ = Gamma</span>
+        <span class="chip">Θ = Theta</span>
+        <span class="chip">ν = Vega</span>
+        <span class="chip">ΔOI = Change in Open Interest</span>
+        <span class="chip">OI ≥ 0 (never negative)</span>
+      </div>
+
+      <div style="overflow:auto; max-height:60vh; border:1px solid #1f2a37; border-radius:10px;">
+        <table id="chainTable" role="grid">
+          <thead>
+            <tr>
+              <th>CE LTP</th>
+              <th>CE IV</th>
+              <th>CE Δ</th>
+              <th>CE Γ</th>
+              <th>CE Θ</th>
+              <th>CE ν</th>
+              <th>CE OI</th>
+              <th>ΔOI (CE)</th>
+              <th>STRIKE</th>
+              <th>ΔOI (PE)</th>
+              <th>PE OI</th>
+              <th>PE ν</th>
+              <th>PE Γ</th>
+              <th>PE Δ</th>
+              <th>PE IV</th>
+              <th>PE LTP</th>
+            </tr>
+          </thead>
+          <tbody id="chainBody"></tbody>
+        </table>
+      </div>
+
+      <div class="foot">
+        <span id="healthText" class="muted">Health: …</span>
+        <button id="loadMoreBtn" class="btn btn-alt">Load more (+5)</button>
+      </div>
+    </section>
+
+    <!-- ========= AI panel ========= -->
+    <section class="card" style="width:360px; max-width:100%;">
+      <h5 style="margin-top:0">Vishnu · AI Analysis</h5>
+      <textarea id="aiPrompt" class="tight" rows="8"
+        placeholder="Explain supports/resistances from OI & Greeks; suggest a trade idea with strike & SL…"></textarea>
+      <div class="foot">
+        <span class="muted">PCR (OI): <strong id="pcrRight">—</strong></span>
+        <button id="aiBtn" class="btn">Analyze Current Chain</button>
+      </div>
+      <article id="aiOut" class="muted" style="margin-top:10px; white-space:pre-wrap"></article>
+    </section>
+  </div>
+</main>
+
+<!-- IMPORTANT: lower-case 'js' path + cache-buster -->
+<script src="/js/dashboard.js?v=4"></script>
 </body>
 </html>
