@@ -5,15 +5,16 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Options Analysis Dashboard</title>
   <link rel="stylesheet" href="https://unpkg.com/@picocss/pico@2/css/pico.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     :root { color-scheme: dark; }
-    body  { background: #0f141a; }
-    main  { max-width: 1280px; margin-inline: auto; }
+    body  { background:#0f141a; }
+    main  { max-width: 1400px; margin-inline:auto; padding:16px; }
     .card { background:#121923; border:1px solid #1f2a37; border-radius:12px; padding:16px; }
-    .row  { display:flex; gap:16px; }
+    .row  { display:flex; gap:16px; align-items:flex-start; }
     .grow { flex:1 1 0; }
     .tight{ padding:8px 12px; }
-    table { font-variant-numeric: tabular-nums; }
+    table { font-variant-numeric: tabular-nums; width:100%; border-collapse:collapse; }
     thead th { position: sticky; top:0; background:#10161f; z-index:1; }
     .muted{ opacity:.7; }
     .badge{ background:#1f2a37; padding:2px 8px; border-radius:999px; font-size:.8rem;}
@@ -27,20 +28,24 @@
     .chips { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 12px; }
     .chip { background:#1b2430; border:1px solid #2a394a; padding:4px 10px; border-radius:999px; font-size:.85rem; }
     .chip b { opacity:.9; margin-right:6px; }
+    .spot { font-weight:bold; font-size:1.2rem; color:#4cafef; margin-left:12px; }
   </style>
 </head>
 <body>
   <main>
-    <header style="display:flex;justify-content:space-between;align-items:center;margin:24px 0 12px">
+    <!-- Top header -->
+    <header style="display:flex;justify-content:space-between;align-items:center;margin:16px 0 20px">
       <h2 style="margin:0">Options Analysis Dashboard</h2>
-      <div class="badge">LIVE • AI: on</div>
+      <div style="display:flex;align-items:center;gap:16px">
+        <span class="muted">Spot: <span id="spotLive" class="spot">—</span></span>
+        <div class="badge">LIVE • AI: on</div>
+      </div>
     </header>
 
     <div class="row">
-      <!-- Chain panel -->
+      <!-- Option Chain -->
       <section class="card grow">
         <h5 style="margin-top:0">Option Chain</h5>
-
         <div class="grid" style="grid-template-columns: 1.2fr 1.2fr 0.9fr 0.7fr 0.7fr; align-items:end;">
           <div>
             <label>Instrument</label>
@@ -64,57 +69,32 @@
         </div>
 
         <div class="chips">
-          <span class="chip"><b>Spot:</b> <span id="spot">—</span></span>
           <span class="chip"><b>Step:</b> <span id="step">—</span></span>
           <span class="chip"><b>PCR (OI):</b> <span id="pcr">—</span></span>
           <span class="chip"><b>Max Pain:</b> <span id="maxPain">—</span></span>
           <span class="chip"><b>Total CE OI:</b> <span id="totCeOi">—</span></span>
           <span class="chip"><b>Total PE OI:</b> <span id="totPeOi">—</span></span>
-          <span class="chip muted">Δ = Delta</span>
-          <span class="chip muted">Γ = Gamma</span>
-          <span class="chip muted">Θ = Theta</span>
-          <span class="chip muted">ν = Vega</span>
-          <span class="chip muted">ΔOI = Change in Open Interest</span>
-          <span class="chip muted">OI ≥ 0 (never negative)</span>
         </div>
 
         <div style="overflow:auto; max-height:60vh; border:1px solid #1f2a37; border-radius:10px;">
           <table id="chainTable" role="grid">
             <thead>
               <tr>
-                <th>CE LTP</th>
-                <th>CE IV</th>
-                <th>CE Δ</th>
-                <th>CE Γ</th>
-                <th>CE Θ</th>
-                <th>CE ν</th>
-                <th>CE OI</th>
-                <th>ΔOI (CE)</th>
-                <th>STRIKE</th>
-                <th>ΔOI (PE)</th>
-                <th>PE OI</th>
-                <th>PE ν</th>
-                <th>PE Γ</th>
-                <th>PE Δ</th>
-                <th>PE IV</th>
-                <th>PE LTP</th>
+                <th>CE LTP</th><th>CE IV</th><th>CE Δ</th><th>CE Γ</th><th>CE Θ</th><th>CE ν</th>
+                <th>CE OI</th><th>ΔOI (CE)</th><th>STRIKE</th><th>ΔOI (PE)</th><th>PE OI</th>
+                <th>PE ν</th><th>PE Γ</th><th>PE Δ</th><th>PE IV</th><th>PE LTP</th>
               </tr>
             </thead>
-            <tbody id="chainBody">
-              <!-- rows injected by JS -->
-            </tbody>
+            <tbody id="chainBody"></tbody>
           </table>
         </div>
-
         <div class="foot">
           <span id="healthText" class="muted">Ready.</span>
-          <div style="display:flex; gap:8px;">
-            <button id="loadMoreBtn" class="btn btn-alt">Load more (+5)</button>
-          </div>
+          <button id="loadMoreBtn" class="btn btn-alt">Load more (+5)</button>
         </div>
       </section>
 
-      <!-- AI panel -->
+      <!-- AI Analysis -->
       <section class="card" style="width:360px; max-width:100%;">
         <h5 style="margin-top:0">Vishnu · AI Analysis</h5>
         <textarea id="aiPrompt" class="tight" rows="8"
@@ -126,9 +106,29 @@
         <article id="aiOut" class="muted" style="margin-top:10px; white-space:pre-wrap"></article>
       </section>
     </div>
-  </main>
 
-  <!-- IMPORTANT: path is lowercase /js/ -->
-  <script src="/js/dashboard.js?v=12"></script>
+    <!-- Second row: Market Depth + Historical -->
+    <div class="row" style="margin-top:16px">
+      <!-- Market Depth -->
+      <section class="card grow">
+        <h5 style="margin-top:0">Market Depth (Top 20 Levels)</h5>
+        <div style="overflow:auto; max-height:50vh; border:1px solid #1f2a37; border-radius:10px;">
+          <table id="depthTable">
+            <thead>
+              <tr><th>Bid Qty</th><th>Bid Price</th><th>Ask Price</th><th>Ask Qty</th></tr>
+            </thead>
+            <tbody id="depthBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Historical Chart -->
+      <section class="card grow">
+        <h5 style="margin-top:0">Historical OHLC</h5>
+        <canvas id="histChart" style="height:300px"></canvas>
+      </section>
+    </div>
+  </main>
+  <script src="/js/dashboard.js?v=14"></script>
 </body>
 </html>
