@@ -5,16 +5,21 @@ from pathlib import Path
 from typing import Any, Dict, List
 import json
 
-# Local service that loads from Dhan master CSV
+# Local services
 from App.Services.instruments_loader import (
     load_dhan_master,
     search_dhan_master,
 )
 
+# Dhan client services (direct API calls)
+from App.Services.dhan_client import (
+    get_instruments_csv,
+    get_instruments_by_segment,
+)
+
 router = APIRouter(prefix="/instruments", tags=["Instruments"])
 
 # --- watchlist (fallback / UI list) -----------------------------------------
-# We try data/watchlist.json first; if missing then public/data/watchlist.json
 WL_PRIMARY = Path("data/watchlist.json")
 WL_PUBLIC  = Path("public/data/watchlist.json")
 
@@ -45,9 +50,7 @@ def _load_watchlist() -> List[Dict[str, Any]]:
 
 @router.get("")
 def list_instruments():
-    """
-    UI dropdown ke liye local watchlist. (If empty, front-end Dhan routes use karega.)
-    """
+    """UI dropdown ke liye local watchlist. (If empty, front-end Dhan routes use karega.)"""
     return {"status": "success", "data": _load_watchlist()}
 
 
@@ -80,9 +83,7 @@ def list_from_dhan_live():
 
 @router.get("/search_dhan")
 def search_dhan(q: str = Query(..., description="case-insensitive contains match")):
-    """
-    Dhan master CSV par text search.
-    """
+    """Dhan master CSV par text search."""
     try:
         data = search_dhan_master(q)
         return {"status": "success", "data": data}
@@ -90,7 +91,6 @@ def search_dhan(q: str = Query(..., description="case-insensitive contains match
         raise HTTPException(500, f"Dhan CSV search failed: {e}")
 
 
-# (optional) simple indices-only helper if you ever need it
 @router.get("/indices")
 def list_indices_only():
     """Return only index segments from Dhan master."""
@@ -99,3 +99,24 @@ def list_indices_only():
         return {"status": "success", "data": data}
     except Exception as e:
         raise HTTPException(500, f"Dhan CSV load failed: {e}")
+
+
+# --- Direct Dhan API Endpoints ----------------------------------------------
+
+@router.get("/csv")
+async def instruments_csv(detailed: bool = Query(False, description="Fetch detailed CSV if true")):
+    """Returns CSV data as JSON (rows of dicts). Use detailed=true for the detailed master."""
+    try:
+        df = await get_instruments_csv(detailed)
+        return {"status": "success", "rows": df.to_dict(orient="records")}
+    except Exception as e:
+        raise HTTPException(502, f"Failed to fetch instruments CSV: {e}")
+
+
+@router.get("/segment/{exchange_segment}")
+async def instruments_segment(exchange_segment: str):
+    """Calls Dhan v2 /instrument/{exchangeSegment}"""
+    try:
+        return await get_instruments_by_segment(exchange_segment)
+    except Exception as e:
+        raise HTTPException(502, f"Failed to fetch instruments by segment: {e}")
