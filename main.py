@@ -91,6 +91,6 @@ _include_router("App.Routers.ai")
 _include_router("App.Routers.optionchain_auto")
 _include_router("App.Routers.admin_refresh")
 _include_router("App.Routers.ui_api")
-
+_include_router("App.Routers.live_feed")
 # ---- Static site (serve /public as root)
 app.mount("/", StaticFiles(directory="public", html=True), name="static")
