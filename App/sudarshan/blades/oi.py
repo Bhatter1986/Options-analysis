@@ -1,7 +1,5 @@
-async def analyze_oi(data):
-    """
-    Open Interest Analysis:
-    - Input: option chain OI data
-    - Output: dict with PCR, max pain, buildup signals
-    """
-    return {"pcr": None, "max_pain": None, "signal": "neutral"}
+from typing import Dict, Any
+
+def analyze_oi(ctx: Dict[str, Any]) -> Dict[str, Any]:
+    # TODO: real OI pulse; abhi dummy
+    return {"signal": "long_buildup", "pcr": 1.05, "confidence": 0.65}
