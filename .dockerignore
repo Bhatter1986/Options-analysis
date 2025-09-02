@@ -1,0 +1,21 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual envs / IDE / local stuff
+.venv/
+.env
+.vscode/
+.idea/
+
+# Git / OS
+.git/
+.gitignore
+.DS_Store
+
+# Logs & data dumps
+*.log
+data/*.csv
+data/*.parquet
