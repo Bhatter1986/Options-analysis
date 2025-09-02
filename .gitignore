@@ -1,14 +1,29 @@
-!data/instruments.csv
+# --- Environment files (keep secrets out of git)
 .env
-.env
-.env
-.env
+.env.*          # .env.local, .env.prod, etc
+!.env.example   # keep the sample in repo
 
-# Python cache
+# --- Python cache / virtualenvs
 __pycache__/
 *.py[cod]
-.venv/
-
-# ignore venvs
+*.pyo
+*.egg-info/
 .venv/
 **/.venv/
+
+# --- Test & coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- Build artifacts
+build/
+dist/
+
+# --- Editors & OS noise
+.DS_Store
+*.swp
+
+# --- Data: ignore all, but keep the one CSV you want
+data/*
+!data/instruments.csv
