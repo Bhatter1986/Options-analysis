@@ -2,6 +2,7 @@
 from __future__ import annotations
 import os, importlib, logging
 from typing import Optional
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -22,14 +23,16 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# CORS
+# ---- CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"],
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# helper to conditionally include routers
+# ---- helper to conditionally include routers
 def _include_router(module_path: str, attr: str = "router") -> bool:
     try:
         module = importlib.import_module(module_path)
@@ -44,6 +47,7 @@ def _include_router(module_path: str, attr: str = "router") -> bool:
     log.info(f"[main] Included router: {module_path}")
     return True
 
+# ---- root & self-test
 @app.get("/")
 def root():
     return {"status": "ok", "name": "Dhan Options Analysis API"}
@@ -51,9 +55,10 @@ def root():
 @app.get("/__selftest")
 def selftest():
     env = "Render" if os.getenv("RENDER") else "Local"
-    return {"ok": True, "env": env}
+    mode = os.getenv("APP_MODE", "SANDBOX")
+    return {"ok": True, "env": env, "mode": mode}
 
-# ---- EXISTING routers
+# ---- include existing routers
 _include_router("App.Routers.health")
 _include_router("App.Routers.instruments")
 _include_router("App.Routers.optionchain")
@@ -67,10 +72,10 @@ _include_router("App.Routers.live_feed")
 _include_router("App.Routers.depth20_ws")
 _include_router("App.Routers.historical")
 _include_router("App.Routers.annexure")
-_include_router("App.sudarshan.api.router")
-# ---- ✅ Sudarshan (AFTER app is created)
+
+# ---- ✅ Sudarshan (prefix ke saath; DO NOT include above via _include_router)
 from App.sudarshan.api.router import router as sudarshan_router
 app.include_router(sudarshan_router, prefix="/sudarshan", tags=["Sudarshan"])
 
-# ---- Static site
+# ---- Static site (serve /public as root)
 app.mount("/", StaticFiles(directory="public", html=True), name="static")
