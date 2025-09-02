@@ -1,57 +1,61 @@
-mkdir -p App/sudarshan/blades && cat > App/sudarshan/blades/__init__.py <<'PY'
-from .price import analyze_price
-from .oi import analyze_oi
-from .greeks import analyze_greeks
-from .volume import analyze_volume
-from .sentiment import analyze_sentiment
-PY
+cat > App/sudarshan/engine/fusion.py <<'PY'
+from __future__ import annotations
+from typing import Dict, Any
 
-cat > App/sudarshan/blades/price.py <<'PY'
-async def analyze_price(data):
-    """
-    Price Action Analysis:
-    - Input: candle data, EMA, VWAP, S/R
-    - Output: dict with trend & support/resistance
-    """
-    return {"trend": "neutral", "support": None, "resistance": None}
-PY
+DEFAULT_WEIGHTS: Dict[str, float] = {
+    "price": 1.0,
+    "oi": 1.0,
+    "greeks": 0.8,
+    "volume": 0.7,
+    "sentiment": 0.5,
+}
+DEFAULT_MIN_CONFIRMS = 3
 
-cat > App/sudarshan/blades/oi.py <<'PY'
-async def analyze_oi(data):
-    """
-    Open Interest Analysis:
-    - Input: option chain OI data
-    - Output: dict with PCR, max pain, buildup signals
-    """
-    return {"pcr": None, "max_pain": None, "signal": "neutral"}
-PY
+def _score_bool(ok: bool) -> float:
+    return 1.0 if ok else 0.0
 
-cat > App/sudarshan/blades/greeks.py <<'PY'
-async def analyze_greeks(data):
-    """
-    Greeks Analysis:
-    - Input: option chain with greeks
-    - Output: dict with delta/theta/vega trends
-    """
-    return {"delta_bias": "flat", "iv_percentile": None}
-PY
+async def fuse(
+    inputs: Dict[str, Any],
+    weights: Dict[str, float] | None = None,
+    min_confirms: int | None = None,
+) -> Dict[str, Any]:
+    w = {**DEFAULT_WEIGHTS, **(weights or {})}
+    minc = int(min_confirms or DEFAULT_MIN_CONFIRMS)
 
-cat > App/sudarshan/blades/volume.py <<'PY'
-async def analyze_volume(data):
-    """
-    Volume Analysis:
-    - Input: market volume & depth
-    - Output: dict with volume spike, confirmation
-    """
-    return {"volume_spike": False, "confirmation": False}
-PY
+    detail: Dict[str, bool] = {}
 
-cat > App/sudarshan/blades/sentiment.py <<'PY'
-async def analyze_sentiment(data):
-    """
-    Sentiment Analysis:
-    - Input: FII/DII, global indices, news sentiment
-    - Output: dict with bullish/bearish/neutral
-    """
-    return {"sentiment": "neutral"}
+    price_ok = (inputs.get("price") or {}).get("trend") == "bullish"
+    detail["price"] = bool(price_ok)
+
+    oi_ok = (inputs.get("oi") or {}).get("signal") == "long_buildup"
+    detail["oi"] = bool(oi_ok)
+
+    greeks_ok = (inputs.get("greeks") or {}).get("delta_bias") == "long"
+    detail["greeks"] = bool(greeks_ok)
+
+    vol = inputs.get("volume") or {}
+    volume_ok = bool(vol.get("volume_spike")) and bool(vol.get("confirmation", True))
+    detail["volume"] = bool(volume_ok)
+
+    sentiment_ok = (inputs.get("sentiment") or {}).get("sentiment", "neutral") == "bullish"
+    detail["sentiment"] = bool(sentiment_ok)
+
+    confirms = sum(1 for v in detail.values() if v)
+    confirmation = confirms >= minc
+
+    score = (
+        w["price"] * _score_bool(price_ok)
+        + w["oi"] * _score_bool(oi_ok)
+        + w["greeks"] * _score_bool(greeks_ok)
+        + w["volume"] * _score_bool(volume_ok)
+        + w["sentiment"] * _score_bool(sentiment_ok)
+    ) / (sum(w.values()) or 1.0)
+
+    return {
+        "confirmation": confirmation,
+        "confirms": int(confirms),
+        "min_confirms": minc,
+        "score": round(score, 3),
+        "detail": detail,
+    }
 PY
