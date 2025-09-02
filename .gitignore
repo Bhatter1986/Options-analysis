@@ -8,3 +8,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+
+# ignore venvs
+.venv/
+**/.venv/
