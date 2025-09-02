@@ -1,5 +1,10 @@
-from typing import Dict, Any
+# App/sudarshan/blades/oi.py
+from typing import Dict, Any, Optional
 
-def analyze_oi(ctx: Dict[str, Any]) -> Dict[str, Any]:
-    # TODO: real OI pulse; abhi dummy
-    return {"signal": "long_buildup", "pcr": 1.05, "confidence": 0.65}
+async def analyze_oi(data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Input: {"signal": "long_buildup" | "short_buildup" | "long_unwinding" | "short_covering" | "neutral"}
+    """
+    data = data or {}
+    signal = str(data.get("signal", "neutral")).lower()
+    return {"signal": signal}
