@@ -1,12 +1,7 @@
 # App/sudarshan/blades/volume.py
-from typing import Dict, Any, Optional
-
-async def analyze_volume(data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """
-    Input: {"volume_spike": bool, "confirmation": bool}
-    """
+async def analyze_volume(data: dict | None = None):
     data = data or {}
-    return {
-        "volume_spike": bool(data.get("volume_spike", False)),
-        "confirmation": bool(data.get("confirmation", False)),
-    }
+    spike = bool(data.get("volume_spike", False))
+    confirm = bool(data.get("confirmation", False))
+    score = 1.0 if (spike and confirm) else (0.5 if spike else 0.0)
+    return {"volume_spike": spike, "confirmation": confirm, "score": score}
