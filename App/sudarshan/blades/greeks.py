@@ -1,10 +1,6 @@
 # App/sudarshan/blades/greeks.py
-from typing import Dict, Any, Optional
-
-async def analyze_greeks(data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """
-    Input: {"delta_bias": "long" | "short" | "neutral"}
-    """
+async def analyze_greeks(data: dict | None = None):
     data = data or {}
     delta_bias = str(data.get("delta_bias", "neutral")).lower()
-    return {"delta_bias": delta_bias}
+    score_map = {"long": 1.0, "short": -1.0, "neutral": 0.0}
+    return {"delta_bias": delta_bias, "score": score_map.get(delta_bias, 0.0)}
