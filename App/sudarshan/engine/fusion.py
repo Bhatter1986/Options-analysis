@@ -1,7 +1,9 @@
-cat > App/sudarshan/engine/fusion.py <<'PY'
+# App/sudarshan/engine/fusion.py
 from __future__ import annotations
-from typing import Dict, Any
 
+from typing import Any, Dict, Mapping
+
+# ---- Defaults (keep in sync with your UI sliders, if any)
 DEFAULT_WEIGHTS: Dict[str, float] = {
     "price": 1.0,
     "oi": 1.0,
@@ -9,53 +11,122 @@ DEFAULT_WEIGHTS: Dict[str, float] = {
     "volume": 0.7,
     "sentiment": 0.5,
 }
-DEFAULT_MIN_CONFIRMS = 3
+DEFAULT_MIN_CONFIRMS: int = 3
+
+
+def _as_bool(value: Any) -> bool:
+    """Safely coerce truthy values to bool."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        v = value.strip().lower()
+        return v in ("1", "true", "yes", "y", "on")
+    return bool(value)
+
 
 def _score_bool(ok: bool) -> float:
     return 1.0 if ok else 0.0
 
+
+def _normalize_weights(w: Mapping[str, float] | None) -> Dict[str, float]:
+    """Merge with defaults and ensure all required keys exist."""
+    merged = dict(DEFAULT_WEIGHTS)
+    if w:
+        for k, v in w.items():
+            try:
+                merged[k] = float(v)
+            except Exception:
+                # ignore bad inputs; keep default
+                pass
+    return merged
+
+
 async def fuse(
-    inputs: Dict[str, Any],
-    weights: Dict[str, float] | None = None,
+    inputs: Mapping[str, Any],
+    weights: Mapping[str, float] | None = None,
     min_confirms: int | None = None,
 ) -> Dict[str, Any]:
-    w = {**DEFAULT_WEIGHTS, **(weights or {})}
+    """
+    Combine individual blade decisions into one fused signal.
+
+    Parameters
+    ----------
+    inputs:
+        Dict with per-blade outputs, e.g.:
+        {
+          "price":     {"trend": "bullish"},
+          "oi":        {"signal": "long_buildup"},
+          "greeks":    {"delta_bias": "long"},
+          "volume":    {"volume_spike": True, "confirmation": True},
+          "sentiment": {"sentiment": "bullish"}
+        }
+    weights:
+        Optional per-blade weights. Missing keys fall back to defaults.
+    min_confirms:
+        Minimum number of blades that must be true for confirmation.
+
+    Returns
+    -------
+    {
+      "confirmation": bool,
+      "confirms": int,
+      "min_confirms": int,
+      "score": float (0..1),
+      "detail": { "price": bool, "oi": bool, "greeks": bool, "volume": bool, "sentiment": bool }
+    }
+    """
+    # Prepare config
+    w = _normalize_weights(weights)
     minc = int(min_confirms or DEFAULT_MIN_CONFIRMS)
 
+    # ----- Evaluate each blade into True/False
     detail: Dict[str, bool] = {}
 
-    price_ok = (inputs.get("price") or {}).get("trend") == "bullish"
-    detail["price"] = bool(price_ok)
+    # price: bullish?
+    price = (inputs.get("price") or {})
+    detail["price"] = (price.get("trend") or "").lower() == "bullish"
 
-    oi_ok = (inputs.get("oi") or {}).get("signal") == "long_buildup"
-    detail["oi"] = bool(oi_ok)
+    # oi: long buildup?
+    oi = (inputs.get("oi") or {})
+    detail["oi"] = (oi.get("signal") or "").lower() == "long_buildup"
 
-    greeks_ok = (inputs.get("greeks") or {}).get("delta_bias") == "long"
-    detail["greeks"] = bool(greeks_ok)
+    # greeks: delta bias long?
+    greeks = (inputs.get("greeks") or {})
+    detail["greeks"] = (greeks.get("delta_bias") or "").lower() == "long"
 
-    vol = inputs.get("volume") or {}
-    volume_ok = bool(vol.get("volume_spike")) and bool(vol.get("confirmation", True))
-    detail["volume"] = bool(volume_ok)
+    # volume: spike AND confirmation?
+    vol = (inputs.get("volume") or {})
+    vol_spike = _as_bool(vol.get("volume_spike", False))
+    vol_conf  = _as_bool(vol.get("confirmation", True))  # default True if not provided
+    detail["volume"] = vol_spike and vol_conf
 
-    sentiment_ok = (inputs.get("sentiment") or {}).get("sentiment", "neutral") == "bullish"
-    detail["sentiment"] = bool(sentiment_ok)
+    # sentiment: bullish?
+    sent = (inputs.get("sentiment") or {})
+    detail["sentiment"] = (sent.get("sentiment") or "").lower() == "bullish"
 
+    # ----- Aggregate
     confirms = sum(1 for v in detail.values() if v)
-    confirmation = confirms >= minc
+    confirmation = confirms >= max(1, minc)  # guard against weird minc
 
-    score = (
-        w["price"] * _score_bool(price_ok)
-        + w["oi"] * _score_bool(oi_ok)
-        + w["greeks"] * _score_bool(greeks_ok)
-        + w["volume"] * _score_bool(volume_ok)
-        + w["sentiment"] * _score_bool(sentiment_ok)
-    ) / (sum(w.values()) or 1.0)
+    total_weight = sum(float(v) for v in w.values()) or 1.0
+    raw_score = (
+        w["price"] * _score_bool(detail["price"])
+        + w["oi"] * _score_bool(detail["oi"])
+        + w["greeks"] * _score_bool(detail["greeks"])
+        + w["volume"] * _score_bool(detail["volume"])
+        + w["sentiment"] * _score_bool(detail["sentiment"])
+    )
+    score = round(raw_score / total_weight, 3)
 
     return {
         "confirmation": confirmation,
         "confirms": int(confirms),
-        "min_confirms": minc,
-        "score": round(score, 3),
+        "min_confirms": int(minc),
+        "score": score,
         "detail": detail,
     }
-PY
+
+
+__all__ = ["fuse", "DEFAULT_WEIGHTS", "DEFAULT_MIN_CONFIRMS"]
