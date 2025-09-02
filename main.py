@@ -67,7 +67,7 @@ _include_router("App.Routers.live_feed")
 _include_router("App.Routers.depth20_ws")
 _include_router("App.Routers.historical")
 _include_router("App.Routers.annexure")
-
+_include_router("App.sudarshan.api.router")
 # ---- ✅ Sudarshan (AFTER app is created)
 from App.sudarshan.api.router import router as sudarshan_router
 app.include_router(sudarshan_router, prefix="/sudarshan", tags=["Sudarshan"])
