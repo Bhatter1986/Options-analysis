@@ -1,11 +1,11 @@
-from typing import Dict, Any
+# App/sudarshan/blades/price.py
+from typing import Dict, Any, Optional
 
-def analyze_price(data: Dict[str, Any]) -> Dict[str, Any]:
+async def analyze_price(data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
-    Very basic price blade:
-    expects {"trend": "bullish"|"bearish"|"neutral"}; returns a score.
+    Input: {"trend": "bullish" | "bearish" | "neutral"}
+    Robust to None input.
     """
+    data = data or {}
     trend = str(data.get("trend", "neutral")).lower()
-    score_map = {"bullish": 0.7, "bearish": 0.7, "neutral": 0.5}
-    score = score_map.get(trend, 0.5)
-    return {"trend": trend, "score": score}
+    return {"trend": trend}
