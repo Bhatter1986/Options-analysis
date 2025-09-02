@@ -10,15 +10,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-# load .env
+# ---- .env (optional)
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except Exception:
     pass
 
+# ---- logger
 log = logging.getLogger("uvicorn.error")
 
+# ---- FastAPI app
 app = FastAPI(
     title="Dhan Options Analysis API",
     version="1.0",
@@ -26,7 +28,7 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# ---- CORS (open for all; tighten later if needed)
+# ---- CORS (open now; restrict later as needed)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -81,12 +83,12 @@ def selftest():
         },
     }
 
-# ---- Include available routers
+# ---- Include available core routers
 _include_router("App.Routers.health")
 _include_router("App.Routers.instruments")       # Instruments CSV based
 _include_router("App.Routers.optionchain")
 _include_router("App.Routers.marketfeed")
-_include_router("App.Routers.marketquote")       # ✅ NEW Market Quote router
+_include_router("App.Routers.marketquote")       # ✅ Market Quote router
 _include_router("App.Routers.ai")
 _include_router("App.Routers.optionchain_auto")
 _include_router("App.Routers.admin_refresh")
@@ -95,5 +97,20 @@ _include_router("App.Routers.live_feed")
 _include_router("App.Routers.depth20_ws")
 _include_router("App.Routers.historical")
 _include_router("App.Routers.annexure")
-# ---- Static site (serve /public as root)
+
+# ---- Include Sudarshan engine routes (clean import + prefix)
+try:
+    from App.sudarshan.api.router import router as sudarshan_router
+    app.include_router(sudarshan_router, prefix="/sudarshan", tags=["Sudarshan"])
+    log.info("[main] Included router: App.sudarshan.api.router (prefix=/sudarshan)")
+except Exception as e:
+    log.warning(f"[main] Skipping Sudarshan router: {e}")
+
+# ---- Static site (serve /public as root fallback)
+# NOTE: This mount is last so it won't shadow API routes like /docs, /sudarshan, etc.
 app.mount("/", StaticFiles(directory="public", html=True), name="static")
+
+# ---- Uvicorn entrypoint
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "8000")), reload=True)
