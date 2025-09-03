@@ -73,16 +73,11 @@ _include_router("App.Routers.depth20_ws")
 _include_router("App.Routers.historical")
 _include_router("App.Routers.annexure")
 
-# ---- Sudarshan (router already has prefix="/sudarshan")
-from App.sudarshan.api.router import router as sudarshan_router
-app.include_router(sudarshan_router)
+# ---- Sudarshan (optional, safe import)
+_include_router("App.sudarshan.api.router")
 
-# ---- UI helper API (if present) — has its own prefix inside the module
-try:
-    from App.Ui.ui_router import router as ui_router
-    app.include_router(ui_router)
-except Exception as e:
-    log.warning(f"[main] UI router optional; skipping: {e}")
+# ---- UI helper API (if present)
+_include_router("App.Ui.ui_router")
 
 # ---- Static site (serve /public as root)
 app.mount("/", StaticFiles(directory="public", html=True), name="static")
