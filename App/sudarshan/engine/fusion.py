@@ -1,40 +1,47 @@
 from __future__ import annotations
-from typing import Dict, Any, Optional
+from typing import Dict, Tuple
 
-# Map signals to numeric scores
-_SCORE = {"bullish": 1.0, "neutral": 0.0, "bearish": -1.0}
+Signal = str  # "bullish" | "bearish" | "neutral"
 
-def normalize_weights(override: Optional[Dict[str, float]], defaults: Dict[str, float]) -> Dict[str, float]:
-    w = dict(defaults)
-    if override:
-        for k, v in override.items():
-            if k in w and isinstance(v, (int, float)) and v >= 0:
-                w[k] = float(v)
+def _score_of(signal: Signal) -> float:
+    if signal == "bullish": return +1.0
+    if signal == "bearish": return -1.0
+    return 0.0  # neutral
 
-    total = sum(w.values()) or 1.0
-    return {k: (v / total) for k, v in w.items()}
+def normalize_weights(w: Dict[str, float] | None, defaults: Dict[str, float]) -> Dict[str, float]:
+    """Merge user weights with defaults & normalize to sum=1 (if any positive)."""
+    merged = {**defaults, **(w or {})}
+    total = sum(x for x in merged.values() if x > 0)
+    if total <= 0:
+        return {k: 0.0 for k in merged}
+    return {k: v / total if v > 0 else 0.0 for k, v in merged.items()}
 
-def _signal_score(sig: str) -> float:
-    return _SCORE.get(str(sig).lower(), 0.0)
-
-def fuse(per_blade: Dict[str, Dict[str, Any]],
-         weights: Dict[str, float],
-         min_confirms: int = 3) -> Dict[str, Any]:
-    # Weighted aggregate
+def fuse(
+    per_blade: Dict[str, Dict],
+    weights: Dict[str, float],
+    min_confirms: int,
+) -> Tuple[float, int, str]:
+    """
+    per_blade: {blade: {"signal": "bullish|bearish|neutral", ...}}
+    weights: normalized weights for each blade
+    returns: (agg_score, confirms, verdict)
+    """
     agg = 0.0
-    for name, w in weights.items():
-        sig = (per_blade.get(name, {}).get("signal") or "neutral")
-        agg += _signal_score(sig) * w
+    confirms = 0
+    for blade, res in per_blade.items():
+        sig: Signal = str(res.get("signal", "neutral")).lower()
+        s = _score_of(sig)
+        w = float(weights.get(blade, 0.0))
+        agg += w * s
+        if sig in ("bullish", "bearish"):
+            confirms += 1
 
-    # Small deadband so tiny noise != verdict
-    threshold = 0.15
-    if   agg >  threshold: verdict = "bullish"
-    elif agg < -threshold: verdict = "bearish"
-    else:                  verdict = "neutral"
-
-    confirms = sum(
-        1 for r in per_blade.values()
-        if r.get("signal") == verdict and verdict != "neutral"
-    )
-
-    return {"score": round(agg, 3), "verdict": verdict, "confirms": confirms, "min_needed": min_confirms}
+    verdict = "neutral"
+    if confirms >= max(1, int(min_confirms)):
+        if agg > 0.05:
+            verdict = "bullish"
+        elif agg < -0.05:
+            verdict = "bearish"
+        else:
+            verdict = "neutral"
+    return agg, confirms, verdict
