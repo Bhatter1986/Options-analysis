@@ -1,5 +1,4 @@
-# Future: yahan real brokers/news/indicators se data aayega.
-# Abhi sirf placeholders rakhe hain taaki import path ready rahe.
-
+# Future: broker/news/indicator integrations will live here.
+# For now, just a stub so imports are ready.
 def ping() -> bool:
     return True
