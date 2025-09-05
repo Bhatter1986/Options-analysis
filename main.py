@@ -5,7 +5,6 @@ import os
 import importlib
 import logging
 from typing import Optional
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -31,7 +30,7 @@ app = FastAPI(
 # ---- CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],      # tighten later if needed
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -75,7 +74,7 @@ def selftest():
         "has_dhan_token": bool(os.getenv("DHAN_ACCESS_TOKEN")),
     }
 
-# ---- DhanHQ & app routers (keep existing flow intact)
+# ---- Existing routers (keep as-is)
 _include_router("App.Routers.health")
 _include_router("App.Routers.instruments")
 _include_router("App.Routers.optionchain")
@@ -89,15 +88,15 @@ _include_router("App.Routers.live_feed")
 _include_router("App.Routers.depth20_ws")
 _include_router("App.Routers.historical")
 _include_router("App.Routers.annexure")
+
+# ---- NEW: data_fetch router
 _include_router("App.Routers.data_fetch")
-# ---- Sudarshan
-# NOTE: router inside App.sudarshan.api.router already has prefix="/sudarshan"
-# so DO NOT add another prefix here (avoids /sudarshan/sudarshan/...).
+
+# ---- Sudarshan (already prefixed inside module)
 _include_router("App.sudarshan.api.router")
 
-# ---- Optional UI helper (safe to skip if missing)
+# ---- Optional UI helper
 _include_router("App.Ui.ui_router")
 
-# ---- Static site (serve /public as root)
-# Keep this LAST so API routes take precedence over static files.
+# ---- Static site (serve /public as root) — keep LAST
 app.mount("/", StaticFiles(directory="public", html=True), name="static")
