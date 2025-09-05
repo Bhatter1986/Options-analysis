@@ -1,15 +1,16 @@
-cat > App/Routers/data_fetch.py <<'PY'
 from fastapi import APIRouter, Query
-from App.Services.data_fetch.scheduler import fetch_snapshot
 
 router = APIRouter(prefix="/data", tags=["data"])
 
 @router.get("/snapshot")
-def snapshot(symbol: str = Query("NIFTY")):
-    snap = fetch_snapshot(symbol)
+def snapshot(symbol: str = Query(..., description="e.g. NIFTY")):
     return {
-        "symbol": snap.symbol,
-        "snapshot": snap.model_dump(),
-        "sudarshan_inputs": snap.sudarshan_inputs(),
+        "symbol": symbol,
+        "sudarshan_inputs": {
+            "price":     {"trend": "bullish"},
+            "oi":        {"signal": "bullish"},
+            "greeks":    {"delta_bias": "long"},
+            "volume":    {"volume_spike": True, "confirmation": True},
+            "sentiment": {"sentiment": "neutral"},
+        },
     }
-PY
