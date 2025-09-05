@@ -5,9 +5,14 @@ services:
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /data/health
     envVars:
-      - key: MODE
-        value: LIVE
+      - key: APP_MODE
+        value: LIVE              # pehle 'MODE' tha; app APP_MODE padhta hai
+      - key: RENDER
+        value: "1"               # optional; env display ke liye
+      - key: PYTHON_VERSION
+        value: "3.11"
       - key: WEBHOOK_SECRET
         value: mysecret123
       - key: DHAN_CLIENT_ID
