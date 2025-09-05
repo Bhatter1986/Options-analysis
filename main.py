@@ -89,7 +89,7 @@ _include_router("App.Routers.live_feed")
 _include_router("App.Routers.depth20_ws")
 _include_router("App.Routers.historical")
 _include_router("App.Routers.annexure")
-
+_include_router("App.Routers.data_fetch")
 # ---- Sudarshan
 # NOTE: router inside App.sudarshan.api.router already has prefix="/sudarshan"
 # so DO NOT add another prefix here (avoids /sudarshan/sudarshan/...).
