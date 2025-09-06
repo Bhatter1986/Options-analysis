@@ -5,6 +5,7 @@ import os
 import importlib
 import logging
 from typing import Optional
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -65,13 +66,14 @@ def root():
 @app.get("/__selftest")
 def selftest():
     env = "Render" if os.getenv("RENDER") else "Local"
-    mode = os.getenv("APP_MODE", "SANDBOX")
+    mode = os.getenv("APP_MODE", os.getenv("MODE", "SANDBOX"))
     return {
         "ok": True,
         "env": env,
         "mode": mode,
         "has_openai": bool(os.getenv("OPENAI_API_KEY")),
         "has_dhan_token": bool(os.getenv("DHAN_ACCESS_TOKEN")),
+        "has_dhan_client_id": bool(os.getenv("DHAN_CLIENT_ID")),
     }
 
 # ---- Existing routers (keep as-is)
@@ -89,8 +91,11 @@ _include_router("App.Routers.depth20_ws")
 _include_router("App.Routers.historical")
 _include_router("App.Routers.annexure")
 
-# ---- NEW: data_fetch router
+# ---- NEW: generic data fetch router
 _include_router("App.Routers.data_fetch")
+
+# ---- NEW: Dhan proxy & presets (generic GET to Dhan)
+_include_router("App.Routers.dhan")       # <— ADDED
 
 # ---- Sudarshan (already prefixed inside module)
 _include_router("App.sudarshan.api.router")
@@ -98,5 +103,7 @@ _include_router("App.sudarshan.api.router")
 # ---- Optional UI helper
 _include_router("App.Ui.ui_router")
 
-# ---- Static site (serve /public as root) — keep LAST
-app.mount("/", StaticFiles(directory="public", html=True), name="static")
+# ---- Static site — mount at /app to avoid shadowing API root
+# (switch to "/" if you intentionally want static to be the root)
+if os.path.isdir("public"):
+    app.mount("/app", StaticFiles(directory="public", html=True), name="static")
