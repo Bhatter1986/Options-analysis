@@ -1,5 +1,16 @@
+<<<<<<< HEAD
 # App/Services/dhan_client.py
 from __future__ import annotations
+=======
+python - <<'PY'
+from App.Services.dhan_client import get_instruments_csv, list_segments
+rows = get_instruments_csv()
+print("Fetched rows:", len(rows))
+print("Segments:", list_segments()[:10])
+if rows:
+    print("Sample:", {k: rows[0][k] for k in list(rows[0])[:6]})
+PYfrom __future__ import annotations
+>>>>>>> 55f49b0 (feat: add Dhan instruments client with cache/search)
 
 import os
 import time
