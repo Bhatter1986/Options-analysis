@@ -1,68 +1,113 @@
 # App/Routers/instruments.py
 from __future__ import annotations
+
 from fastapi import APIRouter, Query
 from typing import Optional
 
 from App.Services.dhan_client import (
-    get_instruments,
-    get_instruments_by_segment,   # <- ab AVAILABLE hai
-    search_instruments,
-    get_by_trading_symbol,
-    get_by_security_id,
-    refresh_instruments,
-    get_cache_meta,
+    get_instruments,                 # compact CSV (cached)
+    get_instruments_csv,             # same as above, explicit
+    get_instruments_detailed_csv,    # detailed CSV (cached)
+    get_instruments_by_segment,      # /v2/instrument/{exchangeSegment}
+    search_instruments,              # keyword search on compact CSV
 )
 
-router = APIRouter(prefix="/instruments", tags=["Instruments"])
+router = APIRouter(prefix="/instruments", tags=["instruments"])
 
-@router.get("/")
-def meta():
+# ---- Utilities -------------------------------------------------------------
+
+def _df_to_rows(df, limit: int | None = None):
+    """
+    Convert pandas DF to list-of-dicts (optionally limited).
+    """
+    if limit is not None and limit > 0:
+        df = df.head(limit)
+    return df.fillna("").to_dict(orient="records")
+
+
+# ---- Endpoints -------------------------------------------------------------
+
+@router.get("")
+def instruments_compact(limit: Optional[int] = Query(100, ge=1, le=2000),
+                        refresh: bool = False):
+    """
+    Compact instruments list from Dhan (CSV, cached).
+    Set `refresh=true` to force re-download.
+    """
+    df = get_instruments(force_refresh=refresh)   # alias to compact CSV
     return {
-        "ok": True,
-        "message": "Dhan instruments endpoints",
-        "endpoints": [
-            "/instruments/all?limit=100",
-            "/instruments/search?q=RELIANCE&limit=50",
-            "/instruments/by-symbol?ts=NIFTY24SEP24000CE",
-            "/instruments/by-security-id?id=XXXX",
-            "/instruments/segment?exch=NSE&segment=D&limit=500",
-            "/instruments/refresh",
-            "/instruments/cache_meta",
-        ],
+        "source": "dhan-compact-csv",
+        "count": int(len(df)),
+        "limit": limit,
+        "items": _df_to_rows(df, limit),
     }
 
-@router.get("/all")
-def all_instruments(limit: int = Query(200, ge=1, le=10000)):
-    rows = get_instruments()
-    return {"ok": True, "count": len(rows), "items": rows[:limit]}
+
+@router.get("/detailed")
+def instruments_detailed(limit: Optional[int] = Query(100, ge=1, le=2000),
+                         refresh: bool = False):
+    """
+    Detailed instruments list from Dhan (CSV, cached).
+    Set `refresh=true` to force re-download.
+    """
+    df = get_instruments_detailed_csv(force_refresh=refresh)
+    return {
+        "source": "dhan-detailed-csv",
+        "count": int(len(df)),
+        "limit": limit,
+        "items": _df_to_rows(df, limit),
+    }
+
 
 @router.get("/search")
-def search(q: str = Query(..., min_length=1), limit: int = Query(100, ge=1, le=1000)):
-    return {"ok": True, "items": search_instruments(q, limit=limit)}
+def instruments_search(q: str = Query(..., min_length=1),
+                       limit: Optional[int] = Query(100, ge=1, le=2000),
+                       refresh: bool = False):
+    """
+    Search compact instruments by symbol/keyword (case-insensitive).
+    """
+    df = search_instruments(q, force_refresh=refresh)
+    return {
+        "source": "dhan-compact-csv:search",
+        "query": q,
+        "count": int(len(df)),
+        "limit": limit,
+        "items": _df_to_rows(df, limit),
+    }
 
-@router.get("/by-symbol")
-def by_symbol(ts: str = Query(..., min_length=1)):
-    row = get_by_trading_symbol(ts)
-    return {"ok": bool(row), "item": row}
-
-@router.get("/by-security-id")
-def by_security_id(id: str = Query(..., min_length=1)):
-    row = get_by_security_id(id)
-    return {"ok": bool(row), "item": row}
 
 @router.get("/segment")
-def by_segment(
-    exch: Optional[str] = Query(None, description="NSE/BSE/MCX"),
-    segment: Optional[str] = Query(None, description="E/D/C/M"),
-    limit: int = Query(1000, ge=1, le=20000),
+def instruments_by_segment(
+    exchangeSegment: Optional[str] = Query(None, alias="exchangeSegment"),
+    exchange_segment: Optional[str] = Query(
+        None,
+        description="Alternate param name; same as exchangeSegment"
+    )
 ):
-    items = get_instruments_by_segment(exch=exch, segment=segment, limit=limit)
-    return {"ok": True, "count": len(items), "items": items[:limit]}
+    """
+    Fetch instruments for ONE exchangeSegment via Dhan /v2/instrument/{exchangeSegment}
+    Examples: NSE_EQ, NSE_FNO, BSE_EQ, MCX_COMM, etc.
+    (See Dhan Annexure mapping.)
+    """
+    seg = exchangeSegment or exchange_segment
+    if not seg:
+        return {"ok": False, "error": "Provide ?exchangeSegment= (e.g., NSE_EQ, NSE_FNO)"}
+    data = get_instruments_by_segment(seg)
+    # API already returns JSON; keep as-is to preserve fields
+    return {"source": "dhan-segment-api", "exchangeSegment": seg, "items": data}
+
 
 @router.post("/refresh")
-def refresh():
-    return refresh_instruments()
-
-@router.get("/cache_meta")
-def cache_meta():
-    return get_cache_meta()
+def instruments_refresh(all: bool = True):
+    """
+    Force-refresh both compact & detailed CSV caches.
+    """
+    # calling with force_refresh=True clears & reloads lru_cache versions
+    df1 = get_instruments_csv(force_refresh=True)
+    df2 = get_instruments_detailed_csv(force_refresh=True)
+    return {
+        "ok": True,
+        "refreshed": ["compact_csv", "detailed_csv"] if all else ["compact_csv"],
+        "compact_count": int(len(df1)),
+        "detailed_count": int(len(df2)),
+    }
