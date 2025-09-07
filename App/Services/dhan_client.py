@@ -1,69 +1,60 @@
 import os
 import requests
-import pandas as pd
-from functools import lru_cache
+from typing import Optional
 
-# Base URLs
-INSTRUMENTS_COMPACT_URL = "https://images.dhan.co/api-data/api-scrip-master.csv"
-INSTRUMENTS_DETAILED_URL = "https://images.dhan.co/api-data/api-scrip-master-detailed.csv"
-INSTRUMENTS_SEGMENT_URL = "https://api.dhan.co/v2/instrument/{exchangeSegment}"
+# ===== Config =====
+BASE_URL = "https://api.dhan.co/v2"
+COMPACT_CSV = "https://images.dhan.co/api-data/api-scrip-master.csv"
+DETAILED_CSV = "https://images.dhan.co/api-data/api-scrip-master-detailed.csv"
 
-# Cache instruments for faster reloads
-@lru_cache(maxsize=1)
-def get_instruments_csv(force_refresh: bool = False) -> pd.DataFrame:
+# ===== Auth Header =====
+def _headers():
+    token = os.getenv("DHAN_ACCESS_TOKEN")
+    if not token:
+        raise ValueError("DHAN_ACCESS_TOKEN not set in environment variables.")
+    return {"access-token": token}
+
+
+# ===== Instrument List (CSV) =====
+def get_instruments_csv(detailed: bool = True) -> str:
     """
-    Fetches the compact instruments CSV from Dhan.
-    Cached by default, use force_refresh=True to reload.
+    Returns instrument CSV URL from Dhan (Compact or Detailed).
     """
-    if force_refresh:
-        get_instruments_csv.cache_clear()
-
-    resp = requests.get(INSTRUMENTS_COMPACT_URL)
-    resp.raise_for_status()
-    df = pd.read_csv(pd.compat.StringIO(resp.text))
-    return df
+    return DETAILED_CSV if detailed else COMPACT_CSV
 
 
-@lru_cache(maxsize=1)
-def get_instruments_detailed_csv(force_refresh: bool = False) -> pd.DataFrame:
+# ===== Instrument List (by Exchange Segment) =====
+def get_instruments_by_segment(exchange_segment: str):
     """
-    Fetches the detailed instruments CSV from Dhan.
-    Cached by default, use force_refresh=True to reload.
+    Fetch detailed instrument list for one exchange segment.
+    Example exchange_segment: NSE_EQ, NSE_FNO, BSE_EQ
     """
-    if force_refresh:
-        get_instruments_detailed_csv.cache_clear()
-
-    resp = requests.get(INSTRUMENTS_DETAILED_URL)
-    resp.raise_for_status()
-    df = pd.read_csv(pd.compat.StringIO(resp.text))
-    return df
-
-
-def get_instruments_by_segment(exchange_segment: str) -> dict:
-    """
-    Fetch instruments list for a specific exchange segment.
-    Example: NSE_EQ, NSE_FNO, BSE_EQ
-    """
-    url = INSTRUMENTS_SEGMENT_URL.format(exchangeSegment=exchange_segment)
-    headers = {
-        "access-token": os.getenv("DHAN_API_KEY", "")
-    }
-    resp = requests.get(url, headers=headers)
+    url = f"{BASE_URL}/instrument/{exchange_segment}"
+    resp = requests.get(url, headers=_headers())
     resp.raise_for_status()
     return resp.json()
 
 
-# 🔑 Backward Compatibility Wrapper
-def get_instruments(force_refresh: bool = False) -> pd.DataFrame:
+# ===== Option Chain =====
+def get_option_chain(symbol: str, expiry: Optional[str] = None):
     """
-    Alias for get_instruments_csv so old imports don't break.
+    Fetch option chain for a given symbol.
+    Example: symbol="NIFTY", expiry="2025-09-11"
     """
-    return get_instruments_csv(force_refresh=force_refresh)
+    url = f"{BASE_URL}/option-chain/{symbol}"
+    if expiry:
+        url += f"?expiry={expiry}"
+    resp = requests.get(url, headers=_headers())
+    resp.raise_for_status()
+    return resp.json()
 
 
-def search_instruments(keyword: str, force_refresh: bool = False) -> pd.DataFrame:
+# ===== Expiry List =====
+def get_expiry_list(symbol: str):
     """
-    Search instruments by symbol/keyword in compact list.
+    Return available expiry dates for a given symbol.
+    Derived from option chain response.
     """
-    df = get_instruments_csv(force_refresh=force_refresh)
-    return df[df['SEM_SYMBOL_NAME'].str.contains(keyword, case=False, na=False)]
+    data = get_option_chain(symbol)
+    expiries = {item["expiryDate"] for item in data.get("optionContracts", [])}
+    return sorted(expiries)
