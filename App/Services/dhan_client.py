@@ -1,90 +1,96 @@
 # App/Services/dhan_client.py
 from __future__ import annotations
 
-import csv
 import io
+import os
 import time
-from typing import List, Dict, Any, Optional
+import csv
 import requests
+from typing import Dict, Any, List, Optional
 
+# --- Dhan CSV endpoints (official)
 DHAN_CSV_COMPACT = "https://images.dhan.co/api-data/api-scrip-master.csv"
 DHAN_CSV_DETAILED = "https://images.dhan.co/api-data/api-scrip-master-detailed.csv"
 
-# Simple in-memory cache
-_cache: Dict[str, Any] = {
-    "detailed": None,     # List[Dict[str, Any]]
-    "compact": None,      # List[Dict[str, Any]]
-    "ts_detailed": 0.0,
-    "ts_compact": 0.0,
-}
-# CSV ko baar-baar download na karne ke liye TTL
-CACHE_TTL_SECONDS = 6 * 60 * 60  # 6 hours
+# --- Simple in-process cache
+_CACHE: Dict[str, Dict[str, Any]] = {}
+_CACHE_TTL = int(os.getenv("INSTRUMENTS_CACHE_TTL", "3600"))  # seconds (default 1h)
 
+def _cache_get(key: str) -> Optional[Any]:
+    item = _CACHE.get(key)
+    if not item:
+        return None
+    if (time.time() - item["ts"]) > _CACHE_TTL:
+        _CACHE.pop(key, None)
+        return None
+    return item["value"]
 
-def _download_csv(url: str) -> List[Dict[str, Any]]:
-    """Download CSV and return list of dict rows."""
-    resp = requests.get(url, timeout=60)
-    resp.raise_for_status()
-    content = resp.content.decode("utf-8", errors="replace")
-    reader = csv.DictReader(io.StringIO(content))
-    rows: List[Dict[str, Any]] = []
-    for row in reader:
-        # normalize keys: strip spaces
-        normalized = { (k or "").strip(): (v or "").strip() for k, v in row.items() }
-        rows.append(normalized)
+def _cache_set(key: str, value: Any) -> None:
+    _CACHE[key] = {"ts": time.time(), "value": value}
+
+def _fetch_csv(url: str) -> List[Dict[str, Any]]:
+    """Download CSV text and return list of dict rows."""
+    r = requests.get(url, timeout=60)
+    r.raise_for_status()
+    text = r.text
+    f = io.StringIO(text)
+    reader = csv.DictReader(f)
+    rows = [dict(row) for row in reader]
     return rows
-
 
 def get_instruments_csv(detailed: bool = True, force_refresh: bool = False) -> List[Dict[str, Any]]:
     """
-    Fetch instruments from Dhan CSV (detailed by default).
-    Caches in memory for CACHE_TTL_SECONDS.
+    Load instruments from Dhan CSV (detailed by default).
+    Caches for _CACHE_TTL seconds.
     """
-    now = time.time()
-    key = "detailed" if detailed else "compact"
-    ts_key = "ts_detailed" if detailed else "ts_compact"
-
-    if (not force_refresh) and _cache[key] is not None and (now - _cache[ts_key] < CACHE_TTL_SECONDS):
-        return _cache[key]  # type: ignore[return-value]
+    key = f"instruments:{'detailed' if detailed else 'compact'}"
+    if not force_refresh:
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
 
     url = DHAN_CSV_DETAILED if detailed else DHAN_CSV_COMPACT
-    data = _download_csv(url)
-    _cache[key] = data
-    _cache[ts_key] = now
-    return data
-
+    rows = _fetch_csv(url)
+    _cache_set(key, rows)
+    return rows
 
 def search_instruments(
     query: str,
-    detailed: bool = True,
     limit: int = 50,
-    fields: Optional[list[str]] = None,
+    detailed: bool = True,
+    fields_priority: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Simple case-insensitive contains search across a few useful columns.
-    Default columns: SYMBOL_NAME, SEM_TRADING_SYMBOL, DISPLAY_NAME (or compact equivalents).
+    Case-insensitive contains search over a few useful columns.
+    Default priority: DISPLAY_NAME, SEM_TRADING_SYMBOL, SYMBOL_NAME, UNDERLYING_SYMBOL
     """
+    rows = get_instruments_csv(detailed=detailed)
     q = (query or "").strip().lower()
     if not q:
-        return []
+        return rows[:limit]
 
-    rows = get_instruments_csv(detailed=detailed, force_refresh=False)
-
-    # sensible default columns (handle both detailed & compact variants)
-    candidate_fields = fields or [
-        "SYMBOL_NAME", "SEM_TRADING_SYMBOL", "DISPLAY_NAME",
-        "SEM_SYMBOL_NAME", "SEM_CUSTOM_SYMBOL"  # sometimes present
+    # sensible defaults for detailed CSV column names
+    fields_priority = fields_priority or [
+        "DISPLAY_NAME",
+        "SEM_TRADING_SYMBOL",
+        "SYMBOL_NAME",
+        "UNDERLYING_SYMBOL",
+        "INSTRUMENT",
+        "EXCH_ID",
+        "SEGMENT",
+        "SERIES",
     ]
 
-    out: List[Dict[str, Any]] = []
-    seen = 0
+    scored: List[tuple[int, Dict[str, Any]]] = []
     for r in rows:
-        for col in candidate_fields:
-            val = r.get(col)
-            if val and q in str(val).lower():
-                out.append(r)
-                seen += 1
-                break
-        if seen >= limit:
-            break
-    return out
+        score = 0
+        for i, col in enumerate(fields_priority):
+            val = str(r.get(col, "")).lower()
+            if q in val:
+                # higher weight for earlier columns
+                score += (len(fields_priority) - i) * 10
+        if score > 0:
+            scored.append((score, r))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [r for _, r in scored[:limit]]
