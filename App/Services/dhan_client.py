@@ -1,107 +1,103 @@
 # App/Services/dhan_client.py
-from __future__ import annotations
-import os, time, io, csv, threading
+import csv, io, time, threading
 from typing import List, Dict, Optional
 import requests
 
-# ---- Dhan instrument sources (official)
-DHAN_CSV_COMPACT = "https://images.dhan.co/api-data/api-scrip-master.csv"
-DHAN_CSV_DETAILED = "https://images.dhan.co/api-data/api-scrip-master-detailed.csv"
+# ---- Dhan sources (ONLY Dhan)
+DETAILED_URL = "https://images.dhan.co/api-data/api-scrip-master-detailed.csv"
+COMPACT_URL  = "https://images.dhan.co/api-data/api-scrip-master.csv"
 
-# Cache settings
-_TTL_SECONDS = int(os.getenv("INSTRUMENTS_TTL_SECONDS", str(6 * 60 * 60)))  # 6 hours
-_lock = threading.Lock()
-_cache: Dict[str, object] = {"rows": None, "fetched_at": 0.0, "source": DHAN_CSV_DETAILED}
+# ---- In-memory cache
+_cache_lock = threading.Lock()
+_cache_rows: List[Dict] = []
+_cache_meta = {"source": "detailed", "fetched_at": 0, "rows": 0, "ttl_sec": 6*60*60}
 
-def _fetch_detailed_csv() -> List[Dict[str, str]]:
-    """Fetch detailed instruments CSV from Dhan and return list[dict]."""
-    resp = requests.get(DHAN_CSV_DETAILED, timeout=60)
-    resp.raise_for_status()
-    data = resp.content.decode("utf-8", errors="replace")
-    reader = csv.DictReader(io.StringIO(data))
-    rows = [dict(r) for r in reader]
+def _download_csv(url: str) -> List[Dict]:
+    r = requests.get(url, timeout=60)
+    r.raise_for_status()
+    content = r.content.decode("utf-8", errors="ignore")
+    reader = csv.DictReader(io.StringIO(content))
+    rows = [ {k.strip(): (v.strip() if isinstance(v, str) else v) for k,v in row.items()} for row in reader ]
     return rows
 
-def get_instruments_csv(force: bool = False) -> List[Dict[str, str]]:
-    """Cached getter for detailed CSV."""
+def _ensure_cache(force: bool = False, source: str = "detailed") -> None:
+    global _cache_rows, _cache_meta
     now = time.time()
-    with _lock:
-        if (not force) and _cache.get("rows") and (now - float(_cache["fetched_at"])) < _TTL_SECONDS:
-            return _cache["rows"]  # type: ignore[return-value]
-        rows = _fetch_detailed_csv()
-        _cache["rows"] = rows
-        _cache["fetched_at"] = now
-        _cache["source"] = DHAN_CSV_DETAILED
-        return rows
+    with _cache_lock:
+        need = force or (now - _cache_meta["fetched_at"] > _cache_meta["ttl_sec"]) or not _cache_rows
+        if not need:
+            return
+        url = DETAILED_URL if source == "detailed" else COMPACT_URL
+        rows = _download_csv(url)
+        _cache_rows = rows
+        _cache_meta = {"source": source, "fetched_at": now, "rows": len(rows), "ttl_sec": _cache_meta["ttl_sec"]}
 
-# Backward friendly name
-def get_instruments(force: bool = False) -> List[Dict[str, str]]:
-    return get_instruments_csv(force=force)
+# ---- Public helpers (these names are what routers import)
+def get_instruments_csv(source: str = "detailed") -> List[Dict]:
+    _ensure_cache(force=False, source=source)
+    return _cache_rows
 
-def refresh_instruments() -> Dict[str, object]:
-    rows = get_instruments_csv(force=True)
-    return {"ok": True, "count": len(rows), "refreshed_at": _cache["fetched_at"]}
+def refresh_instruments(source: str = "detailed") -> Dict:
+    _ensure_cache(force=True, source=source)
+    return _cache_meta
 
-def get_cache_meta() -> Dict[str, object]:
-    return {
-        "ok": True,
-        "count": len(_cache["rows"] or []),
-        "fetched_at": _cache["fetched_at"],
-        "ttl_seconds": _TTL_SECONDS,
-        "source": _cache["source"],
-        "hint": "Data comes directly from Dhan CSV (detailed).",
-    }
+def get_cache_meta() -> Dict:
+    return _cache_meta
 
-# ---- Helpers / Lookups ----
-def _norm(s: Optional[str]) -> str:
-    return (s or "").strip()
+def get_instruments(limit: Optional[int] = None) -> List[Dict]:
+    rows = get_instruments_csv()
+    return rows[:limit] if limit else rows
 
-def search_instruments(q: str, limit: int = 100) -> List[Dict[str, str]]:
-    ql = q.lower().strip()
-    out: List[Dict[str, str]] = []
-    for r in get_instruments_csv():
+def get_instruments_by_segment(exch: Optional[str] = None, segment: Optional[str] = None, limit: int = 5000) -> List[Dict]:
+    """
+    exch: NSE/BSE/MCX ; segment: E (Equity) / D (Derivatives) / C (Currency) / M (Commodity)
+    Uses DETAILED CSV columns: EXCH_ID, SEGMENT, SEM_TRADING_SYMBOL, etc.
+    """
+    rows = get_instruments_csv()
+    out = []
+    ex = (exch or "").upper()
+    sg = (segment or "").upper()
+    for r in rows:
+        if ex and r.get("EXCH_ID","").upper() != ex:
+            continue
+        if sg and r.get("SEGMENT","").upper() != sg:
+            continue
+        out.append(r)
         if len(out) >= limit:
             break
-        # Try multiple relevant columns from Dhan detailed CSV
+    return out
+
+def search_instruments(q: str, limit: int = 100) -> List[Dict]:
+    q = (q or "").strip().upper()
+    if not q:
+        return []
+    rows = get_instruments_csv()
+    out = []
+    for r in rows:
         hay = " ".join([
-            _norm(r.get("SEM_TRADING_SYMBOL")),
-            _norm(r.get("DISPLAY_NAME")),
-            _norm(r.get("SM_SYMBOL_NAME")),
-            _norm(r.get("UNDERLYING_SYMBOL")),
-            _norm(r.get("SEM_CUSTOM_SYMBOL")),
-        ]).lower()
-        if ql in hay:
+            r.get("SEM_TRADING_SYMBOL",""),
+            r.get("SYMBOL_NAME",""),
+            r.get("DISPLAY_NAME",""),
+            r.get("UNDERLYING_SYMBOL",""),
+        ]).upper()
+        if q in hay:
             out.append(r)
+            if len(out) >= limit:
+                break
     return out
 
-def get_by_trading_symbol(trading_symbol: str) -> Optional[Dict[str, str]]:
-    ts = trading_symbol.strip().upper()
+def get_by_trading_symbol(symbol: str) -> Optional[Dict]:
+    sy = (symbol or "").upper()
     for r in get_instruments_csv():
-        if _norm(r.get("SEM_TRADING_SYMBOL")).upper() == ts:
+        if r.get("SEM_TRADING_SYMBOL","").upper() == sy:
             return r
     return None
 
-def get_by_security_id(security_id: str) -> Optional[Dict[str, str]]:
-    si = security_id.strip().upper()
+def get_by_security_id(sec_id: str) -> Optional[Dict]:
+    sid = (sec_id or "").upper()
+    # Detailed CSV column name:
+    key = "UNDERLYING_SECURITY_ID" if "UNDERLYING_SECURITY_ID" in (get_instruments_csv()[0] if get_instruments_csv() else {}) else "SECURITY_ID"
     for r in get_instruments_csv():
-        if _norm(r.get("UNDERLYING_SECURITY_ID")).upper() == si or _norm(r.get("SM_SECURITY_ID", "")).upper() == si:
+        if (r.get(key,"") or "").upper() == sid:
             return r
     return None
-
-# ---- NEW: Segment-wise (filtering CSV; Dhan source hi hai)
-# exch: NSE/BSE/MCX ; segment: E (Equity), D (Derivatives), C (Currency), M (Commodity)
-def get_instruments_by_segment(exch: Optional[str] = None, segment: Optional[str] = None, limit: int = 5000) -> List[Dict[str, str]]:
-    ex = (exch or "").strip().upper()
-    sg = (segment or "").strip().upper()
-    out: List[Dict[str, str]] = []
-    for r in get_instruments_csv():
-        if len(out) >= limit:
-            break
-        ok = True
-        if ex:
-            ok = ok and _norm(r.get("EXCH_ID")).upper() == ex
-        if sg:
-            ok = ok and _norm(r.get("SEGMENT")).upper() == sg
-        if ok:
-            out.append(r)
-    return out
