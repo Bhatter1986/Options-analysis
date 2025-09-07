@@ -1,84 +1,121 @@
 # App/Services/dhan_client.py
-import os
-import time
-import csv
-import io
+from __future__ import annotations
+import os, time, csv, io
+from typing import Dict, List, Optional, Tuple
 import requests
-from typing import List, Dict, Optional
 
-INSTRUMENTS_URL = os.getenv(
+# ---- ENV (Dhan-hosted CSV)
+CSV_URL = os.getenv(
     "INSTRUMENTS_URL",
-    "https://images.dhan.co/api-data/api-script-master-detailed.csv",
+    "https://images.dhan.co/api-data/api-script-master-detailed.csv"
 )
-TTL = int(os.getenv("INSTRUMENTS_TTL_SEC", "86400"))
+TTL_SEC = int(os.getenv("INSTRUMENTS_TTL_SEC", "86400"))  # default 1 day
 
-_cache_data: Optional[List[Dict[str, str]]] = None
-_cache_at: float = 0.0
+# ---- Simple in-memory cache
+_cache: Dict[str, object] = {
+    "rows": None,          # type: Optional[List[Dict[str, str]]]
+    "fetched_at": 0.0,     # type: float (epoch)
+}
 
-def _need_refresh() -> bool:
-    if _cache_data is None:
-        return True
-    return (time.time() - _cache_at) > TTL
+# ---- Helpers to normalize column names coming from Dhan CSV
+def _get(row: Dict[str, str], *keys: str) -> Optional[str]:
+    for k in keys:
+        if k in row and row[k] not in ("", None):
+            return row[k]
+    return None
 
-def get_instruments_csv() -> List[Dict[str, str]]:
-    """Download + cache Dhan instruments CSV -> list of dicts."""
-    global _cache_data, _cache_at
-    if not _need_refresh():
-        return _cache_data or []
+def _seg(row: Dict[str, str]) -> str:
+    # Try common variants
+    return (_get(row, "exchange_segment", "exchangeSegment", "segment") or "").strip()
 
-    resp = requests.get(INSTRUMENTS_URL, timeout=60)
+def _symbol(row: Dict[str, str]) -> str:
+    return (_get(row, "symbol", "Symbol", "tradingsymbol", "tradingSymbol", "trading_symbol") or "").strip()
+
+def _name(row: Dict[str, str]) -> str:
+    return (_get(row, "name", "Name", "description", "Description") or "").strip()
+
+def _security_id(row: Dict[str, str]) -> str:
+    return (_get(row, "security_id", "securityId", "SecurityId", "securityID", "securityid") or "").strip()
+
+# ---- Core CSV loader (Dhan only)
+def _load_csv(force: bool = False) -> List[Dict[str, str]]:
+    now = time.time()
+    if (not force) and _cache["rows"] and (now - float(_cache["fetched_at"])) < TTL_SEC:
+        return _cache["rows"]  # type: ignore
+
+    resp = requests.get(CSV_URL, timeout=60)
     resp.raise_for_status()
-    text = resp.text
-    f = io.StringIO(text)
-    reader = csv.DictReader(f)
-    rows: List[Dict[str, str]] = []
-    for r in reader:
-        # Normalize keys (strip spaces)
-        norm = { (k or "").strip(): (v or "").strip() for k, v in r.items() }
-        rows.append(norm)
+    content = resp.content.decode("utf-8", errors="replace")
 
-    _cache_data = rows
-    _cache_at = time.time()
+    buf = io.StringIO(content)
+    reader = csv.DictReader(buf)
+    rows = []
+    for row in reader:
+        # keep original row + normalized keys for easy filter/search
+        row = dict(row or {})
+        row["_norm"] = {
+            "exchange_segment": _seg(row),
+            "symbol": _symbol(row),
+            "name": _name(row),
+            "security_id": _security_id(row),
+        }
+        rows.append(row)
+
+    _cache["rows"] = rows
+    _cache["fetched_at"] = now
     return rows
 
-def get_instruments() -> List[Dict[str, str]]:
-    """Return all instruments (cached)."""
-    return get_instruments_csv()
+# ---- Public API used by Routers (DON'T CHANGE NAMES)
+def get_instruments_csv(segment: Optional[str] = None) -> Tuple[List[Dict[str, str]], Dict[str, object]]:
+    """
+    Return full CSV (optionally filtered by exchange segment).
+    """
+    rows = _load_csv()
+    if segment:
+        seg = segment.strip().upper()
+        rows = [r for r in rows if (r.get("_norm", {}).get("exchange_segment", "").upper() == seg)]
+    meta = {
+        "source": "dhan_csv",
+        "url": CSV_URL,
+        "ttl_sec": TTL_SEC,
+        "count": len(rows),
+    }
+    return rows, meta
 
-def get_instruments_by_segment(exchange_segment: str) -> List[Dict[str, str]]:
+def get_instruments_by_segment(segment: str) -> Tuple[List[Dict[str, str]], Dict[str, object]]:
     """
-    Filter by exchange segment.
-    Typical segments in CSV column may be like: 'NSE', 'NSE_FNO', 'BSE', etc.
-    Adjust key name if your CSV uses a different header.
+    Backward-compatible wrapper (some modules import this).
     """
-    seg = (exchange_segment or "").strip().lower()
-    data = get_instruments_csv()
-    out: List[Dict[str, str]] = []
-    # Try common header names
-    cand_keys = ["exchange_segment", "Segment", "segment", "EXCHANGE_SEGMENT"]
-    for row in data:
-        # find first present key
-        key = next((k for k in cand_keys if k in row), None)
-        if not key:
-            continue
-        if (row.get(key, "").strip().lower() == seg):
-            out.append(row)
-    return out
+    return get_instruments_csv(segment)
 
-def search_instruments(q: str) -> List[Dict[str, str]]:
+def search_instruments(keyword: str, segment: Optional[str] = None, limit: int = 50) -> Tuple[List[Dict[str, str]], Dict[str, object]]:
     """
-    Case-insensitive substring search on a few common columns:
-    SYMBOL / TRADING_SYMBOL / SECURITY_ID / SECURITY_NAME
+    Simple case-insensitive contains search on symbol/name within optional segment.
     """
-    query = (q or "").strip().lower()
-    if not query:
-        return []
-    data = get_instruments_csv()
-    cols = ["SYMBOL", "TRADING_SYMBOL", "TRADING SYMBOL", "SECURITY_ID", "SECURITY NAME", "SECURITY_NAME", "NAME"]
+    kw = (keyword or "").strip().lower()
+    if not kw:
+        return [], {"source": "dhan_csv", "url": CSV_URL, "ttl_sec": TTL_SEC, "count": 0, "query": keyword}
+
+    rows = _load_csv()
+    if segment:
+        seg = segment.strip().upper()
+        rows = [r for r in rows if (r.get("_norm", {}).get("exchange_segment", "").upper() == seg)]
+
     out: List[Dict[str, str]] = []
-    for row in data:
-        for c in cols:
-            if c in row and query in (row[c] or "").lower():
-                out.append(row)
+    for r in rows:
+        sym = r.get("_norm", {}).get("symbol", "").lower()
+        nm  = r.get("_norm", {}).get("name", "").lower()
+        if kw in sym or kw in nm:
+            out.append(r)
+            if len(out) >= limit:
                 break
-    return out
+
+    meta = {
+        "source": "dhan_csv",
+        "url": CSV_URL,
+        "ttl_sec": TTL_SEC,
+        "count": len(out),
+        "query": keyword,
+        "segment": segment,
+    }
+    return out, meta
