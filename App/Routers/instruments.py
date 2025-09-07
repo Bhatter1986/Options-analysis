@@ -1,58 +1,36 @@
 # App/Routers/instruments.py
 from __future__ import annotations
 
-from typing import Optional
 from fastapi import APIRouter, Query
-from App.Services.dhan_client import get_instruments_csv, search_instruments
+from typing import Optional, List, Dict, Any
+
+from App.Services.dhan_client import (
+    get_instruments_csv,
+    search_instruments,
+)
 
 router = APIRouter(prefix="/instruments", tags=["instruments"])
 
-@router.get("", summary="Get instruments from Dhan CSV (paged)")
-def list_instruments(
+@router.get("")
+def instruments(
     detailed: bool = True,
-    page: int = 1,
-    page_size: int = 200,
-):
+    refresh: bool = False,
+    limit: int = Query(100, ge=1, le=5000),
+) -> Dict[str, Any]:
     """
-    Returns instruments from Dhan CSV (detailed by default) with simple paging.
+    Return instruments directly from Dhan CSV (cached).
     """
-    page = max(1, page)
-    page_size = max(1, min(page_size, 1000))
+    rows = get_instruments_csv(detailed=detailed, force_refresh=refresh)
+    return {"count": min(len(rows), limit), "rows": rows[:limit], "detailed": detailed, "cached": not refresh}
 
-    data = get_instruments_csv(detailed=detailed, force_refresh=False)
-    total = len(data)
-    start = (page - 1) * page_size
-    end = start + page_size
-    items = data[start:end]
-    return {
-        "ok": True,
-        "source": "dhan_csv_detailed" if detailed else "dhan_csv_compact",
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "items": items,
-    }
-
-@router.get("/search", summary="Search instruments by name/symbol (CSV)")
-def search(
-    q: str = Query(..., min_length=1, description="Search text"),
+@router.get("/search")
+def instruments_search(
+    q: str = Query("", description="substring search (case-insensitive)"),
+    limit: int = Query(50, ge=1, le=1000),
     detailed: bool = True,
-    limit: int = 50,
-):
-    items = search_instruments(q, detailed=detailed, limit=limit)
-    return {
-        "ok": True,
-        "q": q,
-        "count": len(items),
-        "items": items,
-    }
-
-@router.post("/reload", summary="Force refresh CSV cache")
-def reload_csv(detailed: bool = True):
-    data = get_instruments_csv(detailed=detailed, force_refresh=True)
-    return {
-        "ok": True,
-        "refreshed": True,
-        "count": len(data),
-        "source": "dhan_csv_detailed" if detailed else "dhan_csv_compact",
-    }
+) -> Dict[str, Any]:
+    """
+    Search instruments across DISPLAY_NAME, SEM_TRADING_SYMBOL, SYMBOL_NAME, etc.
+    """
+    rows = search_instruments(q, limit=limit, detailed=detailed)
+    return {"query": q, "count": len(rows), "rows": rows, "detailed": detailed}
