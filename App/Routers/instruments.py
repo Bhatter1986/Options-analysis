@@ -1,13 +1,12 @@
 # App/Routers/instruments.py
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
 from App.Services.dhan_client import (
-    ensure_cache,
-    fetch_segment,
+    fetch_segment,          # optional, for /segment/{exchangeSegment}
     get_by_security_id,
     get_by_trading_symbol,
     get_cache_meta,
@@ -19,52 +18,89 @@ from App.Services.dhan_client import (
 router = APIRouter(prefix="/instruments", tags=["instruments"])
 
 
-@router.get("", summary="Cache info + quick sample")
-def instruments_root():
-    ensure_cache()
-    meta = get_cache_meta()
-    sample = get_instruments()[:3]
-    return {"ok": True, "meta": meta, "sample": sample}
+@router.get("/", summary="Get all instruments (optionally filter in query)")
+def list_instruments(
+    exchange: Optional[str] = Query(None, description="Filter by exchange, e.g. NSE/BSE/MCX"),
+    segment: Optional[str] = Query(None, description="Filter by segment, e.g. E/D/C/M"),
+    limit: int = Query(0, ge=0, le=100000, description="Optional hard cap; 0 means no cap"),
+):
+    """
+    Returns cached Dhan instruments (downloaded from images.dhan.co).
+    You can filter by `exchange` and/or `segment` after loading.
+    """
+    items: List[dict] = get_instruments()  # cached list of dict rows
+
+    if exchange:
+        ex = exchange.upper()
+        items = [r for r in items if str(r.get("EXCH_ID") or r.get("SEM_EXM_EXCH_ID", "")).upper() == ex]
+
+    if segment:
+        sg = segment.upper()
+        items = [r for r in items if str(r.get("SEGMENT") or r.get("SEM_SEGMENT", "")).upper() == sg]
+
+    if limit and limit > 0:
+        items = items[:limit]
+
+    return {"count": len(items), "items": items}
 
 
-@router.post("/refresh", summary="Refresh instruments cache from Dhan CSV")
-def instruments_refresh(kind: str = Query("detailed", pattern="^(detailed|compact)$")):
-    meta = refresh_instruments(kind=kind)
+@router.get("/search", summary="Search instruments by keyword")
+def search(
+    q: str = Query(..., min_length=1, description="Search text (symbol/trading symbol/display name etc.)"),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """
+    Full-text style search across common fields ( SYMBOL_NAME / SEM_TRADING_SYMBOL / DISPLAY_NAME ).
+    """
+    return {"query": q, "items": search_instruments(q, limit=limit)}
+
+
+@router.get("/by-trading", summary="Get single instrument by trading symbol")
+def by_trading_symbol(
+    symbol: str = Query(..., min_length=1, description="Exchange trading symbol (SEM_TRADING_SYMBOL)"),
+):
+    row = get_by_trading_symbol(symbol)
+    if not row:
+        raise HTTPException(404, f"Trading symbol not found: {symbol}")
+    return row
+
+
+@router.get("/by-security", summary="Get single instrument by Security ID")
+def by_security_id(
+    security_id: str = Query(..., min_length=1, description="UNDERLYING_SECURITY_ID / SECURITY_ID"),
+):
+    row = get_by_security_id(security_id)
+    if not row:
+        raise HTTPException(404, f"Security ID not found: {security_id}")
+    return row
+
+
+@router.post("/refresh", summary="Refresh instrument cache from Dhan CSV")
+def refresh(force: bool = False):
+    """
+    Pulls fresh CSV from:
+      - https://images.dhan.co/api-data/api-scrip-master.csv  (compact)
+      - https://images.dhan.co/api-data/api-scrip-master-detailed.csv (detailed)
+    and rebuilds the local cache. If `force` is False, respects TTL/etag logic (if implemented).
+    """
+    meta = refresh_instruments(force=force)
     return {"ok": True, "meta": meta}
 
 
-@router.get("/search", summary="Search instruments")
-def instruments_search(
-    q: Optional[str] = None,
-    exchange: Optional[str] = None,
-    segment: Optional[str] = None,
-    instrument_type: Optional[str] = Query(None, description="e.g. FUTSTK / FUTIDX / OPTIDX / OPTSTK / EQ etc."),
-    limit: int = Query(100, ge=1, le=1000),
-):
-    rows = search_instruments(q=q, exchange=exchange, segment=segment, instrument_type=instrument_type, limit=limit)
-    return {"ok": True, "count": len(rows), "rows": rows}
-
-
-@router.get("/by-symbol", summary="Get instrument by exact trading symbol")
-def instruments_by_symbol(symbol: str):
-    row = get_by_trading_symbol(symbol)
-    if not row:
-        raise HTTPException(status_code=404, detail="symbol not found")
-    return {"ok": True, "row": row}
-
-
-@router.get("/by-security-id", summary="Get instrument by Security ID")
-def instruments_by_security_id(security_id: str):
-    row = get_by_security_id(security_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="security_id not found")
-    return {"ok": True, "row": row}
-
-
-@router.get("/segment/{exchange_segment}", summary="(Fallback) fetch one segment live from Dhan")
-def instruments_segment(exchange_segment: str):
+@router.get("/cache-meta", summary="Cache metadata / stats")
+def cache_meta():
     """
-    Use ONLY as fallback / debug. Primary data source is CSV cache.
+    Returns information about the cached instruments: source, rows, last_refresh, etag, etc.
     """
-    res = fetch_segment(exchange_segment)
-    return res
+    return get_cache_meta()
+
+
+@router.get("/segment/{exchangeSegment}", summary="Fetch instruments for a single exchangeSegment (direct call)")
+def segment(exchangeSegment: str, limit: int = Query(0, ge=0, le=100000)):
+    """
+    Uses the per-segment API (fallback/utility). Example exchangeSegment values are in Dhan Annexure.
+    """
+    items = fetch_segment(exchangeSegment) or []
+    if limit and limit > 0:
+        items = items[:limit]
+    return {"exchangeSegment": exchangeSegment, "count": len(items), "items": items}
